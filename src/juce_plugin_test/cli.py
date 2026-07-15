@@ -172,6 +172,15 @@ def _cmd_session_show(args: argparse.Namespace) -> int:
 
 def _cmd_session_promote(args: argparse.Namespace) -> int:
     session = _load_session(args.name, args.root)
+    if not args.snapshot:
+        pending = [
+            {"id": snap.id, "name": snap.name}
+            for snap in session.snapshots
+            if not snap.promoted
+        ]
+        print(json.dumps(pending))
+        return 0
+
     base = load_compare_config().thresholds
     thresholds = ComparisonThresholds(
         snr_db_min=args.snr_min if args.snr_min is not None else base.snr_db_min,
@@ -179,9 +188,21 @@ def _cmd_session_promote(args: argparse.Namespace) -> int:
         rms_error_max=args.rms_max if args.rms_max is not None else base.rms_error_max,
         spectral_distance_max=args.spectral_max if args.spectral_max is not None else base.spectral_distance_max,
     )
-    setup = session.promote_snapshot(args.snapshot, test_name=args.test_name, thresholds=thresholds)
+    expect_match: bool | None = None
+    if args.negative:
+        expect_match = False
+    elif args.positive:
+        expect_match = True
+
+    setup = session.promote_snapshot(
+        args.snapshot,
+        test_name=args.test_name,
+        thresholds=thresholds,
+        expect_match=expect_match,
+    )
     session.save()
-    print(f"Promoted {args.snapshot!r} → test {setup.name!r}")
+    kind = "negative" if not setup.expect_match else "match"
+    print(f"Promoted {args.snapshot!r} → test {setup.name!r} ({kind})")
     return 0
 
 
@@ -317,8 +338,24 @@ def main(argv: list[str] | None = None) -> int:
 
     session_promote = session_sub.add_parser("promote", help="Promote snapshot to automatable test")
     session_promote.add_argument("name", help="Session name")
-    session_promote.add_argument("snapshot", help="Snapshot id or name")
+    session_promote.add_argument(
+        "snapshot",
+        nargs="?",
+        default=None,
+        help="Snapshot id or name (omit to list un-promoted snapshots as JSON)",
+    )
     session_promote.add_argument("--test-name", help="Name for generated test")
+    expect_group = session_promote.add_mutually_exclusive_group()
+    expect_group.add_argument(
+        "--negative",
+        action="store_true",
+        help="Mark as negative case: fail if output still matches the broken reference",
+    )
+    expect_group.add_argument(
+        "--positive",
+        action="store_true",
+        help="Mark as normal match case (clear a previous --negative)",
+    )
     session_promote.add_argument(
         "--snr-min",
         type=float,

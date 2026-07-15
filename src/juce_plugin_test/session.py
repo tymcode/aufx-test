@@ -38,6 +38,54 @@ def _artifact_stem(description: str, snapshot_id: str) -> str:
     return f"{keyword}_{snapshot_id}" if keyword else snapshot_id
 
 
+# Output WAV role flags: ``{stem}_output_{role}.wav``
+OUTPUT_ROLES = ("gld", "sus", "bkn")
+_OUTPUT_ROLE_LABELS = {"gld": "golden", "sus": "suspect", "bkn": "broken"}
+# For now, suspect and broken are negative cases (fail if output still matches).
+_NEGATIVE_OUTPUT_ROLES = frozenset({"sus", "bkn"})
+
+
+def parse_output_role(path: str | Path | None) -> str | None:
+    """Return ``gld`` / ``sus`` / ``bkn`` from ``*_output_<role>.wav``, if present."""
+    if path is None:
+        return None
+    stem = Path(path).stem
+    for role in OUTPUT_ROLES:
+        if stem.endswith(f"_output_{role}"):
+            return role
+    return None
+
+
+def output_artifact_filename(stem: str, role: str | None = None, *, ext: str = ".wav") -> str:
+    """Build an output artifact basename: ``{stem}_output.wav`` or ``{stem}_output_{role}.wav``."""
+    if role in OUTPUT_ROLES:
+        return f"{stem}_output_{role}{ext}"
+    return f"{stem}_output{ext}"
+
+
+def expect_match_for_output_role(role: str | None) -> bool | None:
+    """Map an output role flag to ``expect_match``, or ``None`` if unknown/absent."""
+    if role is None:
+        return None
+    if role == "gld":
+        return True
+    if role in _NEGATIVE_OUTPUT_ROLES:
+        return False
+    return None
+
+
+def _base_stem_from_output(path: str | Path) -> str:
+    """Strip ``_output`` / ``_output_{role}`` from an output artifact stem."""
+    stem = Path(path).stem
+    for role in OUTPUT_ROLES:
+        suffix = f"_output_{role}"
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    if stem.endswith("_output"):
+        return stem[: -len("_output")]
+    return stem
+
+
 @dataclass
 class StateSnapshot:
     """One captured plugin state from manual exploration."""
@@ -54,6 +102,11 @@ class StateSnapshot:
     promoted: bool = False
     test_name: str | None = None
     thresholds: dict[str, float] | None = None
+    # True: output should match reference. False: negative case — fail if it matches
+    # (reference is a known-broken capture; pass only when the bug is fixed).
+    expect_match: bool = True
+    # Output artifact role: ``gld`` / ``sus`` / ``bkn`` (from filename flag).
+    reference_kind: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -76,6 +129,7 @@ class TestSetup:
     notes: str = ""
     source_snapshot_id: str | None = None
     thresholds: ComparisonThresholds = field(default_factory=ComparisonThresholds)
+    expect_match: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -169,8 +223,14 @@ class ExperimentSession:
             snapshot.input_audio = str(staged.relative_to(self.session_dir))
 
         if copy_output is not None:
-            dest = self.artifacts_dir / f"{stem}_output{Path(copy_output).suffix or '.wav'}"
-            staged = self._stage_artifact(Path(copy_output), dest)
+            output_src = Path(copy_output)
+            role = snapshot.reference_kind or parse_output_role(output_src)
+            if role in OUTPUT_ROLES:
+                snapshot.reference_kind = role
+            dest = self.artifacts_dir / output_artifact_filename(
+                stem, role, ext=output_src.suffix or ".wav"
+            )
+            staged = self._stage_artifact(output_src, dest)
             snapshot.output_audio = str(staged.relative_to(self.session_dir))
 
         if copy_preset is not None:
@@ -188,8 +248,16 @@ class ExperimentSession:
         return snapshot
 
     def get_snapshot(self, snapshot_id: str) -> StateSnapshot:
+        key = snapshot_id.strip()
         for snap in self.snapshots:
-            if snap.id == snapshot_id or _slug(snap.name) == _slug(snapshot_id):
+            if snap.id == key or _slug(snap.name) == _slug(key):
+                return snap
+            # Accept artifact stems like ``long_67dc49d2`` (keyword + id).
+            if key.endswith("_" + snap.id) or key == _artifact_stem(snap.name, snap.id):
+                return snap
+            if snap.preset_file and Path(snap.preset_file).stem == key:
+                return snap
+            if snap.output_audio and _base_stem_from_output(snap.output_audio) == key:
                 return snap
         raise KeyError(f"Snapshot not found: {snapshot_id!r}")
 
@@ -199,8 +267,13 @@ class ExperimentSession:
         *,
         test_name: str | None = None,
         thresholds: ComparisonThresholds | None = None,
+        expect_match: bool | None = None,
     ) -> TestSetup:
-        """Mark a snapshot as ready for automation and return its test setup."""
+        """Mark a snapshot as ready for automation and return its test setup.
+
+        ``expect_match=False`` marks a negative case: the reference is a known-broken
+        capture, and the test passes only when the plugin output no longer matches it.
+        """
         snap = self.get_snapshot(snapshot_id)
         if not snap.output_audio:
             raise ValueError(f"Snapshot {snap.name!r} has no output_audio — bounce audio before promoting.")
@@ -212,9 +285,23 @@ class ExperimentSession:
             )
 
         snap.promoted = True
-        snap.test_name = test_name or _slug(snap.name)
+        if test_name is not None:
+            snap.test_name = test_name
+        elif not snap.test_name:
+            snap.test_name = _slug(snap.name)
         if thresholds is not None:
             snap.thresholds = asdict(thresholds)
+
+        role = snap.reference_kind or parse_output_role(snap.output_audio)
+        if role in OUTPUT_ROLES:
+            snap.reference_kind = role
+        if expect_match is not None:
+            snap.expect_match = expect_match
+        else:
+            inferred = expect_match_for_output_role(role)
+            if inferred is not None:
+                snap.expect_match = inferred
+
         self.updated_at = _utc_now()
         return self.snapshot_to_test_setup(snap)
 
@@ -233,6 +320,7 @@ class ExperimentSession:
             notes=snap.notes,
             source_snapshot_id=snap.id,
             thresholds=thresholds,
+            expect_match=snap.expect_match,
         )
 
     def promoted_setups(self) -> list[TestSetup]:
@@ -298,7 +386,15 @@ class ExperimentSession:
             f"  file: {self.session_file}",
         ]
         for snap in self.snapshots:
-            flag = " [promoted]" if snap.promoted else ""
+            flags: list[str] = []
+            if snap.promoted:
+                flags.append("promoted")
+            if snap.promoted and not snap.expect_match:
+                flags.append("negative")
+            role = snap.reference_kind or parse_output_role(snap.output_audio)
+            if role in _OUTPUT_ROLE_LABELS:
+                flags.append(_OUTPUT_ROLE_LABELS[role])
+            flag = f" [{', '.join(flags)}]" if flags else ""
             lines.append(f"  - {snap.id} {snap.name!r}{flag}")
             if snap.parameters:
                 params = ", ".join(f"{k}={v}" for k, v in snap.parameters.items())

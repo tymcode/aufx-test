@@ -139,6 +139,13 @@ public:
         snapshotNameEditor.setInputRestrictions (64);
         addAndMakeVisible (snapshotNameEditor);
 
+        // Output WAV role flag: golden→_gld, suspect→_sus, broken→_bkn
+        artifactRoleBox.addItem ("golden", 1);
+        artifactRoleBox.addItem ("suspect", 2);
+        artifactRoleBox.addItem ("broken", 3);
+        artifactRoleBox.setSelectedId (3); // default: broken
+        addAndMakeVisible (artifactRoleBox);
+
         addAndMakeVisible (editorViewport);
         editorViewport.setViewedComponent (&editorPlaceholder, false);
 
@@ -274,7 +281,9 @@ public:
         captureButton.setBounds (row3.removeFromLeft (160));
         row3.removeFromLeft (8);
         descriptionLabel.setBounds (row3.removeFromLeft (80));
-        snapshotNameEditor.setBounds (row3.removeFromLeft (260));
+        snapshotNameEditor.setBounds (row3.removeFromLeft (200));
+        row3.removeFromLeft (6);
+        artifactRoleBox.setBounds (row3.removeFromLeft (110));
 
         editorViewport.setBounds (bounds);
         layoutEditor();
@@ -715,7 +724,8 @@ private:
         // Always dump the live plugin state — never copy the selected library
         // .aupreset, which may be stale after UI tweaks.
         const auto presetOut = captureDir.getChildFile (stem + ".aupreset");
-        const auto outputOut = captureDir.getChildFile (stem + "_output.wav");
+        const auto roleSuffix = artifactRoleCode();
+        const auto outputOut = captureDir.getChildFile (stem + "_output_" + roleSuffix + ".wav");
 
         juce::String error;
         if (! engine.saveCurrentPreset (presetOut, error))
@@ -744,6 +754,16 @@ private:
         }
 
         setStatus ("Captured test case: " + snapshotName);
+    }
+
+    juce::String artifactRoleCode() const
+    {
+        switch (artifactRoleBox.getSelectedId())
+        {
+            case 1:  return "gld";
+            case 2:  return "sus";
+            default: return "bkn";
+        }
     }
 
     bool registerSnapshotWithPython (const juce::String& snapshotName,
@@ -828,6 +848,7 @@ private:
     juce::TextButton captureButton;
     juce::Label descriptionLabel;
     juce::TextEditor snapshotNameEditor;
+    juce::ComboBox artifactRoleBox;
     juce::Viewport editorViewport;
     juce::Component editorPlaceholder;
     juce::AudioProcessorEditor* pluginEditor { nullptr };

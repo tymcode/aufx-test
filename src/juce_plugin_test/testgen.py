@@ -65,7 +65,13 @@ def test_session_setup(setup, {host_fixture}):
 
     thresholds = ComparisonThresholds(**setup.get("thresholds", {{}}))
     result = compare_waveforms(actual, reference, thresholds=thresholds)
-    assert result.passed, result.summary()
+    if setup.get("expect_match", True):
+        assert result.passed, result.summary()
+    else:
+        assert not result.passed, (
+            "Negative case: output still matches the broken reference\\n"
+            + result.summary()
+        )
 '''
 
     output_path.write_text(content)

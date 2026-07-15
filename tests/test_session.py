@@ -7,7 +7,13 @@ import pytest
 
 from juce_plugin_test import ExperimentSession, StateSnapshot, Waveform
 from juce_plugin_test.explore import capture_snapshot_from_cli
-from juce_plugin_test.session import _artifact_stem, _keyword_from_description
+from juce_plugin_test.session import (
+    _artifact_stem,
+    _keyword_from_description,
+    expect_match_for_output_role,
+    output_artifact_filename,
+    parse_output_role,
+)
 from juce_plugin_test.testgen import export_setups_json, export_test_module
 
 
@@ -43,6 +49,19 @@ def test_keyword_from_description():
     assert _artifact_stem("", "abcd1234") == "abcd1234"
 
 
+def test_output_role_filename_helpers():
+    assert parse_output_role("artifacts/long_67dc49d2_output_bkn.wav") == "bkn"
+    assert parse_output_role("artifacts/long_67dc49d2_output_gld.wav") == "gld"
+    assert parse_output_role("artifacts/long_67dc49d2_output_sus.wav") == "sus"
+    assert parse_output_role("artifacts/long_67dc49d2_output.wav") is None
+    assert output_artifact_filename("long_67dc49d2", "bkn") == "long_67dc49d2_output_bkn.wav"
+    assert output_artifact_filename("long_67dc49d2") == "long_67dc49d2_output.wav"
+    assert expect_match_for_output_role("gld") is True
+    assert expect_match_for_output_role("bkn") is False
+    assert expect_match_for_output_role("sus") is False
+    assert expect_match_for_output_role(None) is None
+
+
 def test_add_snapshot_copies_artifacts(tmp_session_root, sine_files, sample_aupreset):
     inp, out, _ = sine_files
     session = ExperimentSession.create("demo", root_dir=tmp_session_root)
@@ -67,7 +86,7 @@ def test_add_snapshot_reuses_host_staged_artifacts(tmp_session_root, sine_files,
     session = ExperimentSession.create("demo", root_dir=tmp_session_root)
     session.artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-    host_out = session.artifacts_dir / "init_aabbccdd_output.wav"
+    host_out = session.artifacts_dir / "init_aabbccdd_output_bkn.wav"
     host_preset = session.artifacts_dir / "init_aabbccdd.aupreset"
     shutil.copy2(out, host_out)
     shutil.copy2(sample_aupreset, host_preset)
@@ -76,12 +95,28 @@ def test_add_snapshot_reuses_host_staged_artifacts(tmp_session_root, sine_files,
     session.add_snapshot(snap, copy_input=inp, copy_output=host_out, copy_preset=host_preset)
 
     stem = f"init_{snap.id}"
-    assert (session.artifacts_dir / f"{stem}_output.wav").exists()
+    assert (session.artifacts_dir / f"{stem}_output_bkn.wav").exists()
     assert (session.artifacts_dir / f"{stem}.aupreset").exists()
+    assert snap.reference_kind == "bkn"
+    assert snap.output_audio == f"artifacts/{stem}_output_bkn.wav"
     assert not host_out.exists()
     assert not host_preset.exists()
-    assert len(list(session.artifacts_dir.glob("*_output.wav"))) == 1
+    assert len(list(session.artifacts_dir.glob("*_output_bkn.wav"))) == 1
     assert len(list(session.artifacts_dir.glob("*.aupreset"))) == 1
+
+
+def test_get_snapshot_accepts_id_name_and_artifact_stem(tmp_session_root, sine_files, sample_aupreset):
+    inp, out, _ = sine_files
+    session = ExperimentSession.create("demo", root_dir=tmp_session_root)
+    snap = StateSnapshot(name="Long Tail")
+    session.add_snapshot(snap, copy_input=inp, copy_output=out, copy_preset=sample_aupreset)
+    stem = _artifact_stem(snap.name, snap.id)
+
+    assert session.get_snapshot(snap.id).id == snap.id
+    assert session.get_snapshot("Long Tail").id == snap.id
+    assert session.get_snapshot("long_tail").id == snap.id
+    assert session.get_snapshot(stem).id == snap.id
+    assert session.get_snapshot(f"{stem}.aupreset".removesuffix(".aupreset")).id == snap.id
 
 
 def test_promote_snapshot(tmp_session_root, sine_files, sample_aupreset):
@@ -93,8 +128,54 @@ def test_promote_snapshot(tmp_session_root, sine_files, sample_aupreset):
     setup = session.promote_snapshot(snap.id, test_name="test_baseline")
     assert setup.name == "test_baseline"
     assert setup.preset_file is not None
+    assert setup.expect_match is True
     assert snap.promoted
     assert Path(setup.reference_output).exists()
+
+
+def test_promote_negative_case(tmp_session_root, sine_files, sample_aupreset):
+    inp, out, _ = sine_files
+    session = ExperimentSession.create("demo", root_dir=tmp_session_root)
+    snap = StateSnapshot(name="broken bug")
+    session.add_snapshot(snap, copy_input=inp, copy_output=out, copy_preset=sample_aupreset)
+
+    setup = session.promote_snapshot(snap.id, expect_match=False)
+    assert setup.expect_match is False
+    assert snap.expect_match is False
+
+    # Re-promote can clear the negative flag without renaming.
+    setup = session.promote_snapshot(snap.id, expect_match=True)
+    assert setup.expect_match is True
+    assert setup.name == "broken_bug"
+
+
+def test_promote_infers_expect_match_from_output_role(tmp_session_root, sine_files, sample_aupreset):
+    import shutil
+
+    inp, out, _ = sine_files
+    session = ExperimentSession.create("demo", root_dir=tmp_session_root)
+    session.artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    bkn_out = session.artifacts_dir / "x_output_bkn.wav"
+    gld_out = tmp_session_root / "y_output_gld.wav"
+    shutil.copy2(out, bkn_out)
+    shutil.copy2(out, gld_out)
+
+    broken = StateSnapshot(name="broken capture")
+    session.add_snapshot(broken, copy_input=inp, copy_output=bkn_out, copy_preset=sample_aupreset)
+    setup = session.promote_snapshot(broken.id)
+    assert broken.reference_kind == "bkn"
+    assert setup.expect_match is False
+
+    golden = StateSnapshot(name="golden capture")
+    session.add_snapshot(golden, copy_input=inp, copy_output=gld_out, copy_preset=sample_aupreset)
+    setup = session.promote_snapshot(golden.id)
+    assert golden.reference_kind == "gld"
+    assert setup.expect_match is True
+
+    # Explicit CLI override still wins over filename role.
+    setup = session.promote_snapshot(broken.id, expect_match=True)
+    assert setup.expect_match is True
 
 
 def test_promote_requires_preset(tmp_session_root, sine_files):
@@ -139,6 +220,9 @@ def test_export_test_module(tmp_session_root, sine_files, sample_aupreset):
     snap = StateSnapshot(name="case_a")
     session.add_snapshot(snap, copy_input=inp, copy_output=out, copy_preset=sample_aupreset)
     session.promote_snapshot(snap.id, test_name="test_case_a")
+    neg = StateSnapshot(name="case_neg")
+    session.add_snapshot(neg, copy_input=inp, copy_output=out, copy_preset=sample_aupreset)
+    session.promote_snapshot(neg.id, expect_match=False)
 
     out_path = tmp_session_root / "generated_test.py"
     export_test_module(session, out_path)
@@ -146,6 +230,8 @@ def test_export_test_module(tmp_session_root, sine_files, sample_aupreset):
     content = out_path.read_text()
     assert "test_case_a" in content
     assert "load_preset" in content
+    assert '"expect_match": false' in content
+    assert 'setup.get("expect_match", True)' in content
 
 
 def test_export_setups_json(tmp_session_root, sine_files, sample_aupreset):
