@@ -1,8 +1,12 @@
 # Manual plugin exploration
 
-Launch the **Plugin Host** app to audition plugins with fixture WAVs, hear output on your speakers, and capture test cases — plugin UI, preset, input, output, and `.aupreset` state in one step.
+Launch the **Plugin Host** app to audition plugins with fixture WAVs, hear output on your speakers, and capture test cases — input fixture WAV, rendered output WAV, and `.aupreset` state in one step.
 
-The old terminal-only `explore` REPL is still available for scripting, but **`aufx-test host` is the recommended workflow**.
+Snapshots can then be promoted to be added as testcases to run in `pytest` automation. Snapshots can be used as `golden` references, which expect subsequent renders using the same preset to be materially the same, or as `broken` references, which expect subsequent renders to not match.
+
+Snapshot artifacts (input WAV, output WAV, and preset) can also be added to bug reports so the developer can reproduce issues.
+
+The old terminal-only `explore` REPL is still available for scripting, but `aufx-test host` **is the recommended workflow**.
 
 ## Prerequisites
 
@@ -23,9 +27,11 @@ aufx-test --help          # CLI installed in venv
 ls native/build/plugin_host_app/plugin_host_app_artefacts/Release/
 ```
 
+
+
 ## Configure plugins
 
-Edit `host.config.json` at the project root. The plugin dropdown is filled **only** from this list (no AU scan):
+Edit `host.config.json` at the project root. The plugin selector is populated **only** from this list (no AU scan):
 
 ```json
 {
@@ -37,12 +43,12 @@ Edit `host.config.json` at the project root. The plugin dropdown is filled **onl
   "plugins": [
     {
       "id": "deepz",
-      "name": "DEEP:Z",
+      "name": "DEEP/Z",
       "manufacturer": "Temecula DSP",
       "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEPZ.component",
       "presets_dir": "~/Library/Audio/Presets/Temecula DSP/DEEP:Z",
       "default_preset": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/DEEP:Z/Init Serial.aupreset",
-      "session": "DEEP:Z exploration"
+      "session": "DEEPZ exploration"
     }
   ]
 }
@@ -54,9 +60,10 @@ Each host launch appends an 8-character session hash to `log_file` (e.g. `sessio
 
 ## Launch the host app
 
-From the project directory with venv active:
+From the project directory:
 
 ```bash
+source .venv/bin/activate
 aufx-test host
 ```
 
@@ -72,6 +79,8 @@ If `aufx-test` is not on your PATH:
 .venv/bin/aufx-test host
 ```
 
+
+
 ## Using the app
 
 ```
@@ -79,7 +88,7 @@ If `aufx-test` is not on your PATH:
 │  Plugin Host | [Manufacturer — Plugin ▼] | status... │
 │  Preset ▼ [Load] Save as [____] [Save] ☐ Replace     │
 │  Fixture ▼ [Play] [Stop]                             │
-│  [Capture] Description [________]                    │
+│  [Capture] Description [________] Test Role ▼        │
 │  ┌────────────────────────────────────────────────┐  │
 │  │   plugin UI (embedded)                         │  │
 │  └────────────────────────────────────────────────┘  │
@@ -89,30 +98,40 @@ If `aufx-test` is not on your PATH:
 ```
 
 1. **Plugin** — dropdown lists entries from `host.config.json`. Switching loads that plugin and its `presets_dir` / `session`.
-2. **Preset** — pick a `.aupreset` from that plugin’s presets folder, click **Load**.
+2. **Preset** — pick a `.aupreset` from that plugin’s `presets_dir`, click **Load**.
 3. **Save as** — enter a name and click **Save** to write a new `.aupreset` into the presets folder (it appears in the dropdown). Enable **Replace existing** to overwrite a preset of the same name.
 4. **Fixture** — pick an input WAV (`fixtures/guitar.wav`, etc.).
 5. **Play** — loop the fixture through the plugin to system audio until Stop. Space bar toggles play/stop (unless a text field has focus).
 6. **Stop** — stop playback.
-7. **Capture Test Case** — saves:
-   - current plugin state as `.aupreset`
-   - offline reference render (same tail logic as CI)
-   - snapshot entry in the configured session (e.g. `sessions/DEEP:Z exploration/session.json`)
+7. **Test Role** — whether this is a `golden` reference (expects match), `broken` reference (expects mismatch) or `suspect`, which currently behaves the same as `broken`
+8. **Capture Test Case** — saves:
+  - current plugin state as `.aupreset`
+  - offline reference render from a one-shot playback of the fixture WAV (same tail logic as CI)
+  - snapshot entry in the configured session (e.g. `sessions/DEEPZ exploration/session.json`) including the entered description and test role
 
 Tweak the plugin UI between captures. Each capture creates a new snapshot you can promote and export.
 
 ## After capturing
 
 ```bash
-# Review captures
-aufx-test session show "DEEP:Z exploration"
+# Catalog the snapshots for a given session folder
+aufx-test session show "DEEPZ exploration"
 
-# Promote a good one to an automatable test
-aufx-test session promote "DEEP:Z exploration" init_serial_guitar \
-  --test-name test_init_serial_guitar
+# Promote shapshots as automatable testcases
 
-# Export pytest module
-aufx-test session export "DEEP:Z exploration" \
+# list unpromoted tests in session
+aufx-test session promote "DEEPZ exploration"
+
+# _gld suffix interpreted as golden
+aufx-test session promote "DEEPZ exploration" flange_negative_regen_gld \
+  --test-name flange_negative_regen
+
+# _bkn suffix interpreted as broken
+aufx-test session promote "DEEPZ exploration" pan_lfo_pulse_bkn \
+  --test-name pan_lfo_pulse
+
+# Export pytest module -- adds all promoted snapshots
+aufx-test session export "DEEPZ exploration" \
   -o tests/generated/test_deepz.py
 ```
 
@@ -127,17 +146,23 @@ process = launch_host_app()  # reads host.config.json
 process.wait()
 ```
 
+
+
 ## Troubleshooting
 
-| Problem | Fix |
-|---------|-----|
-| `aufx-test: command not found` | `source .venv/bin/activate` or use `.venv/bin/aufx-test` |
-| Plugin host app not found | Build: `cmake --build native/build --target plugin_host_app` |
-| Config / plugin path errors | Edit `host.config.json`; ensure each `path` exists |
-| No presets in dropdown | Set `presets_dir` for that plugin entry |
-| Capture fails on session update | Ensure `python_cli` in config points at `.venv/bin/aufx-test` |
-| Need error details | Check `sessions/plugin_host_<hash>.log` (from `log_file` + session hash) |
-| No audio on Play | Check macOS output device; restart the host app |
+
+| Problem                         | Fix                                                                      |
+| ------------------------------- | ------------------------------------------------------------------------ |
+| `aufx-test: command not found`  | `source .venv/bin/activate` or use `.venv/bin/aufx-test`                 |
+| Plugin host app not found       | Build: `cmake --build native/build --target plugin_host_app`             |
+| Config / plugin path errors     | Edit `host.config.json`; ensure each `path` exists                       |
+| No presets in dropdown          | Set `presets_dir` for that plugin entry                                  |
+| Capture fails on session update | Ensure `python_cli` in config points at `.venv/bin/aufx-test`            |
+| Need error details              | Check `sessions/plugin_host_<hash>.log` (from `log_file` + session hash) |
+| No audio on Play                | Check macOS output device; restart the host app                          |
+
+
+
 
 ## Legacy: terminal-only explore REPL
 

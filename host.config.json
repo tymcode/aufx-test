@@ -12,15 +12,15 @@
       "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEPZ.component",
       "presets_dir": "~/Library/Audio/Presets/Temecula DSP/DEEP:Z",
       "default_preset": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/DEEP:Z/Init Serial.aupreset",
-      "session": "DEEP/Z exploration"
+      "session": "DEEPZ exploration"
     },
     {
       "id": "deep4",
-      "name": "DEEP:4",
+      "name": "DEEP/4",
       "manufacturer": "Temecula DSP",
       "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEP4.component",
       "presets_dir": "~/Library/Audio/Presets/Temecula DSP/DEEP:4",
-      "session": "DEEP/4 exploration"
+      "session": "DEEP4 exploration"
     }
   ]
 }
