@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from juce_plugin_test import Waveform, compare_waveforms, compute_difference_metrics, difference_signal
+from aufx_test import Waveform, compare_waveforms, compute_difference_metrics, difference_signal
 
 
 def test_identical_waveforms_pass(sine_mono):

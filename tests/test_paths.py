@@ -1,6 +1,6 @@
 """Tests for unique output paths."""
 
-from juce_plugin_test.paths import unique_output_path
+from aufx_test.paths import unique_output_path
 
 
 def test_unique_output_path_creates_tmp(tmp_path, monkeypatch):

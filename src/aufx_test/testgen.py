@@ -29,7 +29,7 @@ def export_test_module(
 """Auto-generated tests from session {session.name!r}.
 
 Regenerate with:
-  juce-plugin-test session export {session.name} -o {output_path}
+  aufx-test session export {session.name} -o {output_path}
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ import json
 
 import pytest
 
-from juce_plugin_test import Waveform, compare_waveforms
-from juce_plugin_test.comparison import ComparisonThresholds
+from aufx_test import Waveform, compare_waveforms
+from aufx_test.comparison import ComparisonThresholds
 
 SETUPS = json.loads(
     """

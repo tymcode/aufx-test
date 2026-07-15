@@ -20,12 +20,12 @@ DEFAULT_RENDERER = (
 
 @pytest.fixture(scope="session")
 def plugin_host():
-    from juce_plugin_test import SubprocessPluginHost
+    from aufx_test import SubprocessPluginHost
 
-    renderer = Path(os.environ.get("JUCE_PLUGIN_RENDERER", DEFAULT_RENDERER))
-    plugin = os.environ.get("JUCE_TEST_PLUGIN")
+    renderer = Path(os.environ.get("AUFX_PLUGIN_RENDERER", DEFAULT_RENDERER))
+    plugin = os.environ.get("AUFX_TEST_PLUGIN")
     if plugin is None:
-        pytest.skip("Set JUCE_TEST_PLUGIN to the .component/.vst3 path")
+        pytest.skip("Set AUFX_TEST_PLUGIN to the .component/.vst3 path")
 
     if not renderer.exists():
         pytest.skip(f"plugin_renderer not built: {renderer}")

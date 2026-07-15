@@ -78,7 +78,7 @@ After loading state, call `prepareToPlay(sampleRate, blockSize)` before processi
 5. Pass to the framework:
 
 ```bash
-juce-plugin-test session snap "MyEffect" "half mix" \
+aufx-test session snap "MyEffect" "half mix" \
   --input fixtures/sine.wav \
   --output ~/Desktop/bounce.wav \
   --aupreset ~/Library/Audio/Presets/MyEffect/MySound.aupreset
@@ -87,7 +87,7 @@ juce-plugin-test session snap "MyEffect" "half mix" \
 ### Sharing with the developer
 
 ```bash
-juce-plugin-test session export-presets "MyEffect" -o share/with-developer/
+aufx-test session export-presets "MyEffect" -o share/with-developer/
 ```
 
 This produces:
@@ -105,7 +105,7 @@ Send the whole folder to the developer. They can load any `.aupreset` in Logic o
 ## Python usage
 
 ```python
-from juce_plugin_test import SubprocessPluginHost, Waveform
+from aufx_test import SubprocessPluginHost, Waveform
 
 with SubprocessPluginHost(
     renderer_bin="build/plugin_renderer",
@@ -121,7 +121,7 @@ with SubprocessPluginHost(
 ```python
 # tests/conftest.py
 import pytest
-from juce_plugin_test import SubprocessPluginHost
+from aufx_test import SubprocessPluginHost
 
 @pytest.fixture(scope="session")
 def plugin_host():

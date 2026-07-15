@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from juce_plugin_test import Waveform
+from aufx_test import Waveform
 
 
 def test_sine_shape(sine_mono):

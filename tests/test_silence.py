@@ -1,6 +1,6 @@
 """Tests for silence analysis."""
 
-from juce_plugin_test import distance_from_silence, measure_silence_regions
+from aufx_test import distance_from_silence, measure_silence_regions
 
 
 def test_distance_from_silence_returns_channels(sine_stereo):

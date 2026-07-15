@@ -1,7 +1,7 @@
 """Tests for compare.config.json loading."""
 
-from juce_plugin_test.compare_config import CompareConfig, load_compare_config, num_of_bands
-from juce_plugin_test.spectrum import analysis_bands, log_spaced_bands
+from aufx_test.compare_config import CompareConfig, load_compare_config, num_of_bands
+from aufx_test.spectrum import analysis_bands, log_spaced_bands
 
 
 def test_default_compare_config_num_of_bands():

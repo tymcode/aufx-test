@@ -1,7 +1,7 @@
 {
   "fixtures_dir": "fixtures",
   "sessions_root": "sessions",
-  "python_cli": ".venv/bin/juce-plugin-test",
+  "python_cli": ".venv/bin/aufx-test",
   "log_file": "sessions/plugin_host.log",
   "default_plugin": "deepz",
   "plugins": [

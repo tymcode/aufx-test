@@ -2,12 +2,12 @@
 
 Launch the **Plugin Host** app to audition plugins with fixture WAVs, hear output on your speakers, and capture test cases — plugin UI, preset, input, output, and `.aupreset` state in one step.
 
-The old terminal-only `explore` REPL is still available for scripting, but **`juce-plugin-test host` is the recommended workflow**.
+The old terminal-only `explore` REPL is still available for scripting, but **`aufx-test host` is the recommended workflow**.
 
 ## Prerequisites
 
 ```bash
-cd ~/dev/juce-plugin-test
+cd ~/dev/aufx-test
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
@@ -19,7 +19,7 @@ cmake --build native/build --target plugin_host_app
 Verify:
 
 ```bash
-juce-plugin-test --help          # CLI installed in venv
+aufx-test --help          # CLI installed in venv
 ls native/build/plugin_host_app/plugin_host_app_artefacts/Release/
 ```
 
@@ -31,7 +31,7 @@ Edit `host.config.json` at the project root. The plugin dropdown is filled **onl
 {
   "fixtures_dir": "fixtures",
   "sessions_root": "sessions",
-  "python_cli": ".venv/bin/juce-plugin-test",
+  "python_cli": ".venv/bin/aufx-test",
   "log_file": "sessions/plugin_host.log",
   "default_plugin": "deepz",
   "plugins": [
@@ -57,19 +57,19 @@ Each host launch appends an 8-character session hash to `log_file` (e.g. `sessio
 From the project directory with venv active:
 
 ```bash
-juce-plugin-test host
+aufx-test host
 ```
 
 Optional overrides:
 
 ```bash
-juce-plugin-test host --config path/to/host.config.json --project-root .
+aufx-test host --config path/to/host.config.json --project-root .
 ```
 
-If `juce-plugin-test` is not on your PATH:
+If `aufx-test` is not on your PATH:
 
 ```bash
-.venv/bin/juce-plugin-test host
+.venv/bin/aufx-test host
 ```
 
 ## Using the app
@@ -105,14 +105,14 @@ Tweak the plugin UI between captures. Each capture creates a new snapshot you ca
 
 ```bash
 # Review captures
-juce-plugin-test session show "DEEP:Z exploration"
+aufx-test session show "DEEP:Z exploration"
 
 # Promote a good one to an automatable test
-juce-plugin-test session promote "DEEP:Z exploration" init_serial_guitar \
+aufx-test session promote "DEEP:Z exploration" init_serial_guitar \
   --test-name test_init_serial_guitar
 
 # Export pytest module
-juce-plugin-test session export "DEEP:Z exploration" \
+aufx-test session export "DEEP:Z exploration" \
   -o tests/generated/test_deepz.py
 ```
 
@@ -121,7 +121,7 @@ Headless replay in CI still uses `plugin_renderer` + `SubprocessPluginHost` with
 ## Python API
 
 ```python
-from juce_plugin_test.host_app import launch_host_app
+from aufx_test.host_app import launch_host_app
 
 process = launch_host_app()  # reads host.config.json
 process.wait()
@@ -131,11 +131,11 @@ process.wait()
 
 | Problem | Fix |
 |---------|-----|
-| `juce-plugin-test: command not found` | `source .venv/bin/activate` or use `.venv/bin/juce-plugin-test` |
+| `aufx-test: command not found` | `source .venv/bin/activate` or use `.venv/bin/aufx-test` |
 | Plugin host app not found | Build: `cmake --build native/build --target plugin_host_app` |
 | Config / plugin path errors | Edit `host.config.json`; ensure each `path` exists |
 | No presets in dropdown | Set `presets_dir` for that plugin entry |
-| Capture fails on session update | Ensure `python_cli` in config points at `.venv/bin/juce-plugin-test` |
+| Capture fails on session update | Ensure `python_cli` in config points at `.venv/bin/aufx-test` |
 | Need error details | Check `sessions/plugin_host_<hash>.log` (from `log_file` + session hash) |
 | No audio on Play | Check macOS output device; restart the host app |
 
@@ -144,7 +144,7 @@ process.wait()
 For scripting without the GUI:
 
 ```bash
-juce-plugin-test explore \
+aufx-test explore \
   --new-name "DEEP:Z exploration" \
   --plugin "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEPZ.component"
 ```

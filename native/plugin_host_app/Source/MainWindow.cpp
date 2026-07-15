@@ -776,11 +776,11 @@ private:
         if (! cli.existsAsFile())
             cli = juce::File::getSpecialLocation (juce::File::currentExecutableFile)
                       .getParentDirectory()
-                      .getChildFile ("juce-plugin-test");
+                      .getChildFile ("aufx-test");
 
         if (! cli.existsAsFile())
         {
-            error = "Could not find juce-plugin-test CLI (set python_cli in host.config.json)";
+            error = "Could not find aufx-test CLI (set python_cli in host.config.json)";
             return false;
         }
 
@@ -805,13 +805,13 @@ private:
         juce::ChildProcess process;
         if (! process.start (args))
         {
-            error = "Failed to start juce-plugin-test CLI";
+            error = "Failed to start aufx-test CLI";
             return false;
         }
 
         if (! process.waitForProcessToFinish (120000))
         {
-            error = "Timed out waiting for juce-plugin-test session snap";
+            error = "Timed out waiting for aufx-test session snap";
             return false;
         }
 
@@ -820,7 +820,7 @@ private:
         {
             error = process.readAllProcessOutput().trim();
             if (error.isEmpty())
-                error = "juce-plugin-test session snap failed with exit code " + juce::String (exitCode);
+                error = "aufx-test session snap failed with exit code " + juce::String (exitCode);
             return false;
         }
 

@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "juce-plugin-test"
+name = "aufx-test"
 version = "0.1.0"
-description = "Automated audio test framework for JUCE-based VST/AU plugins"
+description = "Automated audio test framework for AU/FX plugins"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -24,7 +24,7 @@ dev = [
 ]
 
 [project.scripts]
-juce-plugin-test = "juce_plugin_test.cli:main"
+aufx-test = "aufx_test.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -34,4 +34,4 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 
 [tool.coverage.run]
-source = ["juce_plugin_test"]
+source = ["aufx_test"]

@@ -35,10 +35,10 @@ def default_config_path(root: Path | None = None) -> Path:
 
 def default_python_cli(root: Path | None = None) -> Path:
     root = root or project_root()
-    venv_cli = root / ".venv/bin/juce-plugin-test"
+    venv_cli = root / ".venv/bin/aufx-test"
     if venv_cli.exists():
         return venv_cli
-    which = shutil.which("juce-plugin-test")
+    which = shutil.which("aufx-test")
     if which:
         return Path(which)
     return Path(sys.executable)

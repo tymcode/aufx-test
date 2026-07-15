@@ -159,7 +159,7 @@ class SubprocessPluginHost:
             self.work_dir.mkdir(parents=True, exist_ok=True)
             return self.work_dir
         if self._temp_dir is None:
-            self._temp_dir = tempfile.TemporaryDirectory(prefix="juce-plugin-test-")
+            self._temp_dir = tempfile.TemporaryDirectory(prefix="aufx-test-")
         return Path(self._temp_dir.name)
 
     def close(self) -> None:

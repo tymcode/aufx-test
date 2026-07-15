@@ -1,6 +1,6 @@
 # CI / Build Integration (Future Phase)
 
-This document outlines how to wire `juce-plugin-test` into your plugin build pipeline.
+This document outlines how to wire `aufx-test` into your plugin build pipeline.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ This document outlines how to wire `juce-plugin-test` into your plugin build pip
 └─────────────────┘     └──────────────────┘     └────────┬────────┘
                                                           │
                         ┌──────────────────┐              │
-                        │  juce-plugin-test│◀─────────────┘
+                        │  aufx-test│◀─────────────┘
                         │  (Python)        │
                         └────────┬─────────┘
                                  │
@@ -35,7 +35,7 @@ Implement `PluginHost` in Python to call this CLI:
 
 ```python
 import subprocess
-from juce_plugin_test import Waveform, PluginHost
+from aufx_test import Waveform, PluginHost
 
 class SubprocessPluginHost:
     def __init__(self, renderer_bin: str, plugin_path: str):

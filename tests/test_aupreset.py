@@ -4,7 +4,7 @@ import plistlib
 
 import pytest
 
-from juce_plugin_test.aupreset import AUpresetError, import_aupreset, validate_aupreset
+from aufx_test.aupreset import AUpresetError, import_aupreset, validate_aupreset
 
 
 def test_validate_aupreset(sample_aupreset):

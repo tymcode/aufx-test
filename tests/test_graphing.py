@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from juce_plugin_test import (
+from aufx_test import (
     band_amplitude_over_time,
     compare_waveforms,
     distance_from_silence,
     measure_silence_regions,
 )
-from juce_plugin_test.graphing import (
+from aufx_test.graphing import (
     plot_band_amplitude,
     plot_comparison,
     plot_difference_metrics,

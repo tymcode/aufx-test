@@ -1,4 +1,4 @@
-"""JUCE plugin audio test framework."""
+"""AU/FX plugin audio test framework."""
 
 from .audio import Waveform
 from .capture import CapturePair, capture_before_after, capture_with_host, compare_captured_to_reference

@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from juce_plugin_test import Waveform, invert_phase, sum_signals
+from aufx_test import Waveform, invert_phase, sum_signals
 
 
 def test_invert_phase_single_channel(sine_stereo):

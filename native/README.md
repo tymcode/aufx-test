@@ -10,7 +10,7 @@ Headless CLI host for offline plugin rendering in automated tests. Implements th
 
 ## Setup JUCE
 
-This project auto-detects a sibling checkout at `../JUCE` (e.g. `~/dev/JUCE` next to `~/dev/juce-plugin-test`).
+This project auto-detects a sibling checkout at `../JUCE` (e.g. `~/dev/JUCE` next to `~/dev/aufx-test`).
 
 Alternatively, clone JUCE as a submodule:
 
@@ -27,7 +27,7 @@ cmake -S native -B native/build -DJUCE_PATH=/path/to/JUCE
 
 ## Build
 
-From `juce-plugin-test/` (with `~/dev/JUCE` as a sibling, no extra flags needed):
+From `aufx-test/` (with `~/dev/JUCE` as a sibling, no extra flags needed):
 
 ```bash
 cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
@@ -50,7 +50,7 @@ native/build/plugin_host_app/plugin_host_app_artefacts/Release/Plugin Host.app
 Launch from Python (reads project-root `host.config.json` for plugins, fixtures, sessions):
 
 ```bash
-juce-plugin-test host
+aufx-test host
 ```
 
 ## Usage
@@ -78,7 +78,7 @@ Optional flags:
 # tests/conftest.py
 import pytest
 from pathlib import Path
-from juce_plugin_test import SubprocessPluginHost
+from aufx_test import SubprocessPluginHost
 
 ROOT = Path(__file__).resolve().parents[1]
 RENDERER = ROOT / "native/build/plugin_renderer/plugin_renderer_artefacts/Release/plugin_renderer"
@@ -108,7 +108,7 @@ On other platforms, XML `.aupreset` plists are supported via JUCE's XML parser.
 
 You can either:
 
-1. **Keep this as a standalone tool** in `juce-plugin-test/native/` (simplest to start), or
+1. **Keep this as a standalone tool** in `aufx-test/native/` (simplest to start), or
 2. **Add `add_subdirectory()` from your plugin's CMake** and install `plugin_renderer` next to your AU/VST3 build outputs.
 
 For option 2, expose the path to CI and point `SubprocessPluginHost` at the built binary.

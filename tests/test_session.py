@@ -5,16 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from juce_plugin_test import ExperimentSession, StateSnapshot, Waveform
-from juce_plugin_test.explore import capture_snapshot_from_cli
-from juce_plugin_test.session import (
+from aufx_test import ExperimentSession, StateSnapshot, Waveform
+from aufx_test.explore import capture_snapshot_from_cli
+from aufx_test.session import (
     _artifact_stem,
     _keyword_from_description,
     expect_match_for_output_role,
     output_artifact_filename,
     parse_output_role,
 )
-from juce_plugin_test.testgen import export_setups_json, export_test_module
+from aufx_test.testgen import export_setups_json, export_test_module
 
 
 @pytest.fixture

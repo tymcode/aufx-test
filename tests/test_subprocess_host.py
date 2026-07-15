@@ -5,8 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from juce_plugin_test import SubprocessPluginHost, Waveform
-from juce_plugin_test.subprocess_host import RendererError
+from aufx_test import SubprocessPluginHost, Waveform
+from aufx_test.subprocess_host import RendererError
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def test_process_builds_expected_command(fake_renderer, sample_aupreset, sine_mo
     )
     host.load_preset(sample_aupreset)
 
-    with patch("juce_plugin_test.subprocess_host.subprocess.run", side_effect=_mock_run_create_output) as run:
+    with patch("aufx_test.subprocess_host.subprocess.run", side_effect=_mock_run_create_output) as run:
         host.process(sine_mono)
 
     cmd = run.call_args.args[0]
@@ -61,7 +61,7 @@ def test_process_raises_on_renderer_failure(fake_renderer, sample_aupreset, sine
     )
     host.load_preset(sample_aupreset)
 
-    with patch("juce_plugin_test.subprocess_host.subprocess.run") as run:
+    with patch("aufx_test.subprocess_host.subprocess.run") as run:
         run.return_value = MagicMock(returncode=1, stdout="", stderr="plugin failed")
         with pytest.raises(RendererError, match="plugin failed"):
             host.process(sine_mono)
@@ -77,7 +77,7 @@ def test_param_overrides_appended_after_preset(fake_renderer, sample_aupreset, s
     host.load_preset(sample_aupreset)
     host.set_parameters({"mix": 0.5})
 
-    with patch("juce_plugin_test.subprocess_host.subprocess.run", side_effect=_mock_run_create_output) as run:
+    with patch("aufx_test.subprocess_host.subprocess.run", side_effect=_mock_run_create_output) as run:
         host.process(sine_mono)
 
     cmd = run.call_args.args[0]

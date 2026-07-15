@@ -1,6 +1,6 @@
-# juce-plugin-test
+# aufx-test
 
-Automated audio test framework for JUCE-based VST and AU audio effects plugins.
+Automated audio test framework for AU / FX (VST/AU) audio effects plugins.
 
 Compare plugin output against reference waveforms using objective, repeatable metrics — not bit-for-bit equality. Designed for Python-first workflows with a path toward CI integration.
 
@@ -25,8 +25,8 @@ pip install -e ".[dev]"
 ## Quick start
 
 ```python
-from juce_plugin_test import Waveform, compare_waveforms, capture_before_after
-from juce_plugin_test.graphing import plot_comparison
+from aufx_test import Waveform, compare_waveforms, capture_before_after
+from aufx_test.graphing import plot_comparison
 
 # Load input and reference
 input_wav = Waveform.from_file("fixtures/sine_440hz.wav")
@@ -46,7 +46,7 @@ plot_comparison(before, after, reference, save_path="output/comparison.png")
 
 ## Plugin host integration (future)
 
-The `PluginHost` protocol in `juce_plugin_test.host` defines the interface for driving a real VST/AU. Implement it with your preferred headless host (e.g. a small JUCE command-line renderer, [pluginval](https://github.com/Tracktion/pluginval), or a custom tool) and pass it to the capture helpers.
+The `PluginHost` protocol in `aufx_test.host` defines the interface for driving a real VST/AU. Implement it with your preferred headless host (e.g. a small JUCE command-line renderer, [pluginval](https://github.com/Tracktion/pluginval), or a custom tool) and pass it to the capture helpers.
 
 See [docs/ci-integration.md](docs/ci-integration.md) for build-pipeline integration notes.
 
@@ -57,21 +57,21 @@ Experiment in the plugin host GUI, or capture from a DAW:
 ```bash
 # Recommended: native host with plugin UI + fixture playback + capture
 # Configure plugins in host.config.json, then:
-juce-plugin-test host
+aufx-test host
 
 # Legacy: terminal REPL after bouncing in a DAW
-juce-plugin-test explore --new-name "DEEP:Z exploration" \
+aufx-test explore --new-name "DEEP:Z exploration" \
   --plugin "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEPZ.component"
 
 # Or capture non-interactively after bouncing in your DAW
-juce-plugin-test session snap "MyEffect" "half mix" \
+aufx-test session snap "MyEffect" "half mix" \
   --input fixtures/sine.wav --output ~/Desktop/bounce.wav \
   --aupreset ~/Library/Audio/Presets/MyEffect/half_mix.aupreset
 
 # Promote good captures and export pytest
-juce-plugin-test session promote "MyEffect" half_mix --test-name test_mix_half
-juce-plugin-test session export "MyEffect" -o tests/generated/test_my_effect.py
-juce-plugin-test session export-presets "MyEffect" -o share/with-developer/
+aufx-test session promote "MyEffect" half_mix --test-name test_mix_half
+aufx-test session export "MyEffect" -o tests/generated/test_my_effect.py
+aufx-test session export-presets "MyEffect" -o share/with-developer/
 ```
 
 Headless replay uses `SubprocessPluginHost` with the JUCE `plugin_renderer` CLI and `.aupreset` state blobs.
@@ -98,7 +98,7 @@ pytest
 ## Project layout
 
 ```
-src/juce_plugin_test/
+src/aufx_test/
   audio.py          # Waveform type and I/O
   signal_ops.py     # Phase invert, sum
   silence.py        # Silence distance and region detection
