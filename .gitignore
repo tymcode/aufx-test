@@ -22,3 +22,6 @@ native/build/
 native/**/plugin_renderer_artefacts/
 *.png
 !docs/**/*.png
+
+.DS_Store
+**/.DS_Store
