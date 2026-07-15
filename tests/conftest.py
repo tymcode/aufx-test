@@ -1,5 +1,7 @@
 """Shared pytest fixtures."""
 
+from pathlib import Path
+
 import pytest
 
 from juce_plugin_test import Waveform
@@ -36,3 +38,21 @@ def stereo_with_silence(sample_rate: int) -> Waveform:
 @pytest.fixture
 def passthrough_host() -> PassthroughHost:
     return PassthroughHost()
+
+
+@pytest.fixture
+def sample_aupreset(tmp_path) -> Path:
+    import plistlib
+
+    preset = tmp_path / "test.aupreset"
+    plistlib.dump(
+        {
+            "name": "Test Preset",
+            "manufacturer": 1146379079,
+            "subtype": 1234567890,
+            "type": 1635083896,
+            "data": b"\x00\x01\x02\x03plugin-state-bytes",
+        },
+        preset.open("wb"),
+    )
+    return preset

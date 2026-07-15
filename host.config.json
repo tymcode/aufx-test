@@ -1,0 +1,27 @@
+{
+  "fixtures_dir": "fixtures",
+  "sessions_root": "sessions",
+  "python_cli": ".venv/bin/juce-plugin-test",
+  "log_file": "sessions/plugin_host.log",
+  "default_plugin": "deepz",
+  "plugins": [
+    {
+      "id": "deepz",
+      "name": "DEEP/Z",
+      "manufacturer": "Temecula DSP",
+      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEPZ.component",
+      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/DEEP:Z",
+      "default_preset": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/DEEP:Z/Init Serial.aupreset",
+      "session": "DEEP/Z exploration"
+    },
+    {
+      "id": "deep4",
+      "name": "DEEP:4",
+      "manufacturer": "Temecula DSP",
+      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEP4.component",
+      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/DEEP:4",
+      "session": "DEEP/4 exploration"
+    }
+  ]
+}
+

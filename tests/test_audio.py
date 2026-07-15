@@ -1,5 +1,7 @@
 """Tests for Waveform type."""
 
+import numpy as np
+
 from juce_plugin_test import Waveform
 
 
@@ -18,6 +20,13 @@ def test_aligned_to_truncates(sine_mono, sample_rate):
     short = Waveform.sine(440.0, 0.25, sample_rate=sample_rate)
     a, b = sine_mono.aligned_to(short)
     assert a.num_samples == b.num_samples == short.num_samples
+
+
+def test_padded_to_match_extends_shorter(sine_mono, sample_rate):
+    short = Waveform.sine(440.0, 0.25, sample_rate=sample_rate)
+    a, b = sine_mono.padded_to_match(short)
+    assert a.num_samples == b.num_samples == sine_mono.num_samples
+    assert np.allclose(b.data[short.num_samples :], 0.0)
 
 
 def test_silence_factory(sample_rate):

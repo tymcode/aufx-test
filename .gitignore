@@ -16,5 +16,9 @@ htmlcov/
 *.wav
 !fixtures/**/*.wav
 output/
+tmp/
+sessions/
+native/build/
+native/**/plugin_renderer_artefacts/
 *.png
 !docs/**/*.png

@@ -67,7 +67,7 @@ class ComparisonThresholds:
 
 def compute_difference_metrics(actual: Waveform, expected: Waveform) -> DifferenceMetrics:
     """Compute repeatable objective difference metrics between two waveforms."""
-    actual_a, expected_a = actual.aligned_to(expected)
+    actual_a, expected_a = actual.padded_to_match(expected)
     channels = max(actual_a.num_channels, expected_a.num_channels)
     a_data = _pad_channels(actual_a.data, channels)
     e_data = _pad_channels(expected_a.data, channels)
@@ -110,8 +110,16 @@ def compare_waveforms(
     rms_error_max: float | None = None,
     spectral_distance_max: float | None = None,
 ) -> ComparisonResult:
-    """Compare actual output to expected reference against quality thresholds."""
-    t = thresholds or ComparisonThresholds()
+    """Compare actual output to expected reference against quality thresholds.
+
+    When ``thresholds`` is omitted, defaults come from ``compare.config.json``.
+    """
+    if thresholds is None:
+        from .compare_config import cached_compare_config
+
+        t = cached_compare_config().thresholds
+    else:
+        t = thresholds
     if snr_db_min is not None:
         t = ComparisonThresholds(
             snr_db_min=snr_db_min,
@@ -163,7 +171,7 @@ def compare_waveforms(
 
 def difference_signal(actual: Waveform, expected: Waveform) -> Waveform:
     """Return the sample-wise difference (actual - expected)."""
-    actual_a, expected_a = actual.aligned_to(expected)
+    actual_a, expected_a = actual.padded_to_match(expected)
     channels = max(actual_a.num_channels, expected_a.num_channels)
     diff = _pad_channels(actual_a.data, channels) - _pad_channels(expected_a.data, channels)
     return Waveform(data=diff, sample_rate=actual_a.sample_rate)

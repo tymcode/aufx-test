@@ -1,0 +1,12 @@
+{
+  "num_of_bands": 7,
+  "band_low_hz": 20,
+  "band_high_hz": 20000,
+  "window_samples": 4096,
+  "thresholds": {
+    "snr_db_min": 30,
+    "correlation_min": 0.95,
+    "rms_error_max": 0.05,
+    "spectral_distance_max": 0.15
+  }
+}

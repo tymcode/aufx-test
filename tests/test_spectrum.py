@@ -1,7 +1,7 @@
 """Tests for frequency-band analysis."""
 
-from juce_plugin_test import Waveform, band_amplitude_over_time
-from juce_plugin_test.spectrum import FrequencyBand
+from juce_plugin_test import Waveform, band_amplitude_over_time, num_of_bands
+from juce_plugin_test.spectrum import FrequencyBand, analysis_bands, log_spaced_bands
 
 
 def test_band_amplitude_over_time(sine_mono):
@@ -24,6 +24,12 @@ def test_band_amplitude_over_time(sine_mono):
 
 def test_default_bands_cover_spectrum(sine_mono):
     result = band_amplitude_over_time(sine_mono, window_samples=4096, hop_samples=2048)
-    assert len(result) == 7
+    assert len(result) == num_of_bands()
     for band_data in result.values():
         assert len(band_data["times"]) > 0
+
+
+def test_analysis_bands_respects_count():
+    assert len(analysis_bands(7)) == 7
+    assert len(log_spaced_bands(4)) == 4
+    assert analysis_bands(7)[0].name == "sub"

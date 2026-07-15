@@ -71,6 +71,26 @@ class Waveform:
         length = min(self.num_samples, other.num_samples)
         return self.with_data(self.data[:length]), other.with_data(other.data[:length])
 
+    def padded_to_match(self, other: Waveform) -> tuple[Self, Waveform]:
+        """Match sample rates and pad the shorter signal with trailing silence."""
+        other_aligned = other.resampled_to(self.sample_rate) if self.sample_rate != other.sample_rate else other
+        length = max(self.num_samples, other_aligned.num_samples)
+        channels = max(self.num_channels, other_aligned.num_channels)
+        return self._padded_to(length, channels), other_aligned._padded_to(length, channels)
+
+    def _padded_to(self, length: int, channels: int) -> Self:
+        data = self.data
+        if data.shape[1] < channels:
+            data = np.hstack([data, np.zeros((data.shape[0], channels - data.shape[1]))])
+        elif data.shape[1] > channels:
+            data = data[:, :channels]
+        if data.shape[0] < length:
+            pad = np.zeros((length - data.shape[0], data.shape[1]))
+            data = np.vstack([data, pad])
+        elif data.shape[0] > length:
+            data = data[:length]
+        return self.with_data(data)
+
     @classmethod
     def from_file(cls, path: str | Path) -> Self:
         data, sample_rate = sf.read(str(path), always_2d=True)
