@@ -20,6 +20,7 @@ class DifferenceMetrics:
     rms_error: float
     max_abs_error: float
     spectral_distance: float
+    alignment_lag_samples: int = 0
     channel_metrics: dict[int, dict[str, float]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, float | dict]:
@@ -29,6 +30,7 @@ class DifferenceMetrics:
             "rms_error": self.rms_error,
             "max_abs_error": self.max_abs_error,
             "spectral_distance": self.spectral_distance,
+            "alignment_lag_samples": self.alignment_lag_samples,
             "channel_metrics": self.channel_metrics,
         }
 
@@ -48,6 +50,7 @@ class ComparisonResult:
             f"  correlation={self.metrics.correlation:.4f}",
             f"  rms_error={self.metrics.rms_error:.6f}",
             f"  spectral_distance={self.metrics.spectral_distance:.4f}",
+            f"  alignment_lag_samples={self.metrics.alignment_lag_samples}",
         ]
         if self.failures:
             lines.append("  failures:")
@@ -65,9 +68,30 @@ class ComparisonThresholds:
     spectral_distance_max: float = 0.15
 
 
-def compute_difference_metrics(actual: Waveform, expected: Waveform) -> DifferenceMetrics:
-    """Compute repeatable objective difference metrics between two waveforms."""
-    actual_a, expected_a = actual.padded_to_match(expected)
+def compute_difference_metrics(
+    actual: Waveform,
+    expected: Waveform,
+    *,
+    allow_extra_actual_tail: bool = False,
+    max_alignment_samples: int = 0,
+) -> DifferenceMetrics:
+    """Compute repeatable objective difference metrics between two waveforms.
+
+    When ``allow_extra_actual_tail`` is true and ``actual`` is longer than
+    ``expected``, only the overlapping prefix is scored. This avoids treating
+    truncated golden reverb tails as failures when the live render is longer.
+    """
+    actual, expected, alignment_lag = align_waveforms(
+        actual,
+        expected,
+        max_lag_samples=max_alignment_samples,
+    )
+    if allow_extra_actual_tail:
+        if actual.num_samples > expected.num_samples:
+            actual = actual.with_data(actual.data[: expected.num_samples])
+        actual_a, expected_a = actual.padded_to_match(expected)
+    else:
+        actual_a, expected_a = actual.padded_to_match(expected)
     channels = max(actual_a.num_channels, expected_a.num_channels)
     a_data = _pad_channels(actual_a.data, channels)
     e_data = _pad_channels(expected_a.data, channels)
@@ -96,6 +120,7 @@ def compute_difference_metrics(actual: Waveform, expected: Waveform) -> Differen
         rms_error=float(np.mean(rmses)),
         max_abs_error=float(np.max(maxes)),
         spectral_distance=float(np.mean(spec_dists)),
+        alignment_lag_samples=alignment_lag,
         channel_metrics=channel_metrics,
     )
 
@@ -109,10 +134,18 @@ def compare_waveforms(
     correlation_min: float | None = None,
     rms_error_max: float | None = None,
     spectral_distance_max: float | None = None,
+    allow_extra_actual_tail: bool = False,
+    max_alignment_samples: int = 0,
 ) -> ComparisonResult:
     """Compare actual output to expected reference against quality thresholds.
 
     When ``thresholds`` is omitted, defaults come from ``compare.config.json``.
+
+    Set ``allow_extra_actual_tail=True`` to ignore trailing samples beyond the
+    reference length (useful when imported goldens have truncated tails).
+
+    Set ``max_alignment_samples`` to compensate for a small fixed plugin
+    latency before scoring. Positive lag means the actual signal was delayed.
     """
     if thresholds is None:
         from .compare_config import cached_compare_config
@@ -149,7 +182,12 @@ def compare_waveforms(
             spectral_distance_max=spectral_distance_max,
         )
 
-    metrics = compute_difference_metrics(actual, expected)
+    metrics = compute_difference_metrics(
+        actual,
+        expected,
+        allow_extra_actual_tail=allow_extra_actual_tail,
+        max_alignment_samples=max_alignment_samples,
+    )
     failures: list[str] = []
     if metrics.snr_db < t.snr_db_min:
         failures.append(f"SNR {metrics.snr_db:.2f} dB < {t.snr_db_min:.2f} dB")
@@ -167,6 +205,51 @@ def compare_waveforms(
         metrics=metrics,
         failures=tuple(failures),
     )
+
+
+def align_waveforms(
+    actual: Waveform,
+    expected: Waveform,
+    *,
+    max_lag_samples: int,
+) -> tuple[Waveform, Waveform, int]:
+    """Resample and align waveforms within a bounded integer-sample lag.
+
+    Positive lag means ``actual`` starts later than ``expected``. The
+    non-overlapping leading/trailing samples introduced by the lag are removed.
+    """
+    if max_lag_samples < 0:
+        raise ValueError("max_lag_samples must be non-negative")
+    if actual.sample_rate != expected.sample_rate:
+        actual = actual.resampled_to(expected.sample_rate)
+    if max_lag_samples == 0 or actual.num_samples == 0 or expected.num_samples == 0:
+        return actual, expected, 0
+
+    channels = max(actual.num_channels, expected.num_channels)
+    a = np.mean(_pad_channels(actual.data, channels), axis=1)
+    e = np.mean(_pad_channels(expected.data, channels), axis=1)
+
+    # Two seconds is enough to identify fixed host/plugin latency while keeping
+    # alignment inexpensive for long reverb renders.
+    analysis_samples = min(len(a), len(e), actual.sample_rate * 2)
+    a = a[:analysis_samples] - np.mean(a[:analysis_samples])
+    e = e[:analysis_samples] - np.mean(e[:analysis_samples])
+    if np.linalg.norm(a) == 0 or np.linalg.norm(e) == 0:
+        return actual, expected, 0
+
+    correlation = sp_signal.correlate(a, e, mode="full", method="fft")
+    lags = sp_signal.correlation_lags(len(a), len(e), mode="full")
+    allowed = np.abs(lags) <= max_lag_samples
+    lag = int(lags[allowed][np.argmax(correlation[allowed])])
+
+    if lag > 0:
+        actual = actual.with_data(actual.data[lag:])
+        expected = expected.with_data(expected.data[: expected.num_samples - lag])
+    elif lag < 0:
+        offset = -lag
+        actual = actual.with_data(actual.data[: actual.num_samples - offset])
+        expected = expected.with_data(expected.data[offset:])
+    return actual, expected, lag
 
 
 def difference_signal(actual: Waveform, expected: Waveform) -> Waveform:

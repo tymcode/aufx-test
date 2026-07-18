@@ -26,6 +26,9 @@ dev = [
 [project.scripts]
 aufx-test = "aufx_test.cli:main"
 
+[project.entry-points.pytest11]
+aufx-test = "aufx_test.pytest_plugin"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

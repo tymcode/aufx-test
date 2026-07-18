@@ -86,6 +86,93 @@ def _base_stem_from_output(path: str | Path) -> str:
     return stem
 
 
+@dataclass(frozen=True)
+class GoldenTriplet:
+    """One external golden/broken/suspect case discovered on disk."""
+
+    name: str
+    stem: str
+    role: str
+    preset: Path
+    input_audio: Path
+    output_audio: Path
+
+
+def _try_complete_triplet(
+    root: Path,
+    output: Path,
+    role: str,
+    *,
+    seen_stems: set[str],
+    complete: list[GoldenTriplet],
+    warnings: list[str],
+) -> None:
+    """Validate and append one output WAV as a golden triplet, or record a warning."""
+    stem = _base_stem_from_output(output)
+    if stem in seen_stems:
+        warnings.append(f"Duplicate stem {stem!r}; keeping first match ({output.name})")
+        return
+
+    preset = root / f"{stem}.aupreset"
+    input_audio = root / f"{stem}_input.wav"
+    missing: list[str] = []
+    if not preset.is_file():
+        missing.append(preset.name)
+    if not input_audio.is_file():
+        missing.append(input_audio.name)
+    if missing:
+        warnings.append(f"Incomplete set for {stem!r}: missing {', '.join(missing)}")
+        return
+
+    seen_stems.add(stem)
+    complete.append(
+        GoldenTriplet(
+            name=stem,
+            stem=stem,
+            role=role,
+            preset=preset,
+            input_audio=input_audio,
+            output_audio=output,
+        )
+    )
+
+
+def discover_golden_triplets(directory: str | Path) -> tuple[list[GoldenTriplet], list[str]]:
+    """Find ``{stem}.aupreset`` + ``{stem}_input.wav`` + output WAV sets.
+
+    Accepts ``{stem}_output_{gld,sus,bkn}.wav`` and bare ``{stem}_output.wav``
+    (treated as golden / ``gld``).
+
+    Returns ``(complete, warnings)``. Incomplete sets are reported in ``warnings``.
+    """
+    root = Path(directory)
+    if not root.is_dir():
+        raise FileNotFoundError(f"Golden directory not found: {root}")
+
+    complete: list[GoldenTriplet] = []
+    warnings: list[str] = []
+    seen_stems: set[str] = set()
+
+    for role in OUTPUT_ROLES:
+        for output in sorted(root.glob(f"*_output_{role}.wav")):
+            _try_complete_triplet(
+                root, output, role, seen_stems=seen_stems, complete=complete, warnings=warnings
+            )
+
+    # Bare ``*_output.wav`` (no role flag) counts as golden — common for hand-exported
+    # references that never went through the host role dropdown.
+    for output in sorted(root.glob("*_output.wav")):
+        # ``*_output.wav`` does not match ``*_output_gld.wav`` via Path.glob.
+        if parse_output_role(output) is not None:
+            continue
+        _try_complete_triplet(
+            root, output, "gld", seen_stems=seen_stems, complete=complete, warnings=warnings
+        )
+
+    complete.sort(key=lambda t: t.name.lower())
+    return complete, warnings
+
+
 @dataclass
 class StateSnapshot:
     """One captured plugin state from manual exploration."""
@@ -325,6 +412,62 @@ class ExperimentSession:
 
     def promoted_setups(self) -> list[TestSetup]:
         return [self.snapshot_to_test_setup(s) for s in self.snapshots if s.promoted]
+
+    def import_goldens(
+        self,
+        directory: str | Path,
+        *,
+        promote: bool = True,
+        thresholds: ComparisonThresholds | None = None,
+    ) -> tuple[list[StateSnapshot], list[str]]:
+        """Import external golden triplets into this session.
+
+        Expects files named::
+
+            {stem}.aupreset
+            {stem}_input.wav
+            {stem}_output_gld.wav   # or _output_bkn / _output_sus / bare _output.wav
+
+        Bare ``{stem}_output.wav`` is treated as a golden (``gld``) reference.
+
+        Already-present snapshot names are skipped. When ``promote`` is true,
+        new snapshots are marked ready for automation.
+        """
+        triplets, warnings = discover_golden_triplets(directory)
+        if not triplets and not warnings:
+            warnings.append(
+                f"No *_output.wav or *_output_{{gld,sus,bkn}}.wav files found in {directory}"
+            )
+
+        existing_names = {_slug(s.name) for s in self.snapshots}
+        imported: list[StateSnapshot] = []
+
+        for triplet in triplets:
+            if _slug(triplet.name) in existing_names:
+                warnings.append(f"Skipped existing snapshot {triplet.name!r}")
+                continue
+
+            validate_aupreset(triplet.preset)
+            snap = StateSnapshot(
+                name=triplet.name,
+                reference_kind=triplet.role,
+                notes=f"Imported from {Path(directory).resolve()}",
+                tags=["imported", _OUTPUT_ROLE_LABELS.get(triplet.role, triplet.role)],
+            )
+            self.add_snapshot(
+                snap,
+                copy_input=triplet.input_audio,
+                copy_output=triplet.output_audio,
+                copy_preset=triplet.preset,
+            )
+            if promote:
+                self.promote_snapshot(snap.id, thresholds=thresholds)
+            existing_names.add(_slug(triplet.name))
+            imported.append(snap)
+
+        if imported:
+            self.save()
+        return imported, warnings
 
     def resolve_path(self, path: str | None) -> Path:
         if path is None:

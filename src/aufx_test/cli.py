@@ -223,6 +223,40 @@ def _cmd_session_export_presets(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_session_import_goldens(args: argparse.Namespace) -> int:
+    session = _load_session(args.name, args.root)
+    directory = Path(args.directory)
+    if not directory.is_absolute():
+        directory = Path.cwd() / directory
+
+    thresholds = None
+    if args.promote:
+        base = load_compare_config().thresholds
+        thresholds = ComparisonThresholds(
+            snr_db_min=base.snr_db_min,
+            correlation_min=base.correlation_min,
+            rms_error_max=base.rms_error_max,
+            spectral_distance_max=base.spectral_distance_max,
+        )
+
+    imported, warnings = session.import_goldens(
+        directory,
+        promote=args.promote,
+        thresholds=thresholds,
+    )
+    for warning in warnings:
+        print(f"warning: {warning}")
+    for snap in imported:
+        role = snap.reference_kind or "unknown"
+        status = "promoted" if snap.promoted else "imported"
+        print(f"{status} {snap.id} {snap.name!r} ({role})")
+    print(f"Imported {len(imported)} golden(s) into session {session.name!r}")
+    # Idempotent re-imports (everything already present) are success.
+    if imported or any("Skipped existing" in w for w in warnings):
+        return 0
+    return 1
+
+
 def _cmd_explore(args: argparse.Namespace) -> int:
     if args.name:
         session = _load_session(args.name, args.root)
@@ -396,6 +430,24 @@ def main(argv: list[str] | None = None) -> int:
     session_export_presets.add_argument("name", help="Session name")
     session_export_presets.add_argument("-o", "--output", type=Path, required=True)
     session_export_presets.set_defaults(func=_cmd_session_export_presets)
+
+    session_import_goldens = session_sub.add_parser(
+        "import-goldens",
+        help="Import external golden triplets ({stem}.aupreset, _input.wav, _output_gld.wav)",
+    )
+    session_import_goldens.add_argument("name", help="Session name")
+    session_import_goldens.add_argument(
+        "directory",
+        type=Path,
+        help="Folder containing golden triplets",
+    )
+    session_import_goldens.add_argument(
+        "--no-promote",
+        dest="promote",
+        action="store_false",
+        help="Import snapshots without promoting them",
+    )
+    session_import_goldens.set_defaults(func=_cmd_session_import_goldens, promote=True)
 
     args = parser.parse_args(argv)
     if not args.command:

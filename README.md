@@ -93,7 +93,13 @@ See [docs/manual-exploration.md](docs/manual-exploration.md) for the full workfl
 
 ```bash
 pytest
+
+# Shareable report with failure metrics, plots, and audio players
+pytest tests/generated/ --aufx-html=test-results/report.html
 ```
+
+The HTML file links to artifacts in `test-results/`; share that folder (or zip
+it) so the report's audio players and images remain available.
 
 ## Project layout
 

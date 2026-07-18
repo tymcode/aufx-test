@@ -23,7 +23,6 @@ def export_test_module(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     setups_json = json.dumps([s.to_dict() for s in setups], indent=4)
-    module_name = output_path.stem
 
     content = f'''\
 """Auto-generated tests from session {session.name!r}.
@@ -38,8 +37,9 @@ import json
 
 import pytest
 
-from aufx_test import Waveform, compare_waveforms
+from aufx_test import Waveform
 from aufx_test.comparison import ComparisonThresholds
+from aufx_test.reporting import assert_setup_comparison
 
 SETUPS = json.loads(
     """
@@ -64,14 +64,14 @@ def test_session_setup(setup, {host_fixture}):
     actual = host.process(input_wav)
 
     thresholds = ComparisonThresholds(**setup.get("thresholds", {{}}))
-    result = compare_waveforms(actual, reference, thresholds=thresholds)
-    if setup.get("expect_match", True):
-        assert result.passed, result.summary()
-    else:
-        assert not result.passed, (
-            "Negative case: output still matches the broken reference\\n"
-            + result.summary()
-        )
+    assert_setup_comparison(
+        actual,
+        reference,
+        setup=setup,
+        thresholds=thresholds,
+        input_audio=input_wav,
+        allow_extra_actual_tail=True,
+    )
 '''
 
     output_path.write_text(content)

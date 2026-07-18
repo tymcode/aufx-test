@@ -231,7 +231,8 @@ def test_export_test_module(tmp_session_root, sine_files, sample_aupreset):
     assert "test_case_a" in content
     assert "load_preset" in content
     assert '"expect_match": false' in content
-    assert 'setup.get("expect_match", True)' in content
+    assert "assert_setup_comparison" in content
+    assert "allow_extra_actual_tail=True" in content
 
 
 def test_export_setups_json(tmp_session_root, sine_files, sample_aupreset):
@@ -258,6 +259,41 @@ def test_session_summary(tmp_session_root, sine_files, sample_aupreset):
     assert "mix=0.5" in text
     assert snap.id in text
     assert ".aupreset" in text
+
+
+def test_import_goldens_from_directory(tmp_session_root, sine_files, sample_aupreset, tmp_path):
+    import shutil
+
+    inp, out, _ = sine_files
+    goldens = tmp_path / "goldens"
+    goldens.mkdir()
+    stem = "Vocals- Depth of Space"
+    shutil.copy2(sample_aupreset, goldens / f"{stem}.aupreset")
+    shutil.copy2(inp, goldens / f"{stem}_input.wav")
+    shutil.copy2(out, goldens / f"{stem}_output_gld.wav")
+    # Incomplete set should be reported, not imported.
+    shutil.copy2(out, goldens / "Broken Incomplete_output_gld.wav")
+    # Bare *_output.wav (no role flag) should import as golden.
+    bare = "Vocals- Init Serial"
+    shutil.copy2(sample_aupreset, goldens / f"{bare}.aupreset")
+    shutil.copy2(inp, goldens / f"{bare}_input.wav")
+    shutil.copy2(out, goldens / f"{bare}_output.wav")
+
+    session = ExperimentSession.create("import-demo", root_dir=tmp_session_root)
+    imported, warnings = session.import_goldens(goldens)
+    assert len(imported) == 2
+    by_name = {s.name: s for s in imported}
+    assert by_name[stem].reference_kind == "gld"
+    assert by_name[stem].promoted is True
+    assert by_name[stem].expect_match is True
+    assert by_name[bare].reference_kind == "gld"
+    assert by_name[bare].expect_match is True
+    assert any("Incomplete set" in w for w in warnings)
+
+    # Second import skips existing.
+    imported2, warnings2 = session.import_goldens(goldens)
+    assert imported2 == []
+    assert any("Skipped existing" in w for w in warnings2)
 
 
 def test_export_developer_presets(tmp_session_root, sine_files, sample_aupreset):

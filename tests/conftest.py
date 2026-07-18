@@ -69,14 +69,50 @@ DEFAULT_RENDERER = (
 )
 
 
+def _plugin_path_from_host_config() -> str | None:
+    """Resolve default plugin path from host.config.json when env is unset."""
+    import json
+
+    config_path = ROOT / "host.config.json"
+    if not config_path.is_file():
+        return None
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    plugins = data.get("plugins") or []
+    default_id = data.get("default_plugin")
+    chosen = None
+    for entry in plugins:
+        if not isinstance(entry, dict):
+            continue
+        if default_id and entry.get("id") == default_id:
+            chosen = entry
+            break
+        if chosen is None:
+            chosen = entry
+    if not chosen:
+        return None
+    path = chosen.get("path")
+    return str(path) if path else None
+
+
 @pytest.fixture(scope="session")
 def plugin_host():
     from aufx_test import SubprocessPluginHost
 
-    renderer = Path(os.environ.get("AUFX_PLUGIN_RENDERER", DEFAULT_RENDERER))
-    plugin = os.environ.get("AUFX_TEST_PLUGIN")
+    renderer = Path(
+        os.environ.get("AUFX_PLUGIN_RENDERER")
+        or os.environ.get("JUCE_PLUGIN_RENDERER")
+        or DEFAULT_RENDERER
+    )
+    plugin = (
+        os.environ.get("AUFX_TEST_PLUGIN")
+        or os.environ.get("JUCE_TEST_PLUGIN")
+        or _plugin_path_from_host_config()
+    )
     if plugin is None:
-        pytest.skip("Set AUFX_TEST_PLUGIN to the .component/.vst3 path")
+        pytest.skip(
+            "Set AUFX_TEST_PLUGIN to the .component/.vst3 path "
+            "(or configure plugins in host.config.json)"
+        )
 
     if not renderer.exists():
         pytest.skip(f"plugin_renderer not built: {renderer}")
