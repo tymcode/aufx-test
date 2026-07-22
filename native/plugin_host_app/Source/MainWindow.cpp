@@ -100,9 +100,99 @@ private:
     bool active { false };
 };
 
+/** TR-808-style step switch; embeds the quarter-note tempo LED. */
+class ClickToggleButton : public juce::Button
+{
+public:
+    ClickToggleButton()
+        : juce::Button ("Click")
+    {
+        setClickingTogglesState (true);
+        setTooltip ("Metronome click (LED always flashes on quarter notes)");
+    }
+
+    void setLedActive (bool shouldBeActive)
+    {
+        if (ledActive == shouldBeActive)
+            return;
+        ledActive = shouldBeActive;
+        repaint();
+    }
+
+    void paintButton (juce::Graphics& g, bool highlighted, bool down) override
+    {
+        const bool on = getToggleState();
+        const bool depressed = on || down;
+
+        auto outer = getLocalBounds().toFloat().reduced (1.0f);
+        const float corner = 3.0f;
+
+        // Chassis recess behind the key
+        g.setColour (juce::Colour (0xff1a1a1a));
+        g.fillRoundedRectangle (outer, corner);
+
+        // Cap sits slightly proud when up, flush when depressed
+        auto cap = depressed ? outer.reduced (2.0f, 2.0f).translated (0.0f, 1.0f)
+                             : outer.reduced (1.5f, 1.5f).translated (0.0f, -0.5f);
+
+        // 808 step keys: olive-grey plastic
+        juce::Colour face = on ? juce::Colour (0xff4a5a3e) : juce::Colour (0xff3d3d38);
+        if (highlighted && ! depressed)
+            face = face.brighter (0.08f);
+
+        g.setColour (face);
+        g.fillRoundedRectangle (cap, 2.5f);
+
+        // Bevel: light from top-left (raised) or inverted when pressed
+        const float bevel = 1.4f;
+        if (! depressed)
+        {
+            g.setColour (face.brighter (0.35f));
+            g.fillRoundedRectangle (cap.getX(), cap.getY(), cap.getWidth(), bevel + 0.5f, 2.0f);
+            g.fillRoundedRectangle (cap.getX(), cap.getY(), bevel + 0.5f, cap.getHeight(), 2.0f);
+
+            g.setColour (face.darker (0.45f));
+            g.fillRoundedRectangle (cap.getX(), cap.getBottom() - bevel, cap.getWidth(), bevel, 2.0f);
+            g.fillRoundedRectangle (cap.getRight() - bevel, cap.getY(), bevel, cap.getHeight(), 2.0f);
+        }
+        else
+        {
+            g.setColour (face.darker (0.4f));
+            g.fillRoundedRectangle (cap.getX(), cap.getY(), cap.getWidth(), bevel, 2.0f);
+            g.fillRoundedRectangle (cap.getX(), cap.getY(), bevel, cap.getHeight(), 2.0f);
+
+            g.setColour (face.brighter (0.12f));
+            g.fillRoundedRectangle (cap.getX(), cap.getBottom() - bevel * 0.7f, cap.getWidth(), bevel * 0.7f, 2.0f);
+            g.fillRoundedRectangle (cap.getRight() - bevel * 0.7f, cap.getY(), bevel * 0.7f, cap.getHeight(), 2.0f);
+        }
+
+        // Soft face sheen
+        g.setColour (juce::Colours::white.withAlpha (depressed ? 0.04f : 0.08f));
+        g.fillRoundedRectangle (cap.reduced (2.5f).removeFromTop (cap.getHeight() * 0.35f), 1.5f);
+
+        // Centered tempo LED
+        const float ledSize = juce::jmin (10.0f, cap.getWidth() * 0.38f);
+        auto led = juce::Rectangle<float> (ledSize, ledSize).withCentre (cap.getCentre());
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillEllipse (led.expanded (1.2f));
+        g.setColour (ledActive ? juce::Colour (0xffff6a2a) // 808-ish orange-red step lamp
+                               : juce::Colour (0xff2a2218));
+        g.fillEllipse (led);
+        if (ledActive)
+        {
+            g.setColour (juce::Colour (0xffffc090).withAlpha (0.55f));
+            g.fillEllipse (led.reduced (ledSize * 0.28f));
+        }
+    }
+
+private:
+    bool ledActive { false };
+};
+
 class MainWindow::MainContent : public juce::Component,
                                 private juce::Button::Listener,
                                 private juce::ComboBox::Listener,
+                                private juce::TextEditor::Listener,
                                 private juce::KeyListener,
                                 private juce::Timer
 {
@@ -195,6 +285,24 @@ public:
         midiBox.addListener (this);
         addAndMakeVisible (midiLed);
 
+        hostClockToggle.setButtonText ("Host Clock");
+        hostClockToggle.setToggleState (false, juce::dontSendNotification);
+        hostClockToggle.addListener (this);
+        addAndMakeVisible (hostClockToggle);
+
+        bpmEditor.setText ("120", juce::dontSendNotification);
+        bpmEditor.setInputRestrictions (3, "0123456789");
+        bpmEditor.setJustification (juce::Justification::centred);
+        bpmEditor.addListener (this);
+        addAndMakeVisible (bpmEditor);
+
+        bpmLabel.setText ("BPM", juce::dontSendNotification);
+        addAndMakeVisible (bpmLabel);
+
+        clickToggle.setToggleState (false, juce::dontSendNotification);
+        clickToggle.addListener (this);
+        addAndMakeVisible (clickToggle);
+
         addAndMakeVisible (editorViewport);
         editorViewport.setViewedComponent (&editorPlaceholder, false);
 
@@ -202,6 +310,13 @@ public:
         populatePresets();
         populateFixtures();
         populateMidiInputs();
+
+        {
+            juce::String clickError;
+            if (! engine.loadMetronomeClick (config.fixturesDir.getChildFile ("impulse.wav"), clickError))
+                HostLog::error (clickError);
+        }
+
         loadPluginWithoutEditor();
         startTimerHz (30);
     }
@@ -343,6 +458,14 @@ public:
         midiBox.setBounds (row2.removeFromLeft (220));
         row2.removeFromLeft (6);
         midiLed.setBounds (row2.removeFromLeft (18).withSizeKeepingCentre (16, 16));
+        row2.removeFromLeft (12);
+        hostClockToggle.setBounds (row2.removeFromLeft (100));
+        row2.removeFromLeft (6);
+        bpmEditor.setBounds (row2.removeFromLeft (44));
+        row2.removeFromLeft (4);
+        bpmLabel.setBounds (row2.removeFromLeft (34));
+        row2.removeFromLeft (6);
+        clickToggle.setBounds (row2.removeFromLeft (28).withSizeKeepingCentre (26, 26));
 
         editorViewport.setBounds (bounds);
         layoutEditor();
@@ -654,6 +777,22 @@ private:
             midiLedLitUntil = juce::Time::getMillisecondCounterHiRes() + 150.0;
 
         midiLed.setActive (juce::Time::getMillisecondCounterHiRes() < midiLedLitUntil);
+
+        if (engine.consumeHostClockQuarterPulse())
+            clockLedLitUntil = juce::Time::getMillisecondCounterHiRes() + 150.0;
+
+        clickToggle.setLedActive (juce::Time::getMillisecondCounterHiRes() < clockLedLitUntil);
+    }
+
+    void applyBpmFromEditor()
+    {
+        const auto text = bpmEditor.getText().trim();
+        const int bpm = text.isEmpty() ? 120 : text.getIntValue();
+        const int clamped = juce::jlimit (20, 999, bpm <= 0 ? 120 : bpm);
+        engine.setHostClockBpm ((double) clamped);
+
+        if (clamped != bpm || text.isEmpty())
+            bpmEditor.setText (juce::String (clamped), juce::dontSendNotification);
     }
 
     void loadPluginWithoutEditor()
@@ -790,8 +929,18 @@ private:
             return;
         }
 
+        if (button == &hostClockToggle)
+        {
+            applyBpmFromEditor();
+            engine.setHostClockEnabled (hostClockToggle.getToggleState());
+            return;
+        }
 
-
+        if (button == &clickToggle)
+        {
+            engine.setMetronomeClickEnabled (clickToggle.getToggleState());
+            return;
+        }
 
         if (button == &captureButton)
             captureTestCase();
@@ -831,6 +980,20 @@ private:
             else
                 engine.setMidiInputDevice ({});
         }
+    }
+
+    void textEditorTextChanged (juce::TextEditor&) override {}
+
+    void textEditorReturnKeyPressed (juce::TextEditor& editor) override
+    {
+        if (&editor == &bpmEditor)
+            applyBpmFromEditor();
+    }
+
+    void textEditorFocusLost (juce::TextEditor& editor) override
+    {
+        if (&editor == &bpmEditor)
+            applyBpmFromEditor();
     }
 
     void captureTestCase()
@@ -995,8 +1158,13 @@ private:
     juce::Label midiLabel;
     juce::ComboBox midiBox;
     MidiActivityLed midiLed;
+    juce::ToggleButton hostClockToggle;
+    juce::TextEditor bpmEditor;
+    juce::Label bpmLabel;
+    ClickToggleButton clickToggle;
     juce::Array<juce::MidiDeviceInfo> midiDevices;
     double midiLedLitUntil { 0.0 };
+    double clockLedLitUntil { 0.0 };
     juce::Viewport editorViewport;
     juce::Component editorPlaceholder;
     juce::AudioProcessorEditor* pluginEditor { nullptr };

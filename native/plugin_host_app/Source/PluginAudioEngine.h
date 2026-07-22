@@ -4,7 +4,8 @@
 #include <atomic>
 
 class PluginAudioEngine : public juce::AudioIODeviceCallback,
-                          private juce::MidiInputCallback
+                          private juce::MidiInputCallback,
+                          private juce::AudioPlayHead
 {
 public:
     PluginAudioEngine();
@@ -39,6 +40,18 @@ public:
     /** True if MIDI arrived since the previous call (for the activity LED). */
     bool consumeMidiActivity();
 
+    /** When enabled, generates MIDI clock + transport like a DAW in playback. */
+    void setHostClockEnabled (bool enabled);
+    bool isHostClockEnabled() const { return hostClockEnabled.load(); }
+    void setHostClockBpm (double bpm);
+    double getHostClockBpm() const { return hostClockBpm.load(); }
+    /** True once per emitted quarter note while the host clock is running. */
+    bool consumeHostClockQuarterPulse();
+    /** Load fixtures/impulse.wav (uses the impulse peak as a one-shot click). */
+    bool loadMetronomeClick (const juce::File& impulseFile, juce::String& error);
+    void setMetronomeClickEnabled (bool enabled);
+    bool isMetronomeClickEnabled() const { return metronomeClickEnabled.load(); }
+
     void audioDeviceAboutToStart (juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
     void audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
@@ -49,10 +62,20 @@ public:
                                            const juce::AudioIODeviceCallbackContext& context) override;
 
 private:
+    enum class PendingTransport { none, start, stop, continue_ };
+
     void fillFixtureBlock (juce::AudioBuffer<float>& buffer, int numSamples);
     void clearMidiInput();
     void applyMidiInputSelection();
     void handleIncomingMidiMessage (juce::MidiInput* source, const juce::MidiMessage& message) override;
+    void applyPendingHostClockTransport (juce::MidiBuffer& midi);
+    void generateHostClockMidi (juce::MidiBuffer& midi, int numSamples);
+    void resetHostClockTiming();
+    void mixMetronomeClick (juce::AudioBuffer<float>& buffer, int numSamples);
+
+    // AudioPlayHead: how a DAW communicates tempo/transport to the plugin.
+    juce::Optional<juce::AudioPlayHead::PositionInfo> getPosition() const override;
+    bool canControlTransport() override { return true; }
 
     std::unique_ptr<juce::AudioPluginInstance> plugin;
     juce::AudioDeviceManager deviceManager;
@@ -73,4 +96,18 @@ private:
     juce::CriticalSection midiLock;
     juce::MidiBuffer pendingMidi;
     std::atomic<bool> midiActivity { false };
+
+    std::atomic<bool> hostClockEnabled { false };
+    std::atomic<bool> hostClockPlaying { false };
+    std::atomic<double> hostClockBpm { 120.0 };
+    std::atomic<PendingTransport> pendingTransport { PendingTransport::none };
+    std::atomic<bool> quarterNotePulse { false };
+    double clockSampleCounter { 0.0 };
+    int clockTicksSinceQuarter { 0 };
+    std::atomic<juce::int64> playHeadSamples { 0 };
+
+    std::atomic<bool> metronomeClickEnabled { false };
+    juce::AudioBuffer<float> metronomeClickBuffer;
+    int metronomeClickPosition { -1 };
+    int pendingClickOffset { -1 };
 };
