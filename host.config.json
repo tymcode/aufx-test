@@ -4,6 +4,7 @@
   "python_cli": ".venv/bin/aufx-test",
   "log_file": "sessions/plugin_host.log",
   "default_plugin": "deepz",
+  "default_midi_input": "Expression Pedal",
   "plugins": [
     {
       "id": "deepz",
@@ -21,7 +22,46 @@
       "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEP4.component",
       "presets_dir": "~/Library/Audio/Presets/Temecula DSP/DEEP:4",
       "session": "DEEP4 exploration"
+    },
+    {
+      "id": "vext",
+      "name": "VEXT",
+      "manufacturer": "Temecula DSP",
+      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPVEXT.component",
+      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/VEXT",
+      "session": "VEXT exploration"
+    },
+    {
+      "id": "sst206",
+      "name": "SST-206",
+      "manufacturer": "Temecula DSP",
+      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPSST206.component",
+      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/SST206",
+      "session": "SST206 exploration"
+    },
+    {
+      "id": "sg626",
+      "name": "SG-626",
+      "manufacturer": "Temecula DSP",
+      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPSG626.component",
+      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/SG626",
+      "session": "SG-626 exploration"
+    },
+    {
+      "id": "mdvii",
+      "name": "MDV-II",
+      "manufacturer": "Temecula DSP",
+      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPMDVII.component",
+      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/MDVII",
+      "session": "MDV-II exploration"
+    },
+    {
+      "id": "msp126",
+      "name": "MSP-126",
+      "manufacturer": "Temecula DSP",
+      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPMSP126.component",
+      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/MSP126",
+      "session": "MSP126 exploration"
     }
   ]
 }
-

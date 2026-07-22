@@ -54,6 +54,8 @@ PluginAudioEngine::PluginAudioEngine()
 
 PluginAudioEngine::~PluginAudioEngine()
 {
+    stopFixture();
+    clearMidiInput();
     stopAudioDevice();
 }
 
@@ -232,17 +234,78 @@ bool PluginAudioEngine::startAudioDevice (juce::String& error)
         plugin->prepareToPlay (deviceSampleRate, deviceBlockSize);
 
     deviceManager.addAudioCallback (this);
+    applyMidiInputSelection();
     return true;
 }
 
 void PluginAudioEngine::stopAudioDevice()
 {
     stopFixture();
+    clearMidiInput();
     deviceManager.removeAudioCallback (this);
     deviceManager.closeAudioDevice();
 
     if (plugin != nullptr)
         plugin->releaseResources();
+}
+
+juce::Array<juce::MidiDeviceInfo> PluginAudioEngine::getMidiInputDevices() const
+{
+    return juce::MidiInput::getAvailableDevices();
+}
+
+juce::String PluginAudioEngine::getSelectedMidiInputName() const
+{
+    if (selectedMidiIdentifier.isEmpty())
+        return {};
+
+    for (const auto& device : juce::MidiInput::getAvailableDevices())
+        if (device.identifier == selectedMidiIdentifier)
+            return device.name;
+
+    return {};
+}
+
+void PluginAudioEngine::clearMidiInput()
+{
+    if (selectedMidiIdentifier.isNotEmpty())
+    {
+        deviceManager.removeMidiInputDeviceCallback (selectedMidiIdentifier, this);
+        deviceManager.setMidiInputDeviceEnabled (selectedMidiIdentifier, false);
+    }
+
+    const juce::ScopedLock lock (midiLock);
+    pendingMidi.clear();
+}
+
+void PluginAudioEngine::applyMidiInputSelection()
+{
+    if (selectedMidiIdentifier.isEmpty())
+        return;
+
+    deviceManager.setMidiInputDeviceEnabled (selectedMidiIdentifier, true);
+    deviceManager.addMidiInputDeviceCallback (selectedMidiIdentifier, this);
+}
+
+void PluginAudioEngine::setMidiInputDevice (const juce::String& identifier)
+{
+    clearMidiInput();
+    selectedMidiIdentifier = identifier;
+    applyMidiInputSelection();
+}
+
+bool PluginAudioEngine::consumeMidiActivity()
+{
+    return midiActivity.exchange (false);
+}
+
+void PluginAudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& message)
+{
+    {
+        const juce::ScopedLock lock (midiLock);
+        pendingMidi.addEvent (message, 0);
+    }
+    midiActivity.store (true);
 }
 
 void PluginAudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
@@ -317,6 +380,10 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
             if (plugin != nullptr)
             {
                 juce::MidiBuffer midi;
+                {
+                    const juce::ScopedLock midiScopedLock (midiLock);
+                    midi.swapWith (pendingMidi);
+                }
                 plugin->processBlock (buffer, midi);
             }
         }

@@ -62,7 +62,13 @@ const HostPluginEntry* HostConfig::findPluginById (const juce::String& id) const
 const HostPluginEntry* HostConfig::defaultPlugin() const
 {
     if (auto* plugin = findPluginById (defaultPluginId))
-        return plugin;
+        if (plugin->installed)
+            return plugin;
+
+    for (const auto& plugin : plugins)
+        if (plugin.installed)
+            return &plugin;
+
     if (! plugins.isEmpty())
         return &plugins.getReference (0);
     return nullptr;
@@ -102,6 +108,7 @@ bool HostConfig::loadFromFile (const juce::File& configFile,
     if (out.logFile == juce::File())
         out.logFile = out.projectRoot.getChildFile ("sessions").getChildFile ("plugin_host.log");
     out.defaultPluginId = root->getProperty ("default_plugin").toString();
+    out.defaultMidiInput = root->getProperty ("default_midi_input").toString().trim();
 
     const auto pluginsVar = root->getProperty ("plugins");
     if (! pluginsVar.isArray())
@@ -139,11 +146,7 @@ bool HostConfig::loadFromFile (const juce::File& configFile,
                                    .getChildFile (entry.name);
         }
 
-        if (! entry.path.exists())
-        {
-            error = "Plugin path not found for \"" + entry.id + "\": " + entry.path.getFullPathName();
-            return false;
-        }
+        entry.installed = entry.path.exists();
 
         // default_preset is optional; ignore missing files rather than failing startup.
         if (entry.defaultPreset != juce::File() && ! entry.defaultPreset.existsAsFile())
@@ -159,7 +162,12 @@ bool HostConfig::loadFromFile (const juce::File& configFile,
     }
 
     if (out.defaultPluginId.isEmpty())
-        out.defaultPluginId = out.plugins.getReference (0).id;
+    {
+        if (auto* firstInstalled = out.defaultPlugin())
+            out.defaultPluginId = firstInstalled->id;
+        else
+            out.defaultPluginId = out.plugins.getReference (0).id;
+    }
 
     if (out.findPluginById (out.defaultPluginId) == nullptr)
     {

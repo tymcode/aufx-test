@@ -74,10 +74,37 @@ namespace
 
 }
 
+class MidiActivityLed : public juce::Component
+{
+public:
+    void setActive (bool shouldBeActive)
+    {
+        if (active == shouldBeActive)
+            return;
+        active = shouldBeActive;
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto bounds = getLocalBounds().toFloat().reduced (2.0f);
+        const float size = juce::jmin (bounds.getWidth(), bounds.getHeight());
+        auto led = juce::Rectangle<float> (size, size).withCentre (bounds.getCentre());
+        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.fillEllipse (led.expanded (1.0f));
+        g.setColour (active ? juce::Colour (0xff3dde6a) : juce::Colour (0xff3a3a3a));
+        g.fillEllipse (led);
+    }
+
+private:
+    bool active { false };
+};
+
 class MainWindow::MainContent : public juce::Component,
                                 private juce::Button::Listener,
                                 private juce::ComboBox::Listener,
-                                private juce::KeyListener
+                                private juce::KeyListener,
+                                private juce::Timer
 {
 public:
     MainContent (PluginAudioEngine& audioEngine, HostConfig hostConfig)
@@ -87,12 +114,26 @@ public:
         setWantsKeyboardFocus (true);
 
         currentPluginIndex = 0;
-        for (int i = 0; i < config.plugins.size(); ++i)
+        if (auto* preferred = config.defaultPlugin())
         {
-            if (config.plugins.getReference (i).id == config.defaultPluginId)
+            for (int i = 0; i < config.plugins.size(); ++i)
             {
-                currentPluginIndex = i;
-                break;
+                if (&config.plugins.getReference (i) == preferred)
+                {
+                    currentPluginIndex = i;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            for (int i = 0; i < config.plugins.size(); ++i)
+            {
+                if (config.plugins.getReference (i).installed)
+                {
+                    currentPluginIndex = i;
+                    break;
+                }
             }
         }
 
@@ -134,6 +175,7 @@ public:
         addAndMakeVisible (replacePresetToggle);
 
         descriptionLabel.setText ("Description", juce::dontSendNotification);
+        descriptionLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (descriptionLabel);
         snapshotNameEditor.setText ("snapshot", juce::dontSendNotification);
         snapshotNameEditor.setInputRestrictions (64);
@@ -146,13 +188,22 @@ public:
         artifactRoleBox.setSelectedId (3); // default: broken
         addAndMakeVisible (artifactRoleBox);
 
+        midiLabel.setText ("MIDI", juce::dontSendNotification);
+        addAndMakeVisible (midiLabel);
+        midiBox.setTooltip ("MIDI input from Audio MIDI Setup");
+        addAndMakeVisible (midiBox);
+        midiBox.addListener (this);
+        addAndMakeVisible (midiLed);
+
         addAndMakeVisible (editorViewport);
         editorViewport.setViewedComponent (&editorPlaceholder, false);
 
         populatePluginBox();
         populatePresets();
         populateFixtures();
+        populateMidiInputs();
         loadPluginWithoutEditor();
+        startTimerHz (30);
     }
 
     ~MainContent() override
@@ -249,13 +300,24 @@ public:
     {
         auto bounds = getLocalBounds().reduced (12);
         auto top = bounds.removeFromTop (28);
+
+        // Right half of header: test-case capture controls
+        artifactRoleBox.setBounds (top.removeFromRight (100));
+        top.removeFromRight (6);
+        snapshotNameEditor.setBounds (top.removeFromRight (160));
+        top.removeFromRight (6);
+        descriptionLabel.setBounds (top.removeFromRight (80));
+        top.removeFromRight (8);
+        captureButton.setBounds (top.removeFromRight (150));
+        top.removeFromRight (12);
+
         titleLabel.setBounds (top.removeFromLeft (110));
         top.removeFromLeft (8);
-        pluginBox.setBounds (top.removeFromLeft (320));
+        pluginBox.setBounds (top.removeFromLeft (280));
         top.removeFromLeft (8);
         statusLabel.setBounds (top);
 
-        auto controls = bounds.removeFromTop (108);
+        auto controls = bounds.removeFromTop (72);
         auto row1 = controls.removeFromTop (32);
         presetLabel.setBounds (row1.removeFromLeft (55));
         presetBox.setBounds (row1.removeFromLeft (260));
@@ -271,19 +333,16 @@ public:
 
         auto row2 = controls.removeFromTop (32);
         fixtureLabel.setBounds (row2.removeFromLeft (55));
-        fixtureBox.setBounds (row2.removeFromLeft (260));
+        fixtureBox.setBounds (row2.removeFromLeft (220));
         row2.removeFromLeft (6);
         playButton.setBounds (row2.removeFromLeft (70));
         row2.removeFromLeft (6);
         stopButton.setBounds (row2.removeFromLeft (70));
-
-        auto row3 = controls.removeFromTop (32);
-        captureButton.setBounds (row3.removeFromLeft (160));
-        row3.removeFromLeft (8);
-        descriptionLabel.setBounds (row3.removeFromLeft (80));
-        snapshotNameEditor.setBounds (row3.removeFromLeft (200));
-        row3.removeFromLeft (6);
-        artifactRoleBox.setBounds (row3.removeFromLeft (110));
+        row2.removeFromLeft (16);
+        midiLabel.setBounds (row2.removeFromLeft (40));
+        midiBox.setBounds (row2.removeFromLeft (220));
+        row2.removeFromLeft (6);
+        midiLed.setBounds (row2.removeFromLeft (18).withSizeKeepingCentre (16, 16));
 
         editorViewport.setBounds (bounds);
         layoutEditor();
@@ -314,9 +373,22 @@ private:
         pluginBox.clear (juce::dontSendNotification);
 
         for (int i = 0; i < config.plugins.size(); ++i)
-            pluginBox.addItem (config.plugins.getReference (i).displayLabel(), i + 1);
+        {
+            const auto& entry = config.plugins.getReference (i);
+            const int itemId = i + 1;
+            pluginBox.addItem (entry.displayLabel(), itemId);
+            pluginBox.setItemEnabled (itemId, entry.installed);
+        }
 
-        pluginBox.setSelectedItemIndex (currentPluginIndex, juce::dontSendNotification);
+        if (juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size())
+            && config.plugins.getReference (currentPluginIndex).installed)
+        {
+            pluginBox.setSelectedItemIndex (currentPluginIndex, juce::dontSendNotification);
+        }
+        else
+        {
+            pluginBox.setSelectedId (0, juce::dontSendNotification);
+        }
     }
 
     void populatePresets()
@@ -348,6 +420,13 @@ private:
         if (! juce::isPositiveAndBelow (pluginIndex, config.plugins.size())
             || pluginIndex == currentPluginIndex)
             return;
+
+        if (! config.plugins.getReference (pluginIndex).installed)
+        {
+            setStatus ("Plugin not installed: " + config.plugins.getReference (pluginIndex).displayLabel(), true);
+            pluginBox.setSelectedItemIndex (currentPluginIndex, juce::dontSendNotification);
+            return;
+        }
 
         engine.stopFixture();
         destroyPluginEditor();
@@ -534,8 +613,58 @@ private:
             fixtureBox.setSelectedId (1, juce::dontSendNotification);
     }
 
+    void populateMidiInputs()
+    {
+        midiDevices = engine.getMidiInputDevices();
+        midiBox.clear (juce::dontSendNotification);
+
+        if (midiDevices.isEmpty())
+        {
+            midiBox.addItem ("No MIDI inputs", 1);
+            midiBox.setSelectedId (1, juce::dontSendNotification);
+            midiBox.setEnabled (false);
+            engine.setMidiInputDevice ({});
+            return;
+        }
+
+        midiBox.setEnabled (true);
+        for (int i = 0; i < midiDevices.size(); ++i)
+            midiBox.addItem (midiDevices.getReference (i).name, i + 1);
+
+        int selectedIndex = 0;
+        if (config.defaultMidiInput.isNotEmpty())
+        {
+            for (int i = 0; i < midiDevices.size(); ++i)
+            {
+                if (midiDevices.getReference (i).name.equalsIgnoreCase (config.defaultMidiInput))
+                {
+                    selectedIndex = i;
+                    break;
+                }
+            }
+        }
+
+        midiBox.setSelectedItemIndex (selectedIndex, juce::dontSendNotification);
+        engine.setMidiInputDevice (midiDevices.getReference (selectedIndex).identifier);
+    }
+
+    void timerCallback() override
+    {
+        if (engine.consumeMidiActivity())
+            midiLedLitUntil = juce::Time::getMillisecondCounterHiRes() + 150.0;
+
+        midiLed.setActive (juce::Time::getMillisecondCounterHiRes() < midiLedLitUntil);
+    }
+
     void loadPluginWithoutEditor()
     {
+        if (! juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size())
+            || ! currentPlugin().installed)
+        {
+            setStatus ("No installed plugin selected — choose one from the list");
+            return;
+        }
+
         const auto& plugin = currentPlugin();
         plugin.presetsDir.createDirectory();
 
@@ -661,6 +790,9 @@ private:
             return;
         }
 
+
+
+
         if (button == &captureButton)
             captureTestCase();
     }
@@ -679,6 +811,7 @@ private:
             return;
         }
 
+
         if (box == &presetBox)
         {
             const auto presetFile = getSelectedPresetFile();
@@ -687,6 +820,16 @@ private:
                 savePresetNameEditor.setText (presetFile.getFileNameWithoutExtension(),
                                               juce::dontSendNotification);
             }
+            return;
+        }
+
+        if (box == &midiBox)
+        {
+            const int index = midiBox.getSelectedItemIndex();
+            if (juce::isPositiveAndBelow (index, midiDevices.size()))
+                engine.setMidiInputDevice (midiDevices.getReference (index).identifier);
+            else
+                engine.setMidiInputDevice ({});
         }
     }
 
@@ -849,6 +992,11 @@ private:
     juce::Label descriptionLabel;
     juce::TextEditor snapshotNameEditor;
     juce::ComboBox artifactRoleBox;
+    juce::Label midiLabel;
+    juce::ComboBox midiBox;
+    MidiActivityLed midiLed;
+    juce::Array<juce::MidiDeviceInfo> midiDevices;
+    double midiLedLitUntil { 0.0 };
     juce::Viewport editorViewport;
     juce::Component editorPlaceholder;
     juce::AudioProcessorEditor* pluginEditor { nullptr };

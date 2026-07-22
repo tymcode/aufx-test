@@ -11,14 +11,21 @@ struct HostPluginEntry
     juce::File presetsDir;
     juce::File defaultPreset; // optional .aupreset loaded on plugin open
     juce::String sessionName;
+    bool installed { true }; // false when path is missing on disk
 
     juce::String displayLabel() const
     {
+        juce::String label;
         if (manufacturer.isNotEmpty() && name.isNotEmpty())
-            return manufacturer + " — " + name;
-        if (name.isNotEmpty())
-            return name;
-        return path.getFileNameWithoutExtension();
+            label = manufacturer + " — " + name;
+        else if (name.isNotEmpty())
+            label = name;
+        else
+            label = path.getFileNameWithoutExtension();
+
+        if (! installed)
+            label += " (not installed)";
+        return label;
     }
 };
 
@@ -32,6 +39,8 @@ struct HostConfig
     juce::File sessionLogFile;   // logFile with session hash inserted in the stem
     juce::String sessionHash;
     juce::String defaultPluginId;
+    /** Preferred MIDI input device name (Audio MIDI Setup). Empty = first available. */
+    juce::String defaultMidiInput;
     juce::Array<HostPluginEntry> plugins;
 
     const HostPluginEntry* findPluginById (const juce::String& id) const;
