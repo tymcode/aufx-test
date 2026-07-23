@@ -37,12 +37,16 @@ public:
 
     /** Available hardware/virtual MIDI inputs (Audio MIDI Setup style names). */
     juce::Array<juce::MidiDeviceInfo> getMidiInputDevices() const;
-    juce::String getSelectedMidiInputIdentifier() const { return selectedMidiIdentifier; }
-    juce::String getSelectedMidiInputName() const;
-    /** Enable only this MIDI input and route it into the plugin. Empty clears selection. */
-    void setMidiInputDevice (const juce::String& identifier);
+    juce::StringArray getSelectedMidiInputIdentifiers() const { return selectedMidiIdentifiers; }
+    juce::StringArray getSelectedMidiInputNames() const;
+    /** Enable these MIDI inputs and merge their messages into the plugin. Empty clears selection. */
+    void setMidiInputDevices (const juce::StringArray& identifiers);
     /** True if MIDI arrived since the previous call (for the activity LED). */
     bool consumeMidiActivity();
+
+    /** DAW-surface Play/Stop requests for source-clip playback (polled on the message thread). */
+    bool consumeTransportPlayRequest();
+    bool consumeTransportStopRequest();
 
     /** When enabled, generates MIDI clock + transport like a DAW in playback. */
     void setHostClockEnabled (bool enabled);
@@ -76,6 +80,7 @@ private:
     void generateHostClockMidi (juce::MidiBuffer& midi, int numSamples);
     void resetHostClockTiming();
     void mixMetronomeClick (juce::AudioBuffer<float>& buffer, int numSamples);
+    static PendingTransport classifyTransportMessage (const juce::MidiMessage& message);
 
     // AudioPlayHead: how a DAW communicates tempo/transport to the plugin.
     juce::Optional<juce::AudioPlayHead::PositionInfo> getPosition() const override;
@@ -97,10 +102,12 @@ private:
     juce::CriticalSection processLock;
     std::atomic<bool> restoringState { false };
 
-    juce::String selectedMidiIdentifier;
+    juce::StringArray selectedMidiIdentifiers;
     juce::CriticalSection midiLock;
     juce::MidiBuffer pendingMidi;
     std::atomic<bool> midiActivity { false };
+    std::atomic<bool> transportPlayRequest { false };
+    std::atomic<bool> transportStopRequest { false };
 
     std::atomic<bool> hostClockEnabled { false };
     std::atomic<bool> hostClockPlaying { false };

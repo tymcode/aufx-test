@@ -341,6 +341,162 @@ public:
     }
 };
 
+/** Combo-styled multi-select for MIDI inputs; shows "<multiple>" when several are checked. */
+class MidiSourceField : public juce::Component,
+                        public juce::SettableTooltipClient
+{
+public:
+    std::function<void (const juce::StringArray&)> onChange;
+
+    void setDevices (const juce::Array<juce::MidiDeviceInfo>& devices,
+                     const juce::StringArray& initiallySelectedIds)
+    {
+        midiDevices = devices;
+        selectedIds.clear();
+
+        for (const auto& id : initiallySelectedIds)
+            if (id.isNotEmpty())
+                selectedIds.addIfNotAlreadyThere (id);
+
+        setEnabled (! midiDevices.isEmpty());
+        updateDisplayText();
+        repaint();
+    }
+
+    juce::StringArray getSelectedIdentifiers() const { return selectedIds; }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto area = getLocalBounds().toFloat().reduced (0.5f);
+        constexpr float corner = 3.0f;
+        const bool enabled = isEnabled();
+
+        g.setColour (findColour (juce::ComboBox::backgroundColourId));
+        g.fillRoundedRectangle (area, corner);
+        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.fillRoundedRectangle (area.getX() + 1.0f, area.getY() + 1.0f,
+                                area.getWidth() - 2.0f, 1.5f, corner - 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.06f));
+        g.fillRoundedRectangle (area.getX() + 1.0f, area.getBottom() - 1.5f,
+                                area.getWidth() - 2.0f, 1.0f, corner - 1.0f);
+        g.setColour (findColour (juce::ComboBox::outlineColourId));
+        g.drawRoundedRectangle (area, corner, 1.0f);
+
+        const float cx = (float) getWidth() - 11.0f;
+        const float cy = (float) getHeight() * 0.5f;
+        juce::Path chevron;
+        chevron.startNewSubPath (cx - 3.5f, cy - 2.0f);
+        chevron.lineTo (cx, cy + 2.0f);
+        chevron.lineTo (cx + 3.5f, cy - 2.0f);
+        g.setColour (findColour (juce::ComboBox::arrowColourId).withAlpha (enabled ? 0.9f : 0.3f));
+        g.strokePath (chevron, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
+
+        g.setColour (findColour (juce::ComboBox::textColourId).withAlpha (enabled ? 1.0f : 0.4f));
+        g.setFont (juce::FontOptions (12.5f));
+        g.drawText (displayText,
+                    getLocalBounds().reduced (8, 0).withTrimmedRight (18),
+                    juce::Justification::centredLeft,
+                    true);
+    }
+
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        if (isEnabled() && ! midiDevices.isEmpty())
+            showChecklist();
+    }
+
+private:
+    void updateDisplayText()
+    {
+        if (midiDevices.isEmpty())
+        {
+            displayText = "No MIDI inputs";
+            return;
+        }
+
+        juce::StringArray names;
+        for (const auto& device : midiDevices)
+            if (selectedIds.contains (device.identifier))
+                names.add (device.name);
+
+        if (names.isEmpty())
+            displayText = "(none)";
+        else if (names.size() == 1)
+            displayText = names[0];
+        else
+            displayText = "<multiple>";
+    }
+
+    void setDeviceSelected (const juce::String& identifier, bool shouldBeSelected)
+    {
+        if (shouldBeSelected)
+            selectedIds.addIfNotAlreadyThere (identifier);
+        else
+            selectedIds.removeString (identifier);
+
+        updateDisplayText();
+        repaint();
+
+        if (onChange)
+            onChange (selectedIds);
+    }
+
+    void showChecklist()
+    {
+        struct Checklist final : public juce::Component,
+                                 private juce::Button::Listener
+        {
+            Checklist (MidiSourceField& ownerIn)
+                : owner (ownerIn)
+            {
+                constexpr int rowH = 24;
+                int y = 4;
+
+                for (int i = 0; i < owner.midiDevices.size(); ++i)
+                {
+                    const auto& device = owner.midiDevices.getReference (i);
+                    auto* toggle = toggles.add (new juce::ToggleButton (device.name));
+                    toggle->setToggleState (owner.selectedIds.contains (device.identifier),
+                                           juce::dontSendNotification);
+                    toggle->addListener (this);
+                    toggle->setBounds (6, y, 260, rowH);
+                    addAndMakeVisible (toggle);
+                    identifiers.add (device.identifier);
+                    y += rowH;
+                }
+
+                setSize (272, y + 4);
+            }
+
+            void buttonClicked (juce::Button* button) override
+            {
+                for (int i = 0; i < toggles.size(); ++i)
+                {
+                    if (button == toggles.getUnchecked (i))
+                    {
+                        owner.setDeviceSelected (identifiers.getReference (i),
+                                                 toggles.getUnchecked (i)->getToggleState());
+                        break;
+                    }
+                }
+            }
+
+            MidiSourceField& owner;
+            juce::OwnedArray<juce::ToggleButton> toggles;
+            juce::StringArray identifiers;
+        };
+
+        juce::CallOutBox::launchAsynchronously (std::make_unique<Checklist> (*this),
+                                                localAreaToGlobal (getLocalBounds()),
+                                                nullptr);
+    }
+
+    juce::Array<juce::MidiDeviceInfo> midiDevices;
+    juce::StringArray selectedIds;
+    juce::String displayText { "(none)" };
+};
+
 class MainWindow::MainContent : public juce::Component,
                                 private juce::Button::Listener,
                                 private juce::ComboBox::Listener,
@@ -427,9 +583,12 @@ public:
         midiLabel.setText ("MIDI", juce::dontSendNotification);
         midiLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (midiLabel);
-        midiBox.setTooltip ("MIDI input from Audio MIDI Setup");
-        addAndMakeVisible (midiBox);
-        midiBox.addListener (this);
+        midiField.setTooltip ("MIDI inputs from Audio MIDI Setup — check one or more to merge");
+        midiField.onChange = [this] (const juce::StringArray& identifiers)
+        {
+            engine.setMidiInputDevices (identifiers);
+        };
+        addAndMakeVisible (midiField);
         addAndMakeVisible (midiLed);
 
         hostClockToggle.setButtonText ("Host Clock");
@@ -598,19 +757,19 @@ public:
         bounds.removeFromTop (4);
         auto row2 = bounds.removeFromTop (rowH);
 
-        // Right column: Capture on row0; host clock on row2.
+        // Right column: host clock on row1; Capture on row2.
         constexpr int captureW = 150;
 
-        captureButton.setBounds (row0.removeFromRight (captureW).withSizeKeepingCentre (captureW, ctrlH));
-        row0.removeFromRight (groupGap);
+        clickToggle.setBounds (row1.removeFromRight (26).withSizeKeepingCentre (26, 26));
+        row1.removeFromRight (gap);
+        bpmLabel.setBounds (row1.removeFromRight (30).withSizeKeepingCentre (30, ctrlH));
+        row1.removeFromRight (gap);
+        bpmEditor.setBounds (row1.removeFromRight (40).withSizeKeepingCentre (40, ctrlH));
+        row1.removeFromRight (gap);
+        hostClockToggle.setBounds (row1.removeFromRight (100).withSizeKeepingCentre (100, ctrlH));
+        row1.removeFromRight (groupGap);
 
-        clickToggle.setBounds (row2.removeFromRight (26).withSizeKeepingCentre (26, 26));
-        row2.removeFromRight (gap);
-        bpmLabel.setBounds (row2.removeFromRight (30).withSizeKeepingCentre (30, ctrlH));
-        row2.removeFromRight (gap);
-        bpmEditor.setBounds (row2.removeFromRight (40).withSizeKeepingCentre (40, ctrlH));
-        row2.removeFromRight (gap);
-        hostClockToggle.setBounds (row2.removeFromRight (100).withSizeKeepingCentre (100, ctrlH));
+        captureButton.setBounds (row2.removeFromRight (captureW).withSizeKeepingCentre (captureW, ctrlH));
         row2.removeFromRight (groupGap);
 
         // Left columns — shared field width + identical action buttons
@@ -646,23 +805,25 @@ public:
         row1.removeFromLeft (groupGap);
         row2.removeFromLeft (groupGap);
 
-        // Middle width matches across status + MIDI (status display sets the width)
-        const int midW = juce::jmax (180, juce::jmin (row0.getWidth(), row1.getWidth()));
+        // Status LCD spans the rest of row0 to the right edge
+        statusDisplay.setBounds (row0.withSizeKeepingCentre (row0.getWidth(), ctrlH));
 
-        statusDisplay.setBounds (row0.removeFromLeft (midW).withSizeKeepingCentre (midW, ctrlH));
+        // MIDI + Source Clip share label width so their dropdowns line up
+        constexpr int midLabelW = leftLabelW;
+        const int midW = juce::jmax (180, juce::jmin (row1.getWidth(), row2.getWidth()));
 
         {
             auto mid1 = row1.removeFromLeft (midW);
-            midiLabel.setBounds (place (mid1, 40));
+            midiLabel.setBounds (place (mid1, midLabelW));
             mid1.removeFromLeft (gap);
             midiLed.setBounds (mid1.removeFromRight (16).withSizeKeepingCentre (16, 16));
             mid1.removeFromRight (gap);
-            midiBox.setBounds (place (mid1, mid1.getWidth()));
+            midiField.setBounds (place (mid1, mid1.getWidth()));
         }
 
         {
             auto mid2 = row2.removeFromLeft (midW);
-            fixtureLabel.setBounds (place (mid2, leftLabelW));
+            fixtureLabel.setBounds (place (mid2, midLabelW));
             mid2.removeFromLeft (gap);
             loopToggle.setBounds (mid2.removeFromRight (26).withSizeKeepingCentre (26, 26));
             mid2.removeFromRight (gap);
@@ -979,36 +1140,24 @@ private:
     void populateMidiInputs()
     {
         midiDevices = engine.getMidiInputDevices();
-        midiBox.clear (juce::dontSendNotification);
 
-        if (midiDevices.isEmpty())
+        juce::StringArray selectedIds;
+        for (const auto& wantedName : config.defaultMidiInputs)
         {
-            midiBox.addItem ("No MIDI inputs", 1);
-            midiBox.setSelectedId (1, juce::dontSendNotification);
-            midiBox.setEnabled (false);
-            engine.setMidiInputDevice ({});
-            return;
-        }
-
-        midiBox.setEnabled (true);
-        for (int i = 0; i < midiDevices.size(); ++i)
-            midiBox.addItem (midiDevices.getReference (i).name, i + 1);
-
-        int selectedIndex = 0;
-        if (config.defaultMidiInput.isNotEmpty())
-        {
-            for (int i = 0; i < midiDevices.size(); ++i)
+            for (const auto& device : midiDevices)
             {
-                if (midiDevices.getReference (i).name.equalsIgnoreCase (config.defaultMidiInput))
+                // Match exact or substring so "Oxygen Pro 49" also selects
+                // "Oxygen Pro 49 Mackie/HUI" (where DAW transport usually lives).
+                if (device.name.equalsIgnoreCase (wantedName)
+                    || device.name.containsIgnoreCase (wantedName))
                 {
-                    selectedIndex = i;
-                    break;
+                    selectedIds.addIfNotAlreadyThere (device.identifier);
                 }
             }
         }
 
-        midiBox.setSelectedItemIndex (selectedIndex, juce::dontSendNotification);
-        engine.setMidiInputDevice (midiDevices.getReference (selectedIndex).identifier);
+        midiField.setDevices (midiDevices, selectedIds);
+        engine.setMidiInputDevices (midiField.getSelectedIdentifiers());
     }
 
     void timerCallback() override
@@ -1025,6 +1174,12 @@ private:
 
         // Keep the transport glyph in sync (one-shot clips stop themselves).
         transportButton.setPlaying (engine.isPlaying());
+
+        // DAW surface Play/Stop (MIDI Start/Stop or Mackie notes 94/93).
+        if (engine.consumeTransportPlayRequest())
+            startPlayback();
+        if (engine.consumeTransportStopRequest())
+            stopPlayback();
     }
 
     void applyBpmFromEditor()
@@ -1227,7 +1382,7 @@ private:
         }
 
         if (button == &captureButton)
-            captureTestCase();
+            promptCaptureTestCase();
     }
 
     void comboBoxChanged (juce::ComboBox* box) override
@@ -1253,16 +1408,6 @@ private:
                 savePresetNameEditor.setText (presetFile.getFileNameWithoutExtension(),
                                               juce::dontSendNotification);
             }
-            return;
-        }
-
-        if (box == &midiBox)
-        {
-            const int index = midiBox.getSelectedItemIndex();
-            if (juce::isPositiveAndBelow (index, midiDevices.size()))
-                engine.setMidiInputDevice (midiDevices.getReference (index).identifier);
-            else
-                engine.setMidiInputDevice ({});
         }
     }
 
@@ -1280,12 +1425,12 @@ private:
             applyBpmFromEditor();
     }
 
-    void captureTestCase()
+    void promptCaptureTestCase()
     {
         const int fixtureIndex = fixtureBox.getSelectedId() - 1;
         if (! juce::isPositiveAndBelow (fixtureIndex, fixtureFiles.size()))
         {
-            setStatus ("Select a fixture WAV before capturing", true);
+            setStatus ("Select a source clip before capturing", true);
             return;
         }
 
@@ -1295,10 +1440,62 @@ private:
             return;
         }
 
-        const auto snapshotName = snapshotNameEditor.getText().trim();
+        auto* aw = new juce::AlertWindow ("Capture Test Case",
+                                          "Describe the snapshot and choose how to label the output.",
+                                          juce::MessageBoxIconType::QuestionIcon,
+                                          this);
+
+        aw->addTextEditor ("description",
+                           lastCaptureDescription.isNotEmpty() ? lastCaptureDescription : "snapshot",
+                           "Description");
+        aw->addComboBox ("role", { "golden", "suspect", "broken" }, "Type");
+
+        if (auto* roleBox = aw->getComboBoxComponent ("role"))
+            roleBox->setSelectedItemIndex (juce::jlimit (0, 2, lastCaptureRoleIndex),
+                                           juce::dontSendNotification);
+
+        aw->addButton ("Capture", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+        aw->enterModalState (true,
+                             juce::ModalCallbackFunction::create (
+                                 [safe = juce::Component::SafePointer<MainContent> (this), aw] (int result)
+                                 {
+                                     std::unique_ptr<juce::AlertWindow> dialog (aw);
+
+                                     if (safe == nullptr || result != 1)
+                                         return;
+
+                                     const auto description = dialog->getTextEditorContents ("description").trim();
+                                     int roleIndex = 2; // broken
+                                     if (auto* roleBox = dialog->getComboBoxComponent ("role"))
+                                         roleIndex = juce::jmax (0, roleBox->getSelectedItemIndex());
+
+                                     safe->lastCaptureDescription = description;
+                                     safe->lastCaptureRoleIndex = roleIndex;
+                                     safe->captureTestCase (description, roleIndex);
+                                 }),
+                             true);
+    }
+
+    void captureTestCase (const juce::String& snapshotName, int roleIndex)
+    {
         if (snapshotName.isEmpty())
         {
-            setStatus ("Snapshot name is required", true);
+            setStatus ("Description is required", true);
+            return;
+        }
+
+        const int fixtureIndex = fixtureBox.getSelectedId() - 1;
+        if (! juce::isPositiveAndBelow (fixtureIndex, fixtureFiles.size()))
+        {
+            setStatus ("Select a source clip before capturing", true);
+            return;
+        }
+
+        if (engine.getPlugin() == nullptr)
+        {
+            setStatus ("No plugin loaded", true);
             return;
         }
 
@@ -1314,7 +1511,7 @@ private:
         // Always dump the live plugin state — never copy the selected library
         // .aupreset, which may be stale after UI tweaks.
         const auto presetOut = captureDir.getChildFile (stem + ".aupreset");
-        const auto roleSuffix = artifactRoleCode();
+        const auto roleSuffix = artifactRoleCode (roleIndex);
         const auto outputOut = captureDir.getChildFile (stem + "_output_" + roleSuffix + ".wav");
 
         juce::String error;
@@ -1346,12 +1543,12 @@ private:
         setStatus ("Captured test case: " + snapshotName);
     }
 
-    juce::String artifactRoleCode() const
+    static juce::String artifactRoleCode (int roleIndex)
     {
-        switch (artifactRoleBox.getSelectedId())
+        switch (roleIndex)
         {
-            case 1:  return "gld";
-            case 2:  return "sus";
+            case 0:  return "gld";
+            case 1:  return "sus";
             default: return "bkn";
         }
     }
@@ -1436,11 +1633,8 @@ private:
     TransportButton transportButton;
     LoopToggleButton loopToggle;
     juce::TextButton captureButton;
-    juce::Label descriptionLabel;
-    juce::TextEditor snapshotNameEditor;
-    juce::ComboBox artifactRoleBox;
     juce::Label midiLabel;
-    juce::ComboBox midiBox;
+    MidiSourceField midiField;
     MidiActivityLed midiLed;
     juce::ToggleButton hostClockToggle;
     juce::TextEditor bpmEditor;
@@ -1458,6 +1652,8 @@ private:
     juce::Array<juce::File> fixtureFiles;
     juce::Component* keyListenerOwner { nullptr };
     juce::ScopedMessageBox replacePresetDialog;
+    juce::String lastCaptureDescription { "snapshot" };
+    int lastCaptureRoleIndex { 2 }; // broken
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContent)
 };

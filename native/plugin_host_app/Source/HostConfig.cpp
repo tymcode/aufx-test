@@ -108,7 +108,25 @@ bool HostConfig::loadFromFile (const juce::File& configFile,
     if (out.logFile == juce::File())
         out.logFile = out.projectRoot.getChildFile ("sessions").getChildFile ("plugin_host.log");
     out.defaultPluginId = root->getProperty ("default_plugin").toString();
-    out.defaultMidiInput = root->getProperty ("default_midi_input").toString().trim();
+
+    out.defaultMidiInputs.clear();
+    const auto midiDefaults = root->getProperty ("default_midi_input");
+    if (midiDefaults.isArray())
+    {
+        for (const auto& item : *midiDefaults.getArray())
+        {
+            const auto name = item.toString().trim();
+            if (name.isNotEmpty())
+                out.defaultMidiInputs.add (name);
+        }
+    }
+    else
+    {
+        // Legacy: single string still accepted.
+        const auto name = midiDefaults.toString().trim();
+        if (name.isNotEmpty())
+            out.defaultMidiInputs.add (name);
+    }
 
     const auto pluginsVar = root->getProperty ("plugins");
     if (! pluginsVar.isArray())

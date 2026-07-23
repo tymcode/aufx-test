@@ -262,24 +262,28 @@ juce::Array<juce::MidiDeviceInfo> PluginAudioEngine::getMidiInputDevices() const
     return juce::MidiInput::getAvailableDevices();
 }
 
-juce::String PluginAudioEngine::getSelectedMidiInputName() const
+juce::StringArray PluginAudioEngine::getSelectedMidiInputNames() const
 {
-    if (selectedMidiIdentifier.isEmpty())
-        return {};
+    juce::StringArray names;
+    const auto available = juce::MidiInput::getAvailableDevices();
 
-    for (const auto& device : juce::MidiInput::getAvailableDevices())
-        if (device.identifier == selectedMidiIdentifier)
-            return device.name;
+    for (const auto& id : selectedMidiIdentifiers)
+        for (const auto& device : available)
+            if (device.identifier == id)
+                names.add (device.name);
 
-    return {};
+    return names;
 }
 
 void PluginAudioEngine::clearMidiInput()
 {
-    if (selectedMidiIdentifier.isNotEmpty())
+    for (const auto& id : selectedMidiIdentifiers)
     {
-        deviceManager.removeMidiInputDeviceCallback (selectedMidiIdentifier, this);
-        deviceManager.setMidiInputDeviceEnabled (selectedMidiIdentifier, false);
+        if (id.isEmpty())
+            continue;
+
+        deviceManager.removeMidiInputDeviceCallback (id, this);
+        deviceManager.setMidiInputDeviceEnabled (id, false);
     }
 
     const juce::ScopedLock lock (midiLock);
@@ -288,23 +292,41 @@ void PluginAudioEngine::clearMidiInput()
 
 void PluginAudioEngine::applyMidiInputSelection()
 {
-    if (selectedMidiIdentifier.isEmpty())
-        return;
+    for (const auto& id : selectedMidiIdentifiers)
+    {
+        if (id.isEmpty())
+            continue;
 
-    deviceManager.setMidiInputDeviceEnabled (selectedMidiIdentifier, true);
-    deviceManager.addMidiInputDeviceCallback (selectedMidiIdentifier, this);
+        deviceManager.setMidiInputDeviceEnabled (id, true);
+        deviceManager.addMidiInputDeviceCallback (id, this);
+    }
 }
 
-void PluginAudioEngine::setMidiInputDevice (const juce::String& identifier)
+void PluginAudioEngine::setMidiInputDevices (const juce::StringArray& identifiers)
 {
     clearMidiInput();
-    selectedMidiIdentifier = identifier;
+    selectedMidiIdentifiers.clear();
+
+    for (const auto& id : identifiers)
+        if (id.isNotEmpty() && ! selectedMidiIdentifiers.contains (id))
+            selectedMidiIdentifiers.add (id);
+
     applyMidiInputSelection();
 }
 
 bool PluginAudioEngine::consumeMidiActivity()
 {
     return midiActivity.exchange (false);
+}
+
+bool PluginAudioEngine::consumeTransportPlayRequest()
+{
+    return transportPlayRequest.exchange (false);
+}
+
+bool PluginAudioEngine::consumeTransportStopRequest()
+{
+    return transportStopRequest.exchange (false);
 }
 
 void PluginAudioEngine::setHostClockEnabled (bool enabled)
@@ -521,27 +543,28 @@ void PluginAudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce:
 {
     bool forward = true;
 
-    if (hostClockEnabled.load())
+    // Transport from MIDI realtime (Start/Stop/Continue), MMC, or Mackie/HUI notes.
+    // Oxygen Pro DAW mode (Mackie / Mackie/HUI) sends notes 93/94 on the HUI port
+    // (e.g. iConnectMIDI "HST" ports), not MIDI Start/Stop.
+    const auto transport = classifyTransportMessage (message);
+    if (transport != PendingTransport::none)
     {
-        if (message.isMidiStart())
+        if (hostClockEnabled.load())
         {
-            pendingTransport.store (PendingTransport::start);
+            pendingTransport.store (transport);
             forward = false;
         }
-        else if (message.isMidiContinue())
-        {
-            pendingTransport.store (PendingTransport::continue_);
-            forward = false;
-        }
-        else if (message.isMidiStop())
-        {
-            pendingTransport.store (PendingTransport::stop);
-            forward = false;
-        }
-        else if (hostClockPlaying.load() && message.isMidiClock())
-        {
-            forward = false;
-        }
+
+        // Always drive source-clip play/stop so DAW buttons do something audible
+        // even when Host Clock is off.
+        if (transport == PendingTransport::start || transport == PendingTransport::continue_)
+            transportPlayRequest.store (true);
+        else if (transport == PendingTransport::stop)
+            transportStopRequest.store (true);
+    }
+    else if (hostClockEnabled.load() && hostClockPlaying.load() && message.isMidiClock())
+    {
+        forward = false;
     }
 
     if (forward)
@@ -551,6 +574,48 @@ void PluginAudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce:
     }
 
     midiActivity.store (true);
+}
+
+PluginAudioEngine::PendingTransport PluginAudioEngine::classifyTransportMessage (const juce::MidiMessage& message)
+{
+    if (message.isMidiStart())
+        return PendingTransport::start;
+    if (message.isMidiContinue())
+        return PendingTransport::continue_;
+    if (message.isMidiStop())
+        return PendingTransport::stop;
+
+    // Mackie Control / Logic Control transport (ch. 1 notes).
+    // Stop = 93, Play = 94. Accept any channel — some surfaces remap.
+    if (message.isNoteOn (false) && message.getVelocity() > 0)
+    {
+        switch (message.getNoteNumber())
+        {
+            case 94: return PendingTransport::start;
+            case 93: return PendingTransport::stop;
+            default: break;
+        }
+    }
+
+    // MMC: F0 7F <dev> 06 <cmd> F7 — Play=02, Deferred Play=03, Continue=04, Stop=01
+    if (message.isSysEx())
+    {
+        const auto* data = message.getSysExData();
+        const int n = message.getSysExDataSize();
+        if (n >= 4 && (uint8_t) data[0] == 0x7f && (uint8_t) data[2] == 0x06)
+        {
+            switch ((uint8_t) data[3])
+            {
+                case 0x01: return PendingTransport::stop;
+                case 0x02: return PendingTransport::start;
+                case 0x03: return PendingTransport::start;
+                case 0x04: return PendingTransport::continue_;
+                default: break;
+            }
+        }
+    }
+
+    return PendingTransport::none;
 }
 
 void PluginAudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)

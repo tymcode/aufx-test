@@ -4,7 +4,7 @@
   "python_cli": ".venv/bin/aufx-test",
   "log_file": "sessions/plugin_host.log",
   "default_plugin": "deepz",
-  "default_midi_input": "Expression Pedal",
+  "default_midi_input": ["Expression Pedal", "Oxygen Pro 49", "iConnectMIDI4+ HST 3"],
   "plugins": [
     {
       "id": "deepz",

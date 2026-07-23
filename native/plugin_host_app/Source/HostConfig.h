@@ -39,8 +39,8 @@ struct HostConfig
     juce::File sessionLogFile;   // logFile with session hash inserted in the stem
     juce::String sessionHash;
     juce::String defaultPluginId;
-    /** Preferred MIDI input device name (Audio MIDI Setup). Empty = first available. */
-    juce::String defaultMidiInput;
+    /** Preferred MIDI input device names (Audio MIDI Setup). Empty = none preselected. */
+    juce::StringArray defaultMidiInputs;
     juce::Array<HostPluginEntry> plugins;
 
     const HostPluginEntry* findPluginById (const juce::String& id) const;
