@@ -424,21 +424,6 @@ public:
         savePresetNameEditor.setJustification (juce::Justification::centredLeft);
         addAndMakeVisible (savePresetNameEditor);
 
-        descriptionLabel.setText ("Description", juce::dontSendNotification);
-        descriptionLabel.setJustificationType (juce::Justification::centredRight);
-        addAndMakeVisible (descriptionLabel);
-        snapshotNameEditor.setText ("snapshot", juce::dontSendNotification);
-        snapshotNameEditor.setInputRestrictions (64);
-        snapshotNameEditor.setJustification (juce::Justification::centredLeft);
-        addAndMakeVisible (snapshotNameEditor);
-
-        // Output WAV role flag: golden→_gld, suspect→_sus, broken→_bkn
-        artifactRoleBox.addItem ("golden", 1);
-        artifactRoleBox.addItem ("suspect", 2);
-        artifactRoleBox.addItem ("broken", 3);
-        artifactRoleBox.setSelectedId (3); // default: broken
-        addAndMakeVisible (artifactRoleBox);
-
         midiLabel.setText ("MIDI", juce::dontSendNotification);
         midiLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (midiLabel);
@@ -613,21 +598,11 @@ public:
         bounds.removeFromTop (4);
         auto row2 = bounds.removeFromTop (rowH);
 
-        // Right column: description + type on row0; Capture under them on row1;
-        // host clock on row2.
-        constexpr int nameFieldW = 150;
-        constexpr int roleBoxW = 90;
-        constexpr int captureW = nameFieldW + gap + roleBoxW;
+        // Right column: Capture on row0; host clock on row2.
+        constexpr int captureW = 150;
 
-        artifactRoleBox.setBounds (row0.removeFromRight (roleBoxW).withSizeKeepingCentre (roleBoxW, ctrlH));
-        row0.removeFromRight (gap);
-        snapshotNameEditor.setBounds (row0.removeFromRight (nameFieldW).withSizeKeepingCentre (nameFieldW, ctrlH));
-        row0.removeFromRight (gap);
-        descriptionLabel.setBounds (row0.removeFromRight (72));
+        captureButton.setBounds (row0.removeFromRight (captureW).withSizeKeepingCentre (captureW, ctrlH));
         row0.removeFromRight (groupGap);
-
-        captureButton.setBounds (row1.removeFromRight (captureW).withSizeKeepingCentre (captureW, ctrlH));
-        row1.removeFromRight (groupGap);
 
         clickToggle.setBounds (row2.removeFromRight (26).withSizeKeepingCentre (26, 26));
         row2.removeFromRight (gap);

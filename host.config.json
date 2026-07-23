@@ -62,6 +62,14 @@
       "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPMSP126.component",
       "presets_dir": "~/Library/Audio/Presets/Temecula DSP/MSP126",
       "session": "MSP126 exploration"
+    },
+    {
+      "id": "dpv",
+      "name": "DP-V",
+      "manufacturer": "Hare Tech",
+      "path": "/Library/Audio/Plug-Ins/Components/DP-V.component",
+      "presets_dir": "~/Library/Audio/Presets/Hare Tech/DP-V",
+      "session": "DP-V exploration"
     }
   ]
 }
