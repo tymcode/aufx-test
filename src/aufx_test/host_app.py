@@ -17,10 +17,13 @@ def project_root() -> Path:
 
 def default_host_app_bin(root: Path | None = None) -> Path:
     root = root or project_root()
+    artefacts = root / "native/build/plugin_host_app/plugin_host_app_artefacts/Release"
     candidates = [
-        root
-        / "native/build/plugin_host_app/plugin_host_app_artefacts/Release/Plugin Host.app/Contents/MacOS/Plugin Host",
-        root / "native/build/plugin_host_app/plugin_host_app_artefacts/Release/plugin_host_app",
+        artefacts / "AU Effects Explorer.app/Contents/MacOS/AU Effects Explorer",
+        root / "native/build/plugin_host_app/AU Effects Explorer.app/Contents/MacOS/AU Effects Explorer",
+        artefacts / "plugin_host_app",
+        # Legacy bundle name (pre-rebrand) kept as a fallback.
+        artefacts / "Plugin Host.app/Contents/MacOS/Plugin Host",
         root / "native/build/plugin_host_app/Plugin Host.app/Contents/MacOS/Plugin Host",
     ]
     for path in candidates:

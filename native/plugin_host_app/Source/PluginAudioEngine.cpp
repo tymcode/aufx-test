@@ -206,12 +206,12 @@ void PluginAudioEngine::playFixture()
         return;
 
     fixtureReadPosition = 0.0;
-    playing = true;
+    playing.store (true);
 }
 
 void PluginAudioEngine::stopFixture()
 {
-    playing = false;
+    playing.store (false);
     fixtureReadPosition = 0.0;
 }
 
@@ -580,15 +580,29 @@ void PluginAudioEngine::fillFixtureBlock (juce::AudioBuffer<float>& buffer, int 
 
     const double ratio = fixtureSampleRate / deviceSampleRate;
     const int channels = fixtureBuffer.getNumChannels();
+    const bool loop = looping.load();
 
     for (int i = 0; i < numSamples; ++i)
     {
-        while (fixtureReadPosition >= (double) length)
-            fixtureReadPosition -= (double) length;
+        if (fixtureReadPosition >= (double) length)
+        {
+            if (loop)
+            {
+                while (fixtureReadPosition >= (double) length)
+                    fixtureReadPosition -= (double) length;
+            }
+            else
+            {
+                // One-shot finished: leave the rest of the block silent and stop.
+                playing.store (false);
+                break;
+            }
+        }
 
         const int index = (int) fixtureReadPosition;
         const float frac = (float) (fixtureReadPosition - (double) index);
-        const int index2 = (index + 1) % length;
+        const int index2 = loop ? (index + 1) % length
+                                 : juce::jmin (index + 1, length - 1);
 
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
         {

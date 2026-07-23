@@ -1,11 +1,12 @@
 #include "MainWindow.h"
 #include "HostConfig.h"
 #include "HostLog.h"
+#include "HostLookAndFeel.h"
 
 class PluginHostApplication : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override { return "Plugin Host"; }
+    const juce::String getApplicationName() override { return "AU Effects Explorer"; }
     const juce::String getApplicationVersion() override { return "1.0.0"; }
     bool moreThanOneInstanceAllowed() override { return false; }
 
@@ -41,12 +42,17 @@ public:
         HostLog::info ("Session hash " + config.sessionHash);
         HostLog::info ("Logging to " + config.sessionLogFile.getFullPathName());
 
+        lookAndFeel = std::make_unique<HostLookAndFeel>();
+        juce::LookAndFeel::setDefaultLookAndFeel (lookAndFeel.get());
+
         mainWindow = std::make_unique<MainWindow> (config);
     }
 
     void shutdown() override
     {
         mainWindow.reset();
+        juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
+        lookAndFeel.reset();
         HostLog::close();
     }
 
@@ -66,6 +72,7 @@ private:
             "  --config        <project-root>/host.config.json");
     }
 
+    std::unique_ptr<HostLookAndFeel> lookAndFeel;
     std::unique_ptr<MainWindow> mainWindow;
 };
 

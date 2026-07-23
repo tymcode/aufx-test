@@ -1,6 +1,7 @@
 juce_add_gui_app(plugin_host_app
-    PRODUCT_NAME "Plugin Host"
+    PRODUCT_NAME "AU Effects Explorer"
     VERSION 1.0.0
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/app_icon.png"
     PLUGINHOST_AU TRUE
     PLUGINHOST_VST3 TRUE
     MICROPHONE_PERMISSION_ENABLED FALSE)
@@ -15,6 +16,7 @@ target_sources(plugin_host_app
         Source/Main.cpp
         Source/HostConfig.cpp
         Source/HostLog.cpp
+        Source/HostLookAndFeel.cpp
         Source/MainWindow.cpp
         Source/PluginAudioEngine.cpp
         Source/OfflineCapture.cpp

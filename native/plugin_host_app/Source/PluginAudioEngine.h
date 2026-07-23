@@ -24,7 +24,11 @@ public:
     bool loadFixture (const juce::File& fixtureFile, juce::String& error);
     void playFixture();
     void stopFixture();
-    bool isPlaying() const { return playing; }
+    bool isPlaying() const { return playing.load(); }
+
+    /** Loop the source clip (default) or play it once as a one-shot. */
+    void setLooping (bool shouldLoop) { looping.store (shouldLoop); }
+    bool isLooping() const { return looping.load(); }
 
     juce::File getCurrentFixtureFile() const { return currentFixtureFile; }
 
@@ -85,7 +89,8 @@ private:
     double fixtureSampleRate { 44100.0 };
     double fixtureReadPosition { 0.0 };
     juce::File currentFixtureFile;
-    bool playing { false };
+    std::atomic<bool> playing { false };
+    std::atomic<bool> looping { true };
 
     double deviceSampleRate { 44100.0 };
     int deviceBlockSize { 512 };

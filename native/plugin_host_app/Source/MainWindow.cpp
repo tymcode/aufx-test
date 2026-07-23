@@ -189,6 +189,158 @@ private:
     bool ledActive { false };
 };
 
+/** LCD-style status readout consistent with the host chrome. */
+class StatusDisplay : public juce::Component
+{
+public:
+    StatusDisplay()
+    {
+        label.setJustificationType (juce::Justification::centredLeft);
+        label.setColour (juce::Label::textColourId, juce::Colour (0xff8dff9e));
+        label.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+        label.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 12.5f, juce::Font::plain)));
+        addAndMakeVisible (label);
+    }
+
+    void setMessage (const juce::String& text, bool isError)
+    {
+        label.setColour (juce::Label::textColourId,
+                         isError ? juce::Colour (0xffff8a5c) : juce::Colour (0xff8dff9e));
+        label.setText (text, juce::dontSendNotification);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto area = getLocalBounds().toFloat().reduced (0.5f);
+
+        g.setColour (juce::Colour (0xff101510));
+        g.fillRoundedRectangle (area, 3.0f);
+
+        // Inner top shadow — recessed well
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRoundedRectangle (area.getX() + 1.0f, area.getY() + 1.0f,
+                                area.getWidth() - 2.0f, 2.0f, 2.0f);
+        g.setColour (juce::Colour (0xff1a2a1a).withAlpha (0.5f));
+        g.fillRoundedRectangle (area.reduced (2.0f), 2.0f);
+
+        g.setColour (juce::Colour (0xff191919));
+        g.drawRoundedRectangle (area, 3.0f, 1.0f);
+    }
+
+    void resized() override
+    {
+        label.setBounds (getLocalBounds().reduced (8, 2));
+    }
+
+private:
+    juce::Label label;
+};
+
+/** Combined play/stop key: play triangle when stopped, stop square when playing. */
+class TransportButton : public juce::Button
+{
+public:
+    TransportButton() : juce::Button ("Transport")
+    {
+        setTooltip ("Play / stop the source clip (Space)");
+    }
+
+    void setPlaying (bool shouldBePlaying)
+    {
+        if (playing == shouldBePlaying)
+            return;
+        playing = shouldBePlaying;
+        repaint();
+    }
+
+    void paintButton (juce::Graphics& g, bool highlighted, bool down) override
+    {
+        getLookAndFeel().drawButtonBackground (g, *this,
+                                               findColour (juce::TextButton::buttonColourId),
+                                               highlighted, down || playing);
+
+        auto area = getLocalBounds().toFloat();
+        const float glyph = juce::jmin (area.getWidth(), area.getHeight()) * 0.42f;
+        auto centre = area.getCentre();
+
+        if (playing)
+        {
+            auto sq = juce::Rectangle<float> (glyph, glyph).withCentre (centre);
+            g.setColour (juce::Colour (0xffff6a2a));
+            g.fillRoundedRectangle (sq, 1.5f);
+        }
+        else
+        {
+            juce::Path tri;
+            const float half = glyph * 0.5f;
+            tri.addTriangle (centre.x - half * 0.8f, centre.y - half,
+                             centre.x - half * 0.8f, centre.y + half,
+                             centre.x + half,        centre.y);
+            g.setColour (juce::Colour (0xffe6e6e6));
+            g.fillPath (tri);
+        }
+    }
+
+private:
+    bool playing { false };
+};
+
+/** Loop toggle drawn as chasing arrows; on = loop, off = one-shot. */
+class LoopToggleButton : public juce::Button
+{
+public:
+    LoopToggleButton() : juce::Button ("Loop")
+    {
+        setClickingTogglesState (true);
+        setTooltip ("Loop the clip, or play once (one-shot) when off");
+    }
+
+    void paintButton (juce::Graphics& g, bool highlighted, bool down) override
+    {
+        getLookAndFeel().drawButtonBackground (g, *this,
+                                               findColour (juce::TextButton::buttonColourId),
+                                               highlighted, down);
+
+        const bool on = getToggleState();
+        auto area = getLocalBounds().toFloat().reduced ((float) getWidth() * 0.24f, (float) getHeight() * 0.24f);
+        const float radius = juce::jmin (area.getWidth(), area.getHeight()) * 0.5f;
+        auto centre = area.getCentre();
+        const float thickness = juce::jmax (1.6f, radius * 0.32f);
+
+        auto arc = [&] (float startRad, float endRad)
+        {
+            juce::Path p;
+            p.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, startRad, endRad, true);
+            g.strokePath (p, juce::PathStrokeType (thickness, juce::PathStrokeType::curved,
+                                                   juce::PathStrokeType::butt));
+        };
+
+        auto head = [&] (float angleRad, float dir)
+        {
+            const float hx = centre.x + std::sin (angleRad) * radius;
+            const float hy = centre.y - std::cos (angleRad) * radius;
+            // Tangent direction of the circle at this angle
+            const float tx = std::cos (angleRad) * dir;
+            const float ty = std::sin (angleRad) * dir;
+            const float s = thickness * 1.7f;
+            juce::Path tri;
+            tri.addTriangle (hx + tx * s,            hy + ty * s,
+                             hx - ty * s * 0.6f - tx * s * 0.2f, hy + tx * s * 0.6f - ty * s * 0.2f,
+                             hx + ty * s * 0.6f - tx * s * 0.2f, hy - tx * s * 0.6f - ty * s * 0.2f);
+            g.fillPath (tri);
+        };
+
+        g.setColour (on ? juce::Colour (0xffff6a2a) : juce::Colour (0xff777777));
+
+        // Two opposing arcs with a gap, forming chasing arrows
+        const float pi = juce::MathConstants<float>::pi;
+        arc (0.35f, pi - 0.15f);
+        arc (pi + 0.35f, pi * 2.0f - 0.15f);
+        head (pi - 0.15f, 1.0f);
+        head (pi * 2.0f - 0.15f, 1.0f);
+    }
+};
+
 class MainWindow::MainContent : public juce::Component,
                                 private juce::Button::Listener,
                                 private juce::ComboBox::Listener,
@@ -227,48 +379,57 @@ public:
             }
         }
 
-        titleLabel.setText ("Plugin Host", juce::dontSendNotification);
-        titleLabel.setFont (juce::FontOptions (18.0f, juce::Font::bold));
-        addAndMakeVisible (titleLabel);
+        pluginLabel.setText ("Plugin", juce::dontSendNotification);
+        pluginLabel.setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (pluginLabel);
 
         pluginBox.setTooltip ("Plugins from host.config.json");
         addAndMakeVisible (pluginBox);
         pluginBox.addListener (this);
 
         setStatus ("Loading plugin...");
-        addAndMakeVisible (statusLabel);
+        addAndMakeVisible (statusDisplay);
 
         presetLabel.setText ("Preset", juce::dontSendNotification);
+        presetLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (presetLabel);
         addAndMakeVisible (presetBox);
         presetBox.addListener (this);
 
-        fixtureLabel.setText ("Fixture", juce::dontSendNotification);
+        fixtureLabel.setText ("Source Clip", juce::dontSendNotification);
+        fixtureLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (fixtureLabel);
         addAndMakeVisible (fixtureBox);
         fixtureBox.addListener (this);
 
+        configureButton (resetButton, "Reset");
+        resetButton.setTooltip ("Reload the plugin at its default state");
         configureButton (loadPresetButton, "Load");
         configureButton (savePresetButton, "Save");
-        configureButton (playButton, "Play");
-        configureButton (stopButton, "Stop");
         configureButton (captureButton, "Capture Test Case");
 
+        transportButton.addListener (this);
+        addAndMakeVisible (transportButton);
+
+        loopToggle.setToggleState (true, juce::dontSendNotification);
+        loopToggle.addListener (this);
+        addAndMakeVisible (loopToggle);
+        engine.setLooping (true);
+
         savePresetNameLabel.setText ("Save as", juce::dontSendNotification);
+        savePresetNameLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (savePresetNameLabel);
         savePresetNameEditor.setText ("Untitled", juce::dontSendNotification);
         savePresetNameEditor.setInputRestrictions (64);
+        savePresetNameEditor.setJustification (juce::Justification::centredLeft);
         addAndMakeVisible (savePresetNameEditor);
-
-        replacePresetToggle.setButtonText ("Replace existing");
-        replacePresetToggle.setToggleState (false, juce::dontSendNotification);
-        addAndMakeVisible (replacePresetToggle);
 
         descriptionLabel.setText ("Description", juce::dontSendNotification);
         descriptionLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (descriptionLabel);
         snapshotNameEditor.setText ("snapshot", juce::dontSendNotification);
         snapshotNameEditor.setInputRestrictions (64);
+        snapshotNameEditor.setJustification (juce::Justification::centredLeft);
         addAndMakeVisible (snapshotNameEditor);
 
         // Output WAV role flag: golden→_gld, suspect→_sus, broken→_bkn
@@ -279,6 +440,7 @@ public:
         addAndMakeVisible (artifactRoleBox);
 
         midiLabel.setText ("MIDI", juce::dontSendNotification);
+        midiLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (midiLabel);
         midiBox.setTooltip ("MIDI input from Audio MIDI Setup");
         addAndMakeVisible (midiBox);
@@ -373,7 +535,7 @@ public:
 
                 savePresetNameEditor.setText (defaultPreset.getFileNameWithoutExtension(),
                                               juce::dontSendNotification);
-                setStatus ("Loaded default preset: " + defaultPreset.getFileName());
+                setStatus ("Loaded default preset: " + defaultPreset.getFileNameWithoutExtension());
                 return true;
             }
 
@@ -409,69 +571,152 @@ public:
     void paint (juce::Graphics& g) override
     {
         g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
+
+        // Faint divider under the control strip
+        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        g.fillRect (controlStripDivider);
+        g.setColour (juce::Colours::white.withAlpha (0.04f));
+        g.fillRect (controlStripDivider.translated (0, 1));
+
+        for (auto& sep : groupSeparators)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.35f));
+            g.fillRect (sep);
+            g.setColour (juce::Colours::white.withAlpha (0.05f));
+            g.fillRect (sep.translated (1, 0));
+        }
     }
 
     void resized() override
     {
+        constexpr int ctrlH = 24;
+        constexpr int rowH = 28;
+        constexpr int gap = 6;
+        constexpr int groupGap = 14;
+        constexpr int leftLabelW = 72;
+        constexpr int leftDropW = 240;
+        constexpr int leftButtonW = 56;
+        constexpr int leftColW = leftLabelW + gap + leftDropW + gap + leftButtonW;
+
+        groupSeparators.clearQuick();
+
         auto bounds = getLocalBounds().reduced (12);
-        auto top = bounds.removeFromTop (28);
 
-        // Right half of header: test-case capture controls
-        artifactRoleBox.setBounds (top.removeFromRight (100));
-        top.removeFromRight (6);
-        snapshotNameEditor.setBounds (top.removeFromRight (160));
-        top.removeFromRight (6);
-        descriptionLabel.setBounds (top.removeFromRight (80));
-        top.removeFromRight (8);
-        captureButton.setBounds (top.removeFromRight (150));
-        top.removeFromRight (12);
+        auto place = [] (juce::Rectangle<int>& row, int w)
+        {
+            return row.removeFromLeft (w).withSizeKeepingCentre (w, ctrlH);
+        };
 
-        titleLabel.setBounds (top.removeFromLeft (110));
-        top.removeFromLeft (8);
-        pluginBox.setBounds (top.removeFromLeft (280));
-        top.removeFromLeft (8);
-        statusLabel.setBounds (top);
+        auto row0 = bounds.removeFromTop (rowH);
+        bounds.removeFromTop (4);
+        auto row1 = bounds.removeFromTop (rowH);
+        bounds.removeFromTop (4);
+        auto row2 = bounds.removeFromTop (rowH);
 
-        auto controls = bounds.removeFromTop (72);
-        auto row1 = controls.removeFromTop (32);
-        presetLabel.setBounds (row1.removeFromLeft (55));
-        presetBox.setBounds (row1.removeFromLeft (260));
-        row1.removeFromLeft (6);
-        loadPresetButton.setBounds (row1.removeFromLeft (60));
-        row1.removeFromLeft (10);
-        savePresetNameLabel.setBounds (row1.removeFromLeft (55));
-        savePresetNameEditor.setBounds (row1.removeFromLeft (160));
-        row1.removeFromLeft (6);
-        savePresetButton.setBounds (row1.removeFromLeft (60));
-        row1.removeFromLeft (6);
-        replacePresetToggle.setBounds (row1.removeFromLeft (140));
+        // Right column: description + type on row0; Capture under them on row1;
+        // host clock on row2.
+        constexpr int nameFieldW = 150;
+        constexpr int roleBoxW = 90;
+        constexpr int captureW = nameFieldW + gap + roleBoxW;
 
-        auto row2 = controls.removeFromTop (32);
-        fixtureLabel.setBounds (row2.removeFromLeft (55));
-        fixtureBox.setBounds (row2.removeFromLeft (220));
-        row2.removeFromLeft (6);
-        playButton.setBounds (row2.removeFromLeft (70));
-        row2.removeFromLeft (6);
-        stopButton.setBounds (row2.removeFromLeft (70));
-        row2.removeFromLeft (16);
-        midiLabel.setBounds (row2.removeFromLeft (40));
-        midiBox.setBounds (row2.removeFromLeft (220));
-        row2.removeFromLeft (6);
-        midiLed.setBounds (row2.removeFromLeft (18).withSizeKeepingCentre (16, 16));
-        row2.removeFromLeft (12);
-        hostClockToggle.setBounds (row2.removeFromLeft (100));
-        row2.removeFromLeft (6);
-        bpmEditor.setBounds (row2.removeFromLeft (44));
-        row2.removeFromLeft (4);
-        bpmLabel.setBounds (row2.removeFromLeft (34));
-        row2.removeFromLeft (6);
-        clickToggle.setBounds (row2.removeFromLeft (28).withSizeKeepingCentre (26, 26));
+        artifactRoleBox.setBounds (row0.removeFromRight (roleBoxW).withSizeKeepingCentre (roleBoxW, ctrlH));
+        row0.removeFromRight (gap);
+        snapshotNameEditor.setBounds (row0.removeFromRight (nameFieldW).withSizeKeepingCentre (nameFieldW, ctrlH));
+        row0.removeFromRight (gap);
+        descriptionLabel.setBounds (row0.removeFromRight (72));
+        row0.removeFromRight (groupGap);
+
+        captureButton.setBounds (row1.removeFromRight (captureW).withSizeKeepingCentre (captureW, ctrlH));
+        row1.removeFromRight (groupGap);
+
+        clickToggle.setBounds (row2.removeFromRight (26).withSizeKeepingCentre (26, 26));
+        row2.removeFromRight (gap);
+        bpmLabel.setBounds (row2.removeFromRight (30).withSizeKeepingCentre (30, ctrlH));
+        row2.removeFromRight (gap);
+        bpmEditor.setBounds (row2.removeFromRight (40).withSizeKeepingCentre (40, ctrlH));
+        row2.removeFromRight (gap);
+        hostClockToggle.setBounds (row2.removeFromRight (100).withSizeKeepingCentre (100, ctrlH));
+        row2.removeFromRight (groupGap);
+
+        // Left columns — shared field width + identical action buttons
+        auto left0 = row0.removeFromLeft (leftColW);
+        auto left1 = row1.removeFromLeft (leftColW);
+        auto left2 = row2.removeFromLeft (leftColW);
+
+        pluginLabel.setBounds (place (left0, leftLabelW));
+        left0.removeFromLeft (gap);
+        pluginBox.setBounds (place (left0, leftDropW));
+        left0.removeFromLeft (gap);
+        resetButton.setBounds (place (left0, leftButtonW));
+
+        presetLabel.setBounds (place (left1, leftLabelW));
+        left1.removeFromLeft (gap);
+        presetBox.setBounds (place (left1, leftDropW));
+        left1.removeFromLeft (gap);
+        loadPresetButton.setBounds (place (left1, leftButtonW));
+
+        savePresetNameLabel.setBounds (place (left2, leftLabelW));
+        left2.removeFromLeft (gap);
+        savePresetNameEditor.setBounds (place (left2, leftDropW));
+        left2.removeFromLeft (gap);
+        savePresetButton.setBounds (place (left2, leftButtonW));
+
+        // Separator between left and middle
+        groupSeparators.add (juce::Rectangle<float> ((float) (row0.getX() - groupGap / 2),
+                                                     (float) row0.getY() + 3.0f,
+                                                     1.0f,
+                                                     (float) (row2.getBottom() - row0.getY() - 6)));
+
+        row0.removeFromLeft (groupGap);
+        row1.removeFromLeft (groupGap);
+        row2.removeFromLeft (groupGap);
+
+        // Middle width matches across status + MIDI (status display sets the width)
+        const int midW = juce::jmax (180, juce::jmin (row0.getWidth(), row1.getWidth()));
+
+        statusDisplay.setBounds (row0.removeFromLeft (midW).withSizeKeepingCentre (midW, ctrlH));
+
+        {
+            auto mid1 = row1.removeFromLeft (midW);
+            midiLabel.setBounds (place (mid1, 40));
+            mid1.removeFromLeft (gap);
+            midiLed.setBounds (mid1.removeFromRight (16).withSizeKeepingCentre (16, 16));
+            mid1.removeFromRight (gap);
+            midiBox.setBounds (place (mid1, mid1.getWidth()));
+        }
+
+        {
+            auto mid2 = row2.removeFromLeft (midW);
+            fixtureLabel.setBounds (place (mid2, leftLabelW));
+            mid2.removeFromLeft (gap);
+            loopToggle.setBounds (mid2.removeFromRight (26).withSizeKeepingCentre (26, 26));
+            mid2.removeFromRight (gap);
+            transportButton.setBounds (mid2.removeFromRight (26).withSizeKeepingCentre (26, 26));
+            mid2.removeFromRight (gap);
+            fixtureBox.setBounds (place (mid2, mid2.getWidth()));
+        }
+
+        bounds.removeFromTop (8);
+        controlStripDivider = juce::Rectangle<int> (bounds.getX(), bounds.getY(), bounds.getWidth(), 1);
+        bounds.removeFromTop (4);
 
         editorViewport.setBounds (bounds);
         layoutEditor();
     }
 
 private:
+    static juce::String stripAupresetExtension (juce::String name)
+    {
+        if (name.endsWithIgnoreCase (".aupreset"))
+            return name.dropLastCharacters (9);
+        return name;
+    }
+
+    static juce::String presetDisplayPath (const juce::File& file, const juce::File& presetsDir)
+    {
+        return stripAupresetExtension (file.getRelativePathFrom (presetsDir));
+    }
+
     void configureButton (juce::TextButton& button, const juce::String& text)
     {
         button.setButtonText (text);
@@ -481,7 +726,7 @@ private:
 
     void setStatus (const juce::String& text, bool isError = false)
     {
-        statusLabel.setText (text, juce::dontSendNotification);
+        statusDisplay.setMessage (text, isError);
         if (isError)
             HostLog::error (text);
     }
@@ -532,7 +777,7 @@ private:
         presetFiles = collectFiles (presetsDir, ".aupreset", true);
 
         for (int i = 0; i < presetFiles.size(); ++i)
-            presetBox.addItem (presetFiles[i].getRelativePathFrom (presetsDir), i + 1);
+            presetBox.addItem (presetDisplayPath (presetFiles[i], presetsDir), i + 1);
 
         if (presetFiles.isEmpty())
             presetBox.addItem ("(no presets found)", 1);
@@ -611,7 +856,7 @@ private:
         {
             for (const auto& file : presetFiles)
             {
-                if (file.getRelativePathFrom (currentPlugin().presetsDir) == text
+                if (presetDisplayPath (file, currentPlugin().presetsDir) == text
                     || file.getFileName() == text
                     || file.getFileNameWithoutExtension() == text)
                 {
@@ -674,7 +919,7 @@ private:
 
         savePresetNameEditor.setText (presetFile.getFileNameWithoutExtension(),
                                       juce::dontSendNotification);
-        setStatus ("Loaded preset: " + presetFile.getFileName());
+        setStatus ("Loaded preset: " + presetFile.getFileNameWithoutExtension());
     }
 
     juce::File presetFileForName (const juce::String& presetName) const
@@ -687,6 +932,21 @@ private:
             fileName << ".aupreset";
 
         return currentPlugin().presetsDir.getChildFile (fileName);
+    }
+
+    void commitPresetSave (const juce::File& dest, bool replacing)
+    {
+        juce::String error;
+        if (! engine.saveCurrentPreset (dest, error))
+        {
+            setStatus ("Failed to save preset: " + error, true);
+            return;
+        }
+
+        populatePresets();
+        selectPresetInDropdown (dest);
+        setStatus ((replacing ? "Replaced preset: " : "Saved preset: ")
+                   + dest.getFileNameWithoutExtension());
     }
 
     void savePresetFromEditor()
@@ -705,23 +965,28 @@ private:
         }
 
         const auto dest = presetFileForName (presetName);
-        const bool replacing = dest.existsAsFile();
-        if (replacing && ! replacePresetToggle.getToggleState())
+        if (dest.existsAsFile())
         {
-            setStatus ("Preset exists — enable Replace existing to overwrite", true);
+            auto options = juce::MessageBoxOptions()
+                               .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                               .withTitle ("Replace Preset")
+                               .withMessage ("File " + dest.getFileName()
+                                             + " already exists.\nReplace it?")
+                               .withButton ("OK")
+                               .withButton ("Cancel")
+                               .withAssociatedComponent (this);
+
+            replacePresetDialog = juce::AlertWindow::showScopedAsync (options,
+                [safe = juce::Component::SafePointer<MainContent> (this), dest] (int result)
+                {
+                    if (safe == nullptr || result != 1)
+                        return;
+                    safe->commitPresetSave (dest, true);
+                });
             return;
         }
 
-        juce::String error;
-        if (! engine.saveCurrentPreset (dest, error))
-        {
-            setStatus ("Failed to save preset: " + error, true);
-            return;
-        }
-
-        populatePresets();
-        selectPresetInDropdown (dest);
-        setStatus ((replacing ? "Replaced preset: " : "Saved preset: ") + dest.getFileName());
+        commitPresetSave (dest, false);
     }
 
     void populateFixtures()
@@ -782,6 +1047,9 @@ private:
             clockLedLitUntil = juce::Time::getMillisecondCounterHiRes() + 150.0;
 
         clickToggle.setLedActive (juce::Time::getMillisecondCounterHiRes() < clockLedLitUntil);
+
+        // Keep the transport glyph in sync (one-shot clips stop themselves).
+        transportButton.setPlaying (engine.isPlaying());
     }
 
     void applyBpmFromEditor()
@@ -853,12 +1121,14 @@ private:
         const int index = fixtureBox.getSelectedId() - 1;
         selectFixture (index);
         engine.playFixture();
-        setStatus ("Looping fixture...");
+        transportButton.setPlaying (true);
+        setStatus (engine.isLooping() ? "Looping clip..." : "Playing clip (one-shot)...");
     }
 
     void stopPlayback()
     {
         engine.stopFixture();
+        transportButton.setPlaying (false);
         setStatus ("Stopped");
     }
 
@@ -868,6 +1138,39 @@ private:
             stopPlayback();
         else
             startPlayback();
+    }
+
+    void resetPluginToDefaults()
+    {
+        if (! juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size())
+            || ! currentPlugin().installed)
+        {
+            setStatus ("No installed plugin to reset", true);
+            return;
+        }
+
+        engine.stopFixture();
+        transportButton.setPlaying (false);
+        destroyPluginEditor();
+
+        const auto& plugin = currentPlugin();
+        juce::String error;
+        if (! engine.loadPlugin (plugin.path, error))
+        {
+            setStatus ("Failed to reset plugin: " + error, true);
+            return;
+        }
+
+        if (! engine.startAudioDevice (error))
+        {
+            setStatus ("Audio device error: " + error, true);
+            return;
+        }
+
+        // Fresh instance = plugin's own default state; clear any preset selection.
+        savePresetNameEditor.setText ("Untitled", juce::dontSendNotification);
+        recreatePluginEditor();
+        setStatus ("Reset " + plugin.displayLabel() + " to defaults");
     }
 
     static bool isEditableFieldFocused()
@@ -917,15 +1220,21 @@ private:
             return;
         }
 
-        if (button == &playButton)
+        if (button == &resetButton)
         {
-            startPlayback();
+            resetPluginToDefaults();
             return;
         }
 
-        if (button == &stopButton)
+        if (button == &transportButton)
         {
-            stopPlayback();
+            togglePlayback();
+            return;
+        }
+
+        if (button == &loopToggle)
+        {
+            engine.setLooping (loopToggle.getToggleState());
             return;
         }
 
@@ -1137,9 +1446,10 @@ private:
     HostConfig config;
     int currentPluginIndex { 0 };
 
-    juce::Label titleLabel;
+    juce::Label pluginLabel;
     juce::ComboBox pluginBox;
-    juce::Label statusLabel;
+    juce::TextButton resetButton;
+    StatusDisplay statusDisplay;
     juce::Label presetLabel;
     juce::Label fixtureLabel;
     juce::ComboBox presetBox;
@@ -1148,9 +1458,8 @@ private:
     juce::TextButton savePresetButton;
     juce::Label savePresetNameLabel;
     juce::TextEditor savePresetNameEditor;
-    juce::ToggleButton replacePresetToggle;
-    juce::TextButton playButton;
-    juce::TextButton stopButton;
+    TransportButton transportButton;
+    LoopToggleButton loopToggle;
     juce::TextButton captureButton;
     juce::Label descriptionLabel;
     juce::TextEditor snapshotNameEditor;
@@ -1165,18 +1474,21 @@ private:
     juce::Array<juce::MidiDeviceInfo> midiDevices;
     double midiLedLitUntil { 0.0 };
     double clockLedLitUntil { 0.0 };
+    juce::Array<juce::Rectangle<float>> groupSeparators;
+    juce::Rectangle<int> controlStripDivider;
     juce::Viewport editorViewport;
     juce::Component editorPlaceholder;
     juce::AudioProcessorEditor* pluginEditor { nullptr };
     juce::Array<juce::File> presetFiles;
     juce::Array<juce::File> fixtureFiles;
     juce::Component* keyListenerOwner { nullptr };
+    juce::ScopedMessageBox replacePresetDialog;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContent)
 };
 
 MainWindow::MainWindow (HostConfig hostConfig)
-    : DocumentWindow ("Plugin Host",
+    : DocumentWindow ("AU Effects Explorer",
                       juce::Desktop::getInstance().getDefaultLookAndFeel()
                           .findColour (juce::ResizableWindow::backgroundColourId),
                       DocumentWindow::allButtons),
