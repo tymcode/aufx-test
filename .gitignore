@@ -26,3 +26,6 @@ native/**/plugin_renderer_artefacts/
 
 .DS_Store
 **/.DS_Store
+plugin-cache.xml
+plugin-scan-crashes.txt
+plugin-scan-skip.txt
