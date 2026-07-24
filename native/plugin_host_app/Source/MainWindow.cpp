@@ -1,6 +1,13 @@
 #include "MainWindow.h"
+#include "AboutDialog.h"
+#include "AddPluginDialog.h"
+#include "AuPluginScanner.h"
 #include "HostLog.h"
+#include "HostPreferences.h"
 #include "OfflineCapture.h"
+#include "SessionSnap.h"
+#include "SettingsDialog.h"
+#include "Utf8.h"
 
 namespace
 {
@@ -40,32 +47,9 @@ namespace
         return results;
     }
 
-    juce::String slugify (juce::String value)
-    {
-        value = value.trim().toLowerCase();
-        juce::String out;
-        bool lastUnderscore = false;
-
-        for (auto ch : value)
-        {
-            if (juce::CharacterFunctions::isLetterOrDigit (ch))
-            {
-                out << ch;
-                lastUnderscore = false;
-            }
-            else if (! lastUnderscore)
-            {
-                out << '_';
-                lastUnderscore = true;
-            }
-        }
-
-        return out.trimCharactersAtEnd ("_");
-    }
-
     juce::String keywordFromDescription (const juce::String& description)
     {
-        const auto slug = slugify (description);
+        const auto slug = HostConfig::slugify (description);
         if (slug.isEmpty())
             return {};
 
@@ -236,13 +220,13 @@ private:
     juce::Label label;
 };
 
-/** Combined play/stop key: play triangle when stopped, stop square when playing. */
+/** Combined begin/stop control for the source clip. */
 class TransportButton : public juce::Button
 {
 public:
     TransportButton() : juce::Button ("Transport")
     {
-        setTooltip ("Play / stop the source clip (Space)");
+        setTooltip ("Begin / stop the source clip (Space)");
     }
 
     void setPlaying (bool shouldBePlaying)
@@ -255,34 +239,207 @@ public:
 
     void paintButton (juce::Graphics& g, bool highlighted, bool down) override
     {
-        getLookAndFeel().drawButtonBackground (g, *this,
-                                               findColour (juce::TextButton::buttonColourId),
-                                               highlighted, down || playing);
+        auto area = getLocalBounds().toFloat().reduced (0.5f);
+        constexpr float corner = 3.0f;
 
-        auto area = getLocalBounds().toFloat();
-        const float glyph = juce::jmin (area.getWidth(), area.getHeight()) * 0.42f;
-        auto centre = area.getCentre();
+        const auto face = playing ? juce::Colour (0xff5a2a1a)
+                                  : juce::Colour (0xffff6a2a);
+        const auto facePaint = down ? face.darker (0.12f)
+                                    : (highlighted ? face.brighter (0.08f) : face);
 
-        if (playing)
-        {
-            auto sq = juce::Rectangle<float> (glyph, glyph).withCentre (centre);
-            g.setColour (juce::Colour (0xffff6a2a));
-            g.fillRoundedRectangle (sq, 1.5f);
-        }
-        else
-        {
-            juce::Path tri;
-            const float half = glyph * 0.5f;
-            tri.addTriangle (centre.x - half * 0.8f, centre.y - half,
-                             centre.x - half * 0.8f, centre.y + half,
-                             centre.x + half,        centre.y);
-            g.setColour (juce::Colour (0xffe6e6e6));
-            g.fillPath (tri);
-        }
+        g.setColour (facePaint);
+        g.fillRoundedRectangle (area, corner);
+        g.setColour (playing ? juce::Colour (0xffff8a5c).withAlpha (0.7f)
+                             : juce::Colours::white.withAlpha (0.25f));
+        g.drawRoundedRectangle (area, corner, 1.0f);
+
+        g.setColour (playing ? juce::Colour (0xffffc8a8) : juce::Colours::black.withAlpha (0.9f));
+        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawText (playing ? "Stop" : "Begin",
+                    getLocalBounds(),
+                    juce::Justification::centred,
+                    false);
     }
 
 private:
     bool playing { false };
+};
+
+/** Plugin dropdown with a remove (x) control on each menu row. */
+class PluginPickerField : public juce::Component,
+                          public juce::SettableTooltipClient
+{
+public:
+    std::function<void(int)> onSelect;
+    std::function<void(int)> onRemove;
+    std::function<void()> onMorePlugins;
+
+    void setPlugins (const juce::Array<HostPluginEntry>& plugins, int selectedIndex)
+    {
+        entries = plugins;
+        currentIndex = selectedIndex;
+        updateDisplayText();
+        repaint();
+    }
+
+    int getSelectedIndex() const { return currentIndex; }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto area = getLocalBounds().toFloat().reduced (0.5f);
+        constexpr float corner = 3.0f;
+        const bool enabled = isEnabled();
+
+        g.setColour (findColour (juce::ComboBox::backgroundColourId));
+        g.fillRoundedRectangle (area, corner);
+        g.setColour (findColour (juce::ComboBox::outlineColourId));
+        g.drawRoundedRectangle (area, corner, 1.0f);
+
+        const float cx = (float) getWidth() - 11.0f;
+        const float cy = (float) getHeight() * 0.5f;
+        juce::Path chevron;
+        chevron.startNewSubPath (cx - 3.5f, cy - 2.0f);
+        chevron.lineTo (cx, cy + 2.0f);
+        chevron.lineTo (cx + 3.5f, cy - 2.0f);
+        g.setColour (findColour (juce::ComboBox::arrowColourId).withAlpha (enabled ? 0.9f : 0.3f));
+        g.strokePath (chevron, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
+
+        g.setColour (findColour (juce::ComboBox::textColourId).withAlpha (enabled ? 1.0f : 0.4f));
+        g.setFont (juce::FontOptions (12.5f));
+        g.drawText (displayText,
+                    getLocalBounds().reduced (8, 0).withTrimmedRight (18),
+                    juce::Justification::centredLeft,
+                    true);
+    }
+
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        if (isEnabled())
+            showMenu();
+    }
+
+private:
+    void updateDisplayText()
+    {
+        if (entries.isEmpty())
+            displayText = utf8 ("(no plugins — choose More plugins…)");
+        else if (juce::isPositiveAndBelow (currentIndex, entries.size()))
+            displayText = entries.getReference (currentIndex).displayLabel();
+        else
+            displayText = "(select a plugin)";
+    }
+
+    void showMenu()
+    {
+        struct MenuList final : public juce::Component,
+                                private juce::ListBoxModel
+        {
+            MenuList (PluginPickerField& ownerIn, const juce::Array<HostPluginEntry>& items)
+                : owner (ownerIn), entries (items)
+            {
+                list.setModel (this);
+                list.setRowHeight (26);
+                addAndMakeVisible (list);
+                const int rows = items.size() + 1; // trailing "More plugins…"
+                setSize (340, juce::jlimit (80, 360, rows * 26 + 8));
+            }
+
+            void resized() override { list.setBounds (getLocalBounds().reduced (4)); }
+
+            int getNumRows() override { return entries.size() + 1; }
+
+            bool isMorePluginsRow (int row) const { return row == entries.size(); }
+
+            void paintListBoxItem (int row, juce::Graphics& g, int width, int height, bool selected) override
+            {
+                if (isMorePluginsRow (row))
+                {
+                    if (selected)
+                        g.fillAll (juce::Colours::dodgerblue.withAlpha (0.3f));
+
+                    if (! entries.isEmpty())
+                    {
+                        g.setColour (juce::Colours::white.withAlpha (0.18f));
+                        g.fillRect (8, 0, width - 16, 1);
+                    }
+
+                    g.setColour (juce::Colours::white.withAlpha (0.92f));
+                    g.setFont (juce::Font (juce::FontOptions (13.0f)).boldened());
+                    g.drawText (utf8 ("More plugins…"),
+                                8, 0, width - 16, height,
+                                juce::Justification::centredLeft, true);
+                    return;
+                }
+
+                if (! juce::isPositiveAndBelow (row, entries.size()))
+                    return;
+
+                if (selected || row == owner.currentIndex)
+                    g.fillAll (juce::Colours::dodgerblue.withAlpha (0.3f));
+
+                const auto& entry = entries.getReference (row);
+                const bool enabled = entry.installed;
+                g.setColour (juce::Colours::white.withAlpha (enabled ? 0.92f : 0.4f));
+                g.setFont (13.0f);
+                g.drawText (entry.displayLabel(),
+                            8, 0, width - 34, height,
+                            juce::Justification::centredLeft, true);
+
+                auto xArea = juce::Rectangle<int> (width - 28, 0, 24, height).reduced (4);
+                g.setColour (juce::Colours::white.withAlpha (0.55f));
+                g.setFont (juce::FontOptions (15.0f));
+                g.drawText ("x", xArea, juce::Justification::centred, false);
+            }
+
+            void listBoxItemClicked (int row, const juce::MouseEvent& e) override
+            {
+                if (isMorePluginsRow (row))
+                {
+                    if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
+                        box->dismiss();
+                    if (owner.onMorePlugins)
+                        juce::MessageManager::callAsync (owner.onMorePlugins);
+                    return;
+                }
+
+                if (! juce::isPositiveAndBelow (row, entries.size()))
+                    return;
+
+                const int width = list.getWidth();
+                if (e.x >= width - 28)
+                {
+                    if (owner.onRemove)
+                        owner.onRemove (row);
+                    if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
+                        box->dismiss();
+                    return;
+                }
+
+                if (! entries.getReference (row).installed)
+                    return;
+
+                owner.currentIndex = row;
+                owner.updateDisplayText();
+                owner.repaint();
+                if (owner.onSelect)
+                    owner.onSelect (row);
+                if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
+                    box->dismiss();
+            }
+
+            PluginPickerField& owner;
+            juce::Array<HostPluginEntry> entries;
+            juce::ListBox list { "pluginPicker", this };
+        };
+
+        auto content = std::make_unique<MenuList> (*this, entries);
+        juce::CallOutBox::launchAsynchronously (std::move (content), getScreenBounds(), nullptr);
+    }
+
+    juce::Array<HostPluginEntry> entries;
+    int currentIndex { -1 };
+    juce::String displayText;
 };
 
 /** Loop toggle drawn as chasing arrows; on = loop, off = one-shot. */
@@ -341,7 +498,7 @@ public:
     }
 };
 
-/** Combo-styled multi-select for MIDI inputs; shows "<multiple>" when several are checked. */
+/** Combo-styled multi-select for MIDI inputs; closed label lists selected names shortest-first. */
 class MidiSourceField : public juce::Component,
                         public juce::SettableTooltipClient
 {
@@ -421,11 +578,23 @@ private:
                 names.add (device.name);
 
         if (names.isEmpty())
+        {
             displayText = "(none)";
-        else if (names.size() == 1)
-            displayText = names[0];
-        else
-            displayText = "<multiple>";
+            return;
+        }
+
+        for (int i = 0; i < names.size() - 1; ++i)
+            for (int j = i + 1; j < names.size(); ++j)
+                if (names[j].length() < names[i].length()
+                    || (names[j].length() == names[i].length()
+                        && names[j].compareIgnoreCase (names[i]) < 0))
+                {
+                    const auto tmp = names[i];
+                    names.set (i, names[j]);
+                    names.set (j, tmp);
+                }
+
+        displayText = names.joinIntoString (", ");
     }
 
     void setDeviceSelected (const juce::String& identifier, bool shouldBeSelected)
@@ -498,6 +667,7 @@ private:
 };
 
 class MainWindow::MainContent : public juce::Component,
+                                public juce::FileDragAndDropTarget,
                                 private juce::Button::Listener,
                                 private juce::ComboBox::Listener,
                                 private juce::TextEditor::Listener,
@@ -505,8 +675,8 @@ class MainWindow::MainContent : public juce::Component,
                                 private juce::Timer
 {
 public:
-    MainContent (PluginAudioEngine& audioEngine, HostConfig hostConfig)
-        : engine (audioEngine), config (std::move (hostConfig))
+    MainContent (PluginAudioEngine& audioEngine, HostConfig& hostConfig, juce::KnownPluginList& knownList)
+        : engine (audioEngine), config (hostConfig), knownPlugins (knownList)
     {
         setOpaque (true);
         setWantsKeyboardFocus (true);
@@ -539,11 +709,14 @@ public:
         pluginLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (pluginLabel);
 
-        pluginBox.setTooltip ("Plugins from host.config.json");
-        addAndMakeVisible (pluginBox);
-        pluginBox.addListener (this);
+        pluginField.setTooltip (utf8 ("Configured plugins — use More plugins… to add more"));
+        pluginField.onSelect = [this] (int index) { switchToPlugin (index); };
+        pluginField.onRemove = [this] (int index) { confirmRemovePlugin (index); };
+        pluginField.onMorePlugins = [this] { openAddPlugin(); };
+        addAndMakeVisible (pluginField);
 
-        setStatus ("Loading plugin...");
+        setStatus (config.plugins.isEmpty() ? "Add a plugin from the Plugins menu"
+                                            : "Loading plugin...");
         addAndMakeVisible (statusDisplay);
 
         presetLabel.setText ("Preset", juce::dontSendNotification);
@@ -571,6 +744,7 @@ public:
         loopToggle.addListener (this);
         addAndMakeVisible (loopToggle);
         engine.setLooping (true);
+        engine.setAllowInstrumentAudioInput (HostPreferences::get().getAllowInstrumentAudioInput());
 
         savePresetNameLabel.setText ("Save as", juce::dontSendNotification);
         savePresetNameLabel.setJustificationType (juce::Justification::centredRight);
@@ -583,7 +757,7 @@ public:
         midiLabel.setText ("MIDI", juce::dontSendNotification);
         midiLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (midiLabel);
-        midiField.setTooltip ("MIDI inputs from Audio MIDI Setup — check one or more to merge");
+        midiField.setTooltip (utf8 ("MIDI inputs from Audio MIDI Setup — check one or more to merge"));
         midiField.onChange = [this] (const juce::StringArray& identifiers)
         {
             engine.setMidiInputDevices (identifiers);
@@ -637,28 +811,113 @@ public:
             keyListenerOwner->removeKeyListener (this);
     }
 
+    void openAbout()
+    {
+        showAboutDialog (this);
+    }
+
+    void openSettings()
+    {
+        if (showSettingsDialog (config, &knownPlugins, this))
+        {
+            engine.setAllowInstrumentAudioInput (
+                HostPreferences::get().getAllowInstrumentAudioInput());
+
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::InfoIcon,
+                "Settings saved",
+                "Instrument audio-input preference applies immediately (reload the plugin if an "
+                "instrument was already open).\n\n"
+                "Relaunch AU Effects Explorer for exploration folder / config override changes to take effect.\n\n"
+                "If you changed the exploration folder, its data (including the AU plugin cache) was moved to the new location.");
+        }
+    }
+
+    void openAddPlugin()
+    {
+        HostLog::info ("Add Plugin: ensuring AU cache...");
+        // First use (or missing cache) triggers the AU scan; later opens just load the cache.
+        ensurePluginCache (false);
+        HostLog::info ("Add Plugin: opening picker (" + juce::String (knownPlugins.getTypes().size())
+                       + " cached types)");
+
+        juce::Array<int> added;
+        if (! showAddPluginDialog (config, knownPlugins, this, added))
+            return;
+
+        populatePluginBox();
+        if (! added.isEmpty())
+        {
+            const int index = added.getLast();
+            // Defer switch so the Add Plugin modal is fully torn down before
+            // heavy AU/WebView editor construction begins.
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainContent> (this), index]
+                                             {
+                                                 if (safe == nullptr)
+                                                     return;
+                                                 safe->currentPluginIndex = -1;
+                                                 safe->switchToPlugin (index);
+                                                 safe->setStatus ("Added plugin(s) to the list");
+                                             });
+            return;
+        }
+        setStatus ("Added plugin(s) to the list");
+    }
+
+    void rescanPlugins()
+    {
+        HostLog::info ("Rescan Audio Units requested");
+        juce::String error;
+        if (! AuPluginScanner::ensureCache (config.projectRoot, knownPlugins, this, error, true))
+        {
+            setStatus ("AU rescan failed: " + error, true);
+            return;
+        }
+
+        setStatus ("Rescanned Audio Units (" + juce::String (knownPlugins.getTypes().size()) + " found)");
+    }
+
     /** Call after the host window is on-screen so AU Cocoa UIs can attach to an NSWindow. */
     void showPluginEditor()
     {
+        // Do not AU-scan here — scanning starts the first time Add Plugin / More plugins is used.
+        if (config.plugins.isEmpty())
+        {
+            setStatus (utf8 ("No plugins configured — use More plugins… to add one"));
+            return;
+        }
+
+        // Editor first (while DSP is still suspended), then start audio.
         recreatePluginEditor();
+
+        juce::String error;
+        if (! engine.startAudioDevice (error))
+        {
+            setStatus ("Audio device error: " + error, true);
+            return;
+        }
 
         if (loadDefaultOrFirstPreset())
             return;
 
         if (! fixtureFiles.isEmpty())
         {
-            selectFixture (0);
-            setStatus ("Ready — " + currentPlugin().displayLabel());
+            const int selected = fixtureBox.getSelectedId() - 1;
+            selectFixture (juce::isPositiveAndBelow (selected, fixtureFiles.size()) ? selected : 0);
+            setStatus ("Ready - " + currentPlugin().displayLabel());
         }
         else
         {
-            setStatus ("Ready — " + currentPlugin().displayLabel());
+            setStatus ("Ready - " + currentPlugin().displayLabel());
         }
     }
 
     /** Prefer config default_preset when present; otherwise the first preset in the list. */
     bool loadDefaultOrFirstPreset()
     {
+        if (! juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size()))
+            return false;
+
         const auto& defaultPreset = currentPlugin().defaultPreset;
         if (defaultPreset.existsAsFile())
         {
@@ -779,7 +1038,7 @@ public:
 
         pluginLabel.setBounds (place (left0, leftLabelW));
         left0.removeFromLeft (gap);
-        pluginBox.setBounds (place (left0, leftDropW));
+        pluginField.setBounds (place (left0, leftDropW));
         left0.removeFromLeft (gap);
         resetButton.setBounds (place (left0, leftButtonW));
 
@@ -827,7 +1086,8 @@ public:
             mid2.removeFromLeft (gap);
             loopToggle.setBounds (mid2.removeFromRight (26).withSizeKeepingCentre (26, 26));
             mid2.removeFromRight (gap);
-            transportButton.setBounds (mid2.removeFromRight (26).withSizeKeepingCentre (26, 26));
+            constexpr int beginButtonW = 72;
+            transportButton.setBounds (mid2.removeFromRight (beginButtonW).withSizeKeepingCentre (beginButtonW, ctrlH));
             mid2.removeFromRight (gap);
             fixtureBox.setBounds (place (mid2, mid2.getWidth()));
         }
@@ -869,36 +1129,119 @@ private:
 
     const HostPluginEntry& currentPlugin() const
     {
+        jassert (juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size()));
         return config.plugins.getReference (currentPluginIndex);
+    }
+
+    void ensurePluginCache (bool forceRescan)
+    {
+        juce::String error;
+        if (! AuPluginScanner::ensureCache (config.projectRoot, knownPlugins, this, error, forceRescan))
+        {
+            if (error.isNotEmpty())
+                HostLog::error ("AU plugin cache: " + error);
+            setStatus ("AU scan issue: " + error, true);
+        }
+        else if (forceRescan)
+        {
+            setStatus ("Rescanned Audio Units (" + juce::String (knownPlugins.getTypes().size()) + " found)");
+        }
     }
 
     void populatePluginBox()
     {
-        pluginBox.clear (juce::dontSendNotification);
-
-        for (int i = 0; i < config.plugins.size(); ++i)
+        if (! juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size()))
         {
-            const auto& entry = config.plugins.getReference (i);
-            const int itemId = i + 1;
-            pluginBox.addItem (entry.displayLabel(), itemId);
-            pluginBox.setItemEnabled (itemId, entry.installed);
+            currentPluginIndex = 0;
+            for (int i = 0; i < config.plugins.size(); ++i)
+            {
+                if (config.plugins.getReference (i).installed)
+                {
+                    currentPluginIndex = i;
+                    break;
+                }
+            }
         }
 
-        if (juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size())
-            && config.plugins.getReference (currentPluginIndex).installed)
+        pluginField.setPlugins (config.plugins, currentPluginIndex);
+    }
+
+    void confirmRemovePlugin (int index)
+    {
+        if (! juce::isPositiveAndBelow (index, config.plugins.size()))
+            return;
+
+        const auto label = config.plugins.getReference (index).displayLabel();
+        auto options = juce::MessageBoxOptions()
+                           .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                           .withTitle ("Remove Plugin")
+                           .withMessage ("Remove \"" + label + "\" from the plugin list?")
+                           .withButton ("Remove")
+                           .withButton ("Cancel");
+
+        juce::AlertWindow::showAsync (options, [safe = juce::Component::SafePointer<MainContent> (this), index] (int result)
+                                      {
+                                          if (safe == nullptr || result != 1)
+                                              return;
+                                          safe->removePluginAt (index);
+                                      });
+    }
+
+    void removePluginAt (int index)
+    {
+        if (! juce::isPositiveAndBelow (index, config.plugins.size()))
+            return;
+
+        const auto removedId = config.plugins.getReference (index).id;
+        config.plugins.remove (index);
+
+        if (config.defaultPluginId == removedId)
+            config.defaultPluginId = config.plugins.isEmpty() ? juce::String()
+                                                             : config.plugins.getReference (0).id;
+
+        juce::String error;
+        if (! config.saveToFile (error))
         {
-            pluginBox.setSelectedItemIndex (currentPluginIndex, juce::dontSendNotification);
+            setStatus ("Failed to save config: " + error, true);
+            return;
         }
-        else
+
+        engine.stopFixture();
+        destroyPluginEditor();
+
+        if (config.plugins.isEmpty())
         {
-            pluginBox.setSelectedId (0, juce::dontSendNotification);
+            currentPluginIndex = 0;
+            populatePluginBox();
+            setStatus ("No plugins configured - use Plugins -> Add Plugin...");
+            return;
         }
+
+        if (currentPluginIndex >= config.plugins.size())
+            currentPluginIndex = config.plugins.size() - 1;
+        else if (index < currentPluginIndex)
+            --currentPluginIndex;
+        else if (index == currentPluginIndex)
+            currentPluginIndex = juce::jlimit (0, config.plugins.size() - 1, currentPluginIndex);
+
+        // Force reload if we removed the active plugin.
+        const int next = currentPluginIndex;
+        currentPluginIndex = -1;
+        populatePluginBox();
+        switchToPlugin (next);
+        setStatus ("Removed plugin from list");
     }
 
     void populatePresets()
     {
         presetBox.clear();
         presetFiles.clearQuick();
+
+        if (! juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size()))
+        {
+            presetBox.addItem ("(no plugin)", 1);
+            return;
+        }
 
         auto presetsDir = currentPlugin().presetsDir;
         if (presetsDir != juce::File())
@@ -919,6 +1262,223 @@ private:
             presetBox.addItem ("(no presets found)", 1);
     }
 
+    static void collectAupresetFiles (const juce::File& file, juce::Array<juce::File>& out)
+    {
+        if (file.isDirectory())
+        {
+            for (const auto& child : collectFiles (file, ".aupreset", true))
+                out.addIfNotAlreadyThere (child);
+            return;
+        }
+
+        if (file.existsAsFile() && file.hasFileExtension (".aupreset"))
+            out.addIfNotAlreadyThere (file);
+    }
+
+    bool isInterestedInFileDrag (const juce::StringArray& files) override
+    {
+        if (! juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size()))
+            return false;
+
+        if (currentPlugin().presetsDir == juce::File())
+            return false;
+
+        for (const auto& path : files)
+        {
+            const juce::File file (path);
+            if (file.hasFileExtension (".aupreset"))
+                return true;
+            if (file.isDirectory())
+                return true; // may contain .aupreset; validated on drop
+        }
+
+        return false;
+    }
+
+    void filesDropped (const juce::StringArray& files, int, int) override
+    {
+        importDroppedAupresets (files);
+    }
+
+    void importDroppedAupresets (const juce::StringArray& files)
+    {
+        if (! juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size()))
+        {
+            setStatus ("Load a plugin before importing presets", true);
+            return;
+        }
+
+        auto presetsDir = currentPlugin().presetsDir;
+        if (presetsDir == juce::File())
+        {
+            setStatus ("This plugin has no presets folder", true);
+            return;
+        }
+
+        presetsDir.createDirectory();
+        if (! presetsDir.isDirectory())
+        {
+            setStatus ("Could not create presets folder: " + presetsDir.getFullPathName(), true);
+            return;
+        }
+
+        juce::Array<juce::File> sources;
+        for (const auto& path : files)
+            collectAupresetFiles (juce::File (path), sources);
+
+        if (sources.isEmpty())
+        {
+            setStatus ("No .aupreset files in drop", true);
+            return;
+        }
+
+        enum class ConflictPolicy { ask, replaceAll, skipAll };
+        auto policy = ConflictPolicy::ask;
+
+        juce::Array<juce::File> imported;
+        int skipped = 0;
+        int copyFailures = 0;
+        bool cancelled = false;
+
+        for (int i = 0; i < sources.size(); ++i)
+        {
+            const auto& src = sources.getReference (i);
+            const auto dest = presetsDir.getChildFile (src.getFileName());
+
+            if (src.getFullPathName() == dest.getFullPathName())
+            {
+                imported.add (dest);
+                continue;
+            }
+
+            if (dest.existsAsFile())
+            {
+                bool replace = false;
+
+                if (policy == ConflictPolicy::replaceAll)
+                {
+                    replace = true;
+                }
+                else if (policy == ConflictPolicy::skipAll)
+                {
+                    ++skipped;
+                    continue;
+                }
+                else
+                {
+                    const bool moreConflictsAhead = [&]()
+                    {
+                        for (int j = i + 1; j < sources.size(); ++j)
+                        {
+                            const auto& later = sources.getReference (j);
+                            const auto laterDest = presetsDir.getChildFile (later.getFileName());
+                            if (later.getFullPathName() != laterDest.getFullPathName()
+                                && laterDest.existsAsFile())
+                                return true;
+                        }
+                        return false;
+                    }();
+
+                    juce::ToggleButton applyToAll ("Apply to all");
+                    applyToAll.setSize (280, 24);
+                    applyToAll.setVisible (moreConflictsAhead);
+
+                    juce::AlertWindow dialog (
+                        "Preset already exists",
+                        "\"" + dest.getFileName() + "\" already exists in the presets folder.",
+                        juce::MessageBoxIconType::QuestionIcon,
+                        this);
+
+                    if (moreConflictsAhead)
+                        dialog.addCustomComponent (&applyToAll);
+
+                    dialog.addButton ("Replace", 1, juce::KeyPress (juce::KeyPress::returnKey));
+                    dialog.addButton ("Skip", 2);
+                    dialog.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+                    const int result = dialog.runModalLoop();
+                    if (result == 0)
+                    {
+                        cancelled = true;
+                        break;
+                    }
+
+                    replace = (result == 1);
+
+                    if (moreConflictsAhead && applyToAll.getToggleState())
+                        policy = replace ? ConflictPolicy::replaceAll : ConflictPolicy::skipAll;
+
+                    if (! replace)
+                    {
+                        ++skipped;
+                        continue;
+                    }
+                }
+
+                if (! replace)
+                    continue;
+
+                if (! dest.deleteFile())
+                {
+                    ++copyFailures;
+                    HostLog::error ("Failed to replace preset " + dest.getFullPathName());
+                    continue;
+                }
+            }
+
+            if (! src.copyFileTo (dest))
+            {
+                ++copyFailures;
+                HostLog::error ("Failed to copy preset " + src.getFullPathName()
+                                + " -> " + dest.getFullPathName());
+                continue;
+            }
+
+            imported.add (dest);
+        }
+
+        if (imported.isEmpty())
+        {
+            if (cancelled)
+                setStatus ("Import cancelled");
+            else if (skipped > 0 && copyFailures == 0)
+                setStatus ("Skipped " + juce::String (skipped) + " existing preset"
+                           + (skipped == 1 ? "" : "s"));
+            else
+                setStatus ("Failed to import preset(s)", true);
+            return;
+        }
+
+        populatePresets();
+        const auto& first = imported.getReference (0);
+        selectPresetInDropdown (first);
+
+        juce::String error;
+        if (! engine.loadPreset (first, error))
+        {
+            setStatus ("Imported " + juce::String (imported.size())
+                           + " preset(s) but load failed: " + error,
+                       true);
+            return;
+        }
+
+        if (pluginEditor != nullptr)
+            pluginEditor->repaint();
+
+        savePresetNameEditor.setText (first.getFileNameWithoutExtension(),
+                                      juce::dontSendNotification);
+
+        juce::String status = (cancelled ? "Import cancelled after copying " : "Imported ")
+                              + juce::String (imported.size()) + " preset"
+                              + (imported.size() == 1 ? "" : "s")
+                              + "; loaded " + first.getFileNameWithoutExtension();
+        if (skipped > 0)
+            status += " (" + juce::String (skipped) + " skipped)";
+        if (copyFailures > 0)
+            status += " (" + juce::String (copyFailures) + " copy failed)";
+        setStatus (status);
+    }
+
     void switchToPlugin (int pluginIndex)
     {
         if (! juce::isPositiveAndBelow (pluginIndex, config.plugins.size())
@@ -928,7 +1488,7 @@ private:
         if (! config.plugins.getReference (pluginIndex).installed)
         {
             setStatus ("Plugin not installed: " + config.plugins.getReference (pluginIndex).displayLabel(), true);
-            pluginBox.setSelectedItemIndex (currentPluginIndex, juce::dontSendNotification);
+            populatePluginBox();
             return;
         }
 
@@ -940,11 +1500,17 @@ private:
         plugin.presetsDir.createDirectory();
 
         juce::String error;
-        if (! engine.loadPlugin (plugin.path, error))
+        if (! engine.loadPlugin (plugin.toPluginDescription(), error))
         {
             setStatus ("Failed to load plugin: " + error, true);
             return;
         }
+
+        populatePresets();
+        savePresetNameEditor.setText ("Untitled", juce::dontSendNotification);
+        // Build the editor while audio is still stopped / plugin suspended.
+        // WebView AUs (e.g. Lunacy BEAM) crash if processBlock runs during UI init.
+        recreatePluginEditor();
 
         if (! engine.startAudioDevice (error))
         {
@@ -952,13 +1518,11 @@ private:
             return;
         }
 
-        populatePresets();
-        savePresetNameEditor.setText ("Untitled", juce::dontSendNotification);
-        recreatePluginEditor();
+        populatePluginBox();
 
         if (! loadDefaultOrFirstPreset())
         {
-            setStatus ("Ready — " + plugin.displayLabel()
+            setStatus ("Ready - " + plugin.displayLabel()
                                      + " (presets: " + plugin.presetsDir.getFullPathName() + ")");
         }
     }
@@ -1130,10 +1694,17 @@ private:
         fixtureFiles = collectFiles (config.fixturesDir, ".wav", false);
         fixtureBox.clear();
 
+        int impulseId = 0;
         for (int i = 0; i < fixtureFiles.size(); ++i)
-            fixtureBox.addItem (fixtureFiles[i].getFileName(), i + 1);
+        {
+            fixtureBox.addItem (fixtureFiles[i].getFileNameWithoutExtension(), i + 1);
+            if (fixtureFiles[i].getFileName().equalsIgnoreCase ("impulse.wav"))
+                impulseId = i + 1;
+        }
 
-        if (! fixtureFiles.isEmpty())
+        if (impulseId > 0)
+            fixtureBox.setSelectedId (impulseId, juce::dontSendNotification);
+        else if (! fixtureFiles.isEmpty())
             fixtureBox.setSelectedId (1, juce::dontSendNotification);
     }
 
@@ -1198,7 +1769,7 @@ private:
         if (! juce::isPositiveAndBelow (currentPluginIndex, config.plugins.size())
             || ! currentPlugin().installed)
         {
-            setStatus ("No installed plugin selected — choose one from the list");
+            setStatus (utf8 ("No installed plugin selected — choose one from the list"));
             return;
         }
 
@@ -1206,20 +1777,14 @@ private:
         plugin.presetsDir.createDirectory();
 
         juce::String error;
-        if (! engine.loadPlugin (plugin.path, error))
+        if (! engine.loadPlugin (plugin.toPluginDescription(), error))
         {
             setStatus ("Failed to load plugin: " + error, true);
             return;
         }
 
-        if (! engine.startAudioDevice (error))
-        {
-            setStatus ("Audio device error: " + error, true);
-            return;
-        }
-
         populatePresets();
-        setStatus ("Loaded " + plugin.displayLabel() + " — opening UI...");
+        setStatus ("Loaded " + plugin.displayLabel() + " - opening UI...");
     }
 
     void layoutEditor()
@@ -1285,11 +1850,14 @@ private:
 
         const auto& plugin = currentPlugin();
         juce::String error;
-        if (! engine.loadPlugin (plugin.path, error))
+        if (! engine.loadPlugin (plugin.toPluginDescription(), error))
         {
             setStatus ("Failed to reset plugin: " + error, true);
             return;
         }
+
+        savePresetNameEditor.setText ("Untitled", juce::dontSendNotification);
+        recreatePluginEditor();
 
         if (! engine.startAudioDevice (error))
         {
@@ -1297,9 +1865,6 @@ private:
             return;
         }
 
-        // Fresh instance = plugin's own default state; clear any preset selection.
-        savePresetNameEditor.setText ("Untitled", juce::dontSendNotification);
-        recreatePluginEditor();
         setStatus ("Reset " + plugin.displayLabel() + " to defaults");
     }
 
@@ -1387,18 +1952,11 @@ private:
 
     void comboBoxChanged (juce::ComboBox* box) override
     {
-        if (box == &pluginBox)
-        {
-            switchToPlugin (pluginBox.getSelectedItemIndex());
-            return;
-        }
-
         if (box == &fixtureBox)
         {
             selectFixture (fixtureBox.getSelectedId() - 1);
             return;
         }
-
 
         if (box == &presetBox)
         {
@@ -1501,7 +2059,7 @@ private:
 
         const auto fixtureFile = fixtureFiles[fixtureIndex];
         const auto captureDir = config.sessionsRoot
-                                    .getChildFile (slugify (currentPlugin().sessionName))
+                                    .getChildFile (HostConfig::slugify (currentPlugin().sessionName))
                                     .getChildFile ("artifacts");
         captureDir.createDirectory();
 
@@ -1534,7 +2092,7 @@ private:
 
         engine.startAudioDevice (error);
 
-        if (! registerSnapshotWithPython (snapshotName, fixtureFile, outputOut, presetOut, error))
+        if (! registerSnapshot (snapshotName, fixtureFile, outputOut, presetOut, error))
         {
             setStatus ("Capture saved to disk but session update failed: " + error, true);
             return;
@@ -1553,73 +2111,31 @@ private:
         }
     }
 
-    bool registerSnapshotWithPython (const juce::String& snapshotName,
-                                     const juce::File& inputFile,
-                                     const juce::File& outputFile,
-                                     const juce::File& presetFile,
-                                     juce::String& error)
+    bool registerSnapshot (const juce::String& snapshotName,
+                           const juce::File& inputFile,
+                           const juce::File& outputFile,
+                           const juce::File& presetFile,
+                           juce::String& error)
     {
-        juce::File cli = config.pythonCli;
-        if (! cli.existsAsFile())
-            cli = juce::File::getSpecialLocation (juce::File::currentExecutableFile)
-                      .getParentDirectory()
-                      .getChildFile ("aufx-test");
-
-        if (! cli.existsAsFile())
-        {
-            error = "Could not find aufx-test CLI (set python_cli in host.config.json)";
-            return false;
-        }
-
-        // --root must precede the snap subcommand (parent-parser option).
-        juce::StringArray args;
-        args.add (cli.getFullPathName());
-        args.add ("session");
-        args.add ("--root");
-        args.add (config.sessionsRoot.getFullPathName());
-        args.add ("snap");
-        args.add (currentPlugin().sessionName);
-        args.add (snapshotName);
-        args.add ("--input");
-        args.add (inputFile.getFullPathName());
-        args.add ("--output");
-        args.add (outputFile.getFullPathName());
-        args.add ("--aupreset");
-        args.add (presetFile.getFullPathName());
-        args.add ("--notes");
-        args.add ("Captured from plugin_host_app");
-
-        juce::ChildProcess process;
-        if (! process.start (args))
-        {
-            error = "Failed to start aufx-test CLI";
-            return false;
-        }
-
-        if (! process.waitForProcessToFinish (120000))
-        {
-            error = "Timed out waiting for aufx-test session snap";
-            return false;
-        }
-
-        const auto exitCode = process.getExitCode();
-        if (exitCode != 0)
-        {
-            error = process.readAllProcessOutput().trim();
-            if (error.isEmpty())
-                error = "aufx-test session snap failed with exit code " + juce::String (exitCode);
-            return false;
-        }
-
-        return true;
+        SessionSnapRequest request;
+        request.sessionsRoot = config.sessionsRoot;
+        request.sessionName = currentPlugin().sessionName;
+        request.snapshotName = snapshotName;
+        request.inputFile = inputFile;
+        request.outputFile = outputFile;
+        request.presetFile = presetFile;
+        request.pluginPath = currentPlugin().identifierForLoad();
+        request.notes = "Captured from AU Effects Explorer";
+        return SessionSnap::registerSnapshot (request, error);
     }
 
     PluginAudioEngine& engine;
-    HostConfig config;
+    HostConfig& config;
+    juce::KnownPluginList& knownPlugins;
     int currentPluginIndex { 0 };
 
     juce::Label pluginLabel;
-    juce::ComboBox pluginBox;
+    PluginPickerField pluginField;
     juce::TextButton resetButton;
     StatusDisplay statusDisplay;
     juce::Label presetLabel;
@@ -1666,11 +2182,23 @@ MainWindow::MainWindow (HostConfig hostConfig)
       config (std::move (hostConfig))
 {
     engine = std::make_unique<PluginAudioEngine>();
-    content = std::make_unique<MainContent> (*engine, config);
+    content = std::make_unique<MainContent> (*engine, config, knownPlugins);
     auto* mainContent = content.get();
     setContentOwned (content.release(), true);
+    setUsingNativeTitleBar (true);
     setResizable (true, true);
     centreWithSize (1100, 780);
+
+#if JUCE_MAC
+    appleMenu = std::make_unique<juce::PopupMenu>();
+    appleMenu->addItem (menuAbout, "About AU Effects Explorer");
+    appleMenu->addSeparator();
+    appleMenu->addItem (menuSettings, "Settings...");
+    juce::MenuBarModel::setMacMainMenu (this, appleMenu.get());
+#else
+    setMenuBar (this);
+#endif
+
     setVisible (true);
 
     // AU Cocoa editors need a real NSWindow parent; create after the host is shown.
@@ -1683,6 +2211,12 @@ MainWindow::MainWindow (HostConfig hostConfig)
 
 MainWindow::~MainWindow()
 {
+#if JUCE_MAC
+    juce::MenuBarModel::setMacMainMenu (nullptr);
+#else
+    setMenuBar (nullptr);
+#endif
+
     // MainContent holds PluginAudioEngine&; DocumentWindow owns content and
     // would destroy it after our members. Clear it first so ~MainContent
     // still sees a live engine (otherwise quit crashes in destroyEditor).
@@ -1693,4 +2227,70 @@ MainWindow::~MainWindow()
 void MainWindow::closeButtonPressed()
 {
     juce::JUCEApplication::getInstance()->systemRequestedQuit();
+}
+
+juce::StringArray MainWindow::getMenuBarNames()
+{
+#if JUCE_MAC
+    return { "Plugins" };
+#else
+    return { "AU Effects Explorer", "Plugins" };
+#endif
+}
+
+juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::String& menuName)
+{
+    juce::ignoreUnused (menuName);
+    juce::PopupMenu menu;
+
+#if JUCE_MAC
+    if (topLevelMenuIndex == 0)
+    {
+        menu.addItem (menuAddPlugin, "Add Plugin...");
+        menu.addItem (menuRescanPlugins, "Rescan Audio Units...");
+    }
+#else
+    if (topLevelMenuIndex == 0)
+    {
+        menu.addItem (menuAbout, "About AU Effects Explorer");
+        menu.addSeparator();
+        menu.addItem (menuSettings, "Settings...");
+    }
+    else if (topLevelMenuIndex == 1)
+    {
+        menu.addItem (menuAddPlugin, "Add Plugin...");
+        menu.addItem (menuRescanPlugins, "Rescan Audio Units...");
+    }
+#endif
+
+    return menu;
+}
+
+void MainWindow::menuItemSelected (int menuItemID, int topLevelMenuIndex)
+{
+    juce::ignoreUnused (topLevelMenuIndex);
+
+    // Never run modal dialogs synchronously from a native menu callback.
+    // On macOS that can abort the process immediately (often with no crash report)
+    // because AppKit is still inside menu tracking.
+    juce::MessageManager::callAsync ([safeWindow = juce::Component::SafePointer<MainWindow> (this),
+                                      menuItemID]
+                                     {
+                                         auto* window = safeWindow.getComponent();
+                                         if (window == nullptr)
+                                             return;
+
+                                         auto* mainContent = dynamic_cast<MainContent*> (window->getContentComponent());
+                                         if (mainContent == nullptr)
+                                             return;
+
+                                         switch (menuItemID)
+                                         {
+                                             case menuAbout:          mainContent->openAbout(); break;
+                                             case menuSettings:       mainContent->openSettings(); break;
+                                             case menuAddPlugin:      mainContent->openAddPlugin(); break;
+                                             case menuRescanPlugins:  mainContent->rescanPlugins(); break;
+                                             default: break;
+                                         }
+                                     });
 }

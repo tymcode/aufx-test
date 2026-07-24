@@ -1,0 +1,17 @@
+{
+  "fixtures_dir": "fixtures",
+  "sessions_root": "sessions",
+  "log_file": "sessions/plugin_host.log",
+  "default_midi_input": [],
+  "default_plugin": "matrix_reverb",
+  "plugins": [
+    {
+      "id": "matrix_reverb",
+      "name": "AUMatrixReverb",
+      "manufacturer": "Apple",
+      "path": "AudioUnit:Effects/aufx,mrev,appl",
+      "format": "AudioUnit",
+      "session": "AUMatrixReverb exploration"
+    }
+  ]
+}

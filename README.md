@@ -16,12 +16,29 @@ Compare plugin output against reference waveforms using objective, repeatable me
 
 ## Install
 
+Use a current Homebrew Python (not an old pyenv build). pyenv 3.9.x on Apple Silicon often breaks after OpenSSL upgrades (`ssl` module missing → pip TLS errors and ancient pip that cannot do `pyproject.toml` editable installs).
+
 ```bash
-python -m venv .venv
+# Prefer an explicit Homebrew interpreter
+/opt/homebrew/opt/python@3.13/bin/python3.13 -m venv .venv
+# or: /opt/homebrew/bin/python3 -m venv .venv
+
 source .venv/bin/activate
+python -m pip install -U pip
 pip install -e ".[dev]"
 ```
 
+If `source .venv/bin/activate` or `pip` fails with SSL / permission errors:
+
+```bash
+rm -rf .venv
+/opt/homebrew/opt/python@3.13/bin/python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+pip install -e ".[dev]"
+```
+
+Check you are not on a broken pyenv shim: `which python` should point at `.venv/bin/python`, and `python -c "import ssl; print(ssl.OPENSSL_VERSION)"` should succeed.
 ## Quick start
 
 ```python
@@ -52,12 +69,19 @@ See [docs/ci-integration.md](docs/ci-integration.md) for build-pipeline integrat
 
 ## Manual exploration → automated tests
 
-Experiment in the plugin host GUI, or capture from a DAW:
+Experiment in the **AU Effects Explorer** host, or capture from a DAW:
 
 ```bash
-# Recommended: native host with plugin UI + fixture playback + capture
-# Configure plugins in host.config.json, then:
-aufx-test host
+# Build the native host (no Python required to launch)
+cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
+cmake --build native/build --target plugin_host_app
+
+# Recommended: open the app with the repo config
+APP="native/build/plugin_host_app/plugin_host_app_artefacts/Release/AU Effects Explorer.app"
+open "$APP" --args --config "$(pwd)/host.config.json" --project-root "$(pwd)"
+
+# Optional: Python wrapper (needs a working .venv — see docs/manual-exploration.md)
+# source .venv/bin/activate && aufx-test host
 
 # Legacy: terminal REPL after bouncing in a DAW
 aufx-test explore --new-name "DEEP:Z exploration" \

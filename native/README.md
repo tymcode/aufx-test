@@ -44,15 +44,23 @@ native/build/plugin_renderer/plugin_renderer_artefacts/Release/plugin_renderer
 The GUI plugin host app (manual exploration):
 
 ```
-native/build/plugin_host_app/plugin_host_app_artefacts/Release/Plugin Host.app
+native/build/plugin_host_app/plugin_host_app_artefacts/Release/AU Effects Explorer.app
 ```
 
-Launch from Python (reads project-root `host.config.json` for plugins, fixtures, sessions):
+Launch without Python (recommended):
+
+```bash
+APP="native/build/plugin_host_app/plugin_host_app_artefacts/Release/AU Effects Explorer.app"
+open "$APP" --args --config "$(pwd)/host.config.json" --project-root "$(pwd)"
+```
+
+Optional Python wrapper (requires a working `.venv`):
 
 ```bash
 aufx-test host
 ```
 
+See [docs/manual-exploration.md](../docs/manual-exploration.md) if venv activation fails with permission errors.
 ## Usage
 
 ```bash

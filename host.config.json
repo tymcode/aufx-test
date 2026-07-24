@@ -1,75 +1,167 @@
 {
-  "fixtures_dir": "fixtures",
-  "sessions_root": "sessions",
-  "python_cli": ".venv/bin/aufx-test",
-  "log_file": "sessions/plugin_host.log",
-  "default_plugin": "deepz",
-  "default_midi_input": ["Expression Pedal", "Oxy Pro 49", "iConnectMIDI4+ HST 3"],
-  "plugins": [
-    {
-      "id": "deepz",
-      "name": "DEEP/Z",
-      "manufacturer": "Temecula DSP",
-      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEPZ.component",
-      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/DEEP:Z",
-      "default_preset": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/DEEP:Z/Init Serial.aupreset",
-      "session": "DEEPZ exploration"
-    },
-    {
-      "id": "deep4",
-      "name": "DEEP/4",
-      "manufacturer": "Temecula DSP",
-      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEP4.component",
-      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/DEEP:4",
-      "session": "DEEP4 exploration"
-    },
-    {
-      "id": "vext",
-      "name": "VEXT",
-      "manufacturer": "Temecula DSP",
-      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPVEXT.component",
-      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/VEXT",
-      "session": "VEXT exploration"
-    },
-    {
-      "id": "sst206",
-      "name": "SST-206",
-      "manufacturer": "Temecula DSP",
-      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPSST206.component",
-      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/SST206",
-      "session": "SST206 exploration"
-    },
-    {
-      "id": "sg626",
-      "name": "SG-626",
-      "manufacturer": "Temecula DSP",
-      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPSG626.component",
-      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/SG626",
-      "session": "SG-626 exploration"
-    },
-    {
-      "id": "mdvii",
-      "name": "MDV-II",
-      "manufacturer": "Temecula DSP",
-      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPMDVII.component",
-      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/MDVII",
-      "session": "MDV-II exploration"
-    },
-    {
-      "id": "msp126",
-      "name": "MSP-126",
-      "manufacturer": "Temecula DSP",
-      "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPMSP126.component",
-      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/MSP126",
-      "session": "MSP126 exploration"
-    },
-    {
-      "id": "dpv",
-      "name": "DP-V",
-      "manufacturer": "Hare Tech",
-      "path": "/Library/Audio/Plug-Ins/Components/DP-V.component",
-      "presets_dir": "~/Library/Audio/Presets/Hare Tech/DP-V",
-      "session": "DP-V exploration"
-    }
-  ]
+    "fixtures_dir": "fixtures",
+    "sessions_root": "sessions",
+    "python_cli": ".venv/bin/aufx-test",
+    "log_file": "sessions/plugin_host.log",
+    "default_plugin": "deepz",
+    "default_midi_input": [
+        "Expression Pedal",
+        "Oxy Pro 49",
+        "iConnectMIDI4+ O2 Pro HUI"
+    ],
+    "plugins": [
+        {
+            "id": "matrix_reverb",
+            "name": "AUMatrixReverb",
+            "manufacturer": "Apple",
+            "path": "AudioUnit:Effects/aufx,mrev,appl",
+            "format": "AudioUnit",
+            "session": "AUMatrixReverb exploration"
+        },
+        {
+            "id": "deepz",
+            "name": "DEEP/Z",
+            "manufacturer": "Temecula DSP",
+            "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEPZ.component",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/DEEP:Z",
+            "default_preset": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/DEEP:Z/Init Serial.aupreset",
+            "session": "DEEPZ exploration"
+        },
+        {
+            "id": "deep4",
+            "name": "DEEP/4",
+            "manufacturer": "Temecula DSP",
+            "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEP4.component",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/DEEP:4",
+            "session": "DEEP4 exploration"
+        },
+        {
+            "id": "vext",
+            "name": "VEXT",
+            "manufacturer": "Temecula DSP",
+            "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPVEXT.component",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/VEXT",
+            "session": "VEXT exploration"
+        },
+        {
+            "id": "sst206",
+            "name": "SST-206",
+            "manufacturer": "Temecula DSP",
+            "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPSST206.component",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/SST206",
+            "session": "SST206 exploration"
+        },
+        {
+            "id": "sg626",
+            "name": "SG-626",
+            "manufacturer": "Temecula DSP",
+            "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPSG626.component",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/SG626",
+            "session": "SG-626 exploration"
+        },
+        {
+            "id": "mdvii",
+            "name": "MDV-II",
+            "manufacturer": "Temecula DSP",
+            "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPMDVII.component",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/MDVII",
+            "session": "MDV-II exploration"
+        },
+        {
+            "id": "msp126",
+            "name": "MSP-126",
+            "manufacturer": "Temecula DSP",
+            "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPMSP126.component",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/MSP126",
+            "session": "MSP126 exploration"
+        },
+        {
+            "id": "dpv",
+            "name": "DP-V",
+            "manufacturer": "Hare Tech",
+            "path": "/Library/Audio/Plug-Ins/Components/DP-V.component",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Hare Tech/DP-V",
+            "session": "DP-V exploration"
+        },
+        {
+            "id": "panflow",
+            "name": "Panflow",
+            "manufacturer": "Audiomodern",
+            "path": "AudioUnit:Effects/aumf,APan,Aumd",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Audiomodern/Panflow",
+            "session": "Panflow exploration"
+        },
+        {
+            "id": "beam",
+            "name": "BEAM",
+            "manufacturer": "Lunacy Audio",
+            "path": "AudioUnit:Effects/aumf,proC,Luna",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Lunacy Audio/BEAM",
+            "session": "BEAM exploration"
+        },
+        {
+            "id": "gatelab",
+            "name": "Gatelab",
+            "manufacturer": "Audiomodern",
+            "path": "AudioUnit:Effects/aufx,Gtlb,Aumd",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Audiomodern/Gatelab",
+            "session": "Gatelab exploration"
+        },
+        {
+            "id": "uadx_polymax_synth",
+            "name": "UADx PolyMAX Synth",
+            "manufacturer": "Universal Audio (UADx)",
+            "path": "AudioUnit:Synths/aumu,UI06,UADx",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Universal Audio (UADx)/UADx PolyMAX Synth",
+            "session": "UADx PolyMAX Synth exploration"
+        },
+        {
+            "id": "asr_v",
+            "name": "ASR-V",
+            "manufacturer": "Hare Tech",
+            "path": "AudioUnit:Synths/aumu,AsrV,AsrV",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Hare Tech/ASR-V",
+            "session": "ASR-V exploration"
+        },
+        {
+            "id": "ovox_s",
+            "name": "OVox (s)",
+            "manufacturer": "Waves",
+            "path": "AudioUnit:Effects/aumf,ORVS,ksWV",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Waves/OVox (s)",
+            "session": "OVox (s) exploration"
+        },
+        {
+            "id": "asr_10_player",
+            "name": "ASR-10 Player",
+            "manufacturer": "ERX10",
+            "path": "AudioUnit:Synths/aumu,Erx1,ERX1",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/ERX10/ASR-10 Player",
+            "session": "ASR-10 Player exploration"
+        },
+        {
+            "id": "erx_rack",
+            "name": "ERX Rack",
+            "manufacturer": "ERX10",
+            "path": "AudioUnit:Synths/aumu,Erx4,ERX1",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/ERX10/ERX Rack",
+            "session": "ERX Rack exploration"
+        }
+    ]
 }

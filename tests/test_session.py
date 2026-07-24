@@ -41,6 +41,23 @@ def test_create_and_save_session(tmp_session_root):
     assert loaded.plugin_path == "/path/to/Plugin.vst3"
 
 
+def test_session_show_without_name_lists_folders(tmp_session_root, capsys):
+    from aufx_test.cli import _cmd_session_show
+
+    ExperimentSession.create("Alpha Session", root_dir=tmp_session_root)
+    ExperimentSession.create("Beta Session", root_dir=tmp_session_root)
+    (tmp_session_root / "not_a_session").mkdir()
+    (tmp_session_root / "stray.txt").write_text("ignore\n", encoding="utf-8")
+
+    class Args:
+        name = None
+        root = tmp_session_root
+
+    assert _cmd_session_show(Args()) == 0
+    out = capsys.readouterr().out.strip().splitlines()
+    assert out == ["alpha_session", "beta_session"]
+
+
 def test_keyword_from_description():
     assert _keyword_from_description("Init Serial guitar") == "init"
     assert _keyword_from_description("  half-mix tone  ") == "half"

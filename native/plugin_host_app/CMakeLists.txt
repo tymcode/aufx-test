@@ -1,49 +1,140 @@
+# Read semantic version (do not bump at configure time — builds bump via PRE_BUILD).
+set(AUFX_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
+file(STRINGS "${AUFX_VERSION_FILE}" AUFX_VERSION_LINES)
+list(GET AUFX_VERSION_LINES 0 AUFX_SEMVER)
+string(STRIP "${AUFX_SEMVER}" AUFX_SEMVER)
+
+set(AUFX_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${AUFX_GEN_DIR}")
+
+# Seed generated sources so the first configure can resolve the target sources.
+if(NOT EXISTS "${AUFX_GEN_DIR}/AppVersion.h")
+    set(AUFX_BUILD 0)
+    set(AUFX_VERSION_FULL "${AUFX_SEMVER}+0")
+    string(TIMESTAMP AUFX_BUILD_YEAR "%Y")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/AppVersion.h.in"
+        "${AUFX_GEN_DIR}/AppVersion.h"
+        @ONLY)
+    file(WRITE "${AUFX_GEN_DIR}/AppVersion.cpp"
+"#include \"AppVersion.h\"
+namespace aufx_version {
+    const char* appName() { return AUFX_APP_NAME; }
+    const char* versionString() { return AUFX_VERSION_STRING; }
+    const char* buildYear() { return AUFX_BUILD_YEAR; }
+    int buildNumber() { return AUFX_VERSION_BUILD; }
+}
+")
+endif()
+
 juce_add_gui_app(plugin_host_app
     PRODUCT_NAME "AU Effects Explorer"
-    VERSION 1.0.0
+    VERSION "${AUFX_SEMVER}"
+    BUNDLE_ID "com.aufxtest.AUEffectsExplorer"
+    COMPANY_NAME "Mike Jennings"
+    COMPANY_COPYRIGHT "Copyright (c) Mike Jennings"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/app_icon.png"
     PLUGINHOST_AU TRUE
     PLUGINHOST_VST3 TRUE
-    MICROPHONE_PERMISSION_ENABLED FALSE)
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "AU Effects Explorer needs microphone access when a plugin (for example a sampler) records from an audio input device.")
+
+set_target_properties(plugin_host_app PROPERTIES
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.aufxtest.AUEffectsExplorer"
+    MACOSX_BUNDLE_BUNDLE_NAME "AU Effects Explorer"
+    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.aufxtest.AUEffectsExplorer"
+    XCODE_ATTRIBUTE_INFOPLIST_KEY_LSApplicationCategoryType "public.app-category.music"
+    XCODE_ATTRIBUTE_INFOPLIST_KEY_NSHighResolutionCapable YES)
+
+juce_add_binary_data(plugin_host_app_assets
+    HEADER_NAME BinaryData.h
+    NAMESPACE BinaryData
+    SOURCES
+        Resources/app_icon.png)
 
 target_include_directories(plugin_host_app
     PRIVATE
         Source
+        ${AUFX_GEN_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../plugin_renderer/Source)
 
 target_sources(plugin_host_app
     PRIVATE
         Source/Main.cpp
         Source/HostConfig.cpp
+        Source/HostPreferences.cpp
         Source/HostLog.cpp
         Source/HostLookAndFeel.cpp
         Source/MainWindow.cpp
         Source/PluginAudioEngine.cpp
         Source/OfflineCapture.cpp
+        Source/SessionSnap.cpp
+        Source/AuPluginScanner.cpp
+        Source/PluginScannerOOP.cpp
+        Source/SettingsDialog.cpp
+        Source/AddPluginDialog.cpp
+        Source/AboutDialog.cpp
+        ${AUFX_GEN_DIR}/AppVersion.cpp
         ../plugin_renderer/Source/AUpresetLoader.cpp
         ../plugin_renderer/Source/ParameterHelpers.cpp)
+
+set_source_files_properties("${AUFX_GEN_DIR}/AppVersion.cpp" "${AUFX_GEN_DIR}/AppVersion.h"
+    PROPERTIES GENERATED TRUE)
+
+# Bump build number before compiling the host (PRE_BUILD is unreliable on Make/Ninja).
+add_custom_target(plugin_host_app_version
+    COMMAND ${CMAKE_COMMAND}
+        -DAUFX_VERSION_FILE=${AUFX_VERSION_FILE}
+        -DAUFX_GEN_DIR=${AUFX_GEN_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BumpVersion.cmake
+    BYPRODUCTS
+        ${AUFX_GEN_DIR}/AppVersion.h
+        ${AUFX_GEN_DIR}/AppVersion.cpp
+    COMMENT "Bumping AU Effects Explorer build number"
+    VERBATIM)
+add_dependencies(plugin_host_app plugin_host_app_version)
+
+# Bundle default config into Contents/Resources/
+target_sources(plugin_host_app PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Resources/host.config.json")
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/Resources/host.config.json"
+    PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+
+# Bundle fixture WAVs from the repo fixtures/ directory
+set(AUFX_FIXTURES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../fixtures")
+file(GLOB AUFX_FIXTURE_WAVS CONFIGURE_DEPENDS "${AUFX_FIXTURES_DIR}/*.wav")
+foreach(fixture_wav IN LISTS AUFX_FIXTURE_WAVS)
+    target_sources(plugin_host_app PRIVATE "${fixture_wav}")
+    set_source_files_properties("${fixture_wav}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/fixtures")
+endforeach()
 
 target_compile_definitions(plugin_host_app
     PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
-        JUCE_VST3_CAN_REPLACE_VST2=0)
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_MODAL_LOOPS_PERMITTED=1)
 
 target_link_libraries(plugin_host_app
     PRIVATE
+        plugin_host_app_assets
         juce::juce_audio_utils
         juce::juce_audio_processors
         juce::juce_audio_formats
         juce::juce_dsp
         juce::juce_gui_extra
+        juce::juce_data_structures
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 
 if(APPLE)
     target_sources(plugin_host_app PRIVATE Source/AUpresetSaver_mac.mm)
+    target_sources(plugin_host_app PRIVATE Source/HostPreferences_mac.mm)
+    target_sources(plugin_host_app PRIVATE Source/PluginScannerWorker_mac.mm)
     target_sources(plugin_host_app PRIVATE ../plugin_renderer/Source/AUpresetLoader_mac.mm)
-    target_link_libraries(plugin_host_app PRIVATE "-framework Foundation")
+    target_link_libraries(plugin_host_app PRIVATE
+        "-framework Foundation"
+        "-framework CoreFoundation")
 else()
     target_sources(plugin_host_app PRIVATE Source/AUpresetSaver.cpp)
     target_compile_definitions(plugin_host_app PRIVATE JUCE_PLUGIN_HOST_NO_MAC_PRESET=1)

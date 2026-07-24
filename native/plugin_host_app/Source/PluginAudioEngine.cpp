@@ -13,9 +13,67 @@ namespace
         return {};
     }
 
+    void configureDefaultBuses (juce::AudioPluginInstance& instance, bool allowInstrumentAudioInput)
+    {
+        // setBusesLayout requires the same number of buses as the plugin declares.
+        // Instruments / samplers (DecentSampler, ASR-V) often expose an optional
+        // audio input for sampling; enabling it with no host capture leaves them
+        // in a broken state (null deref in the editor / IO setup). Disable those
+        // inputs by default; enable when the user opts in via Settings.
+        const bool instrument = instance.getPluginDescription().isInstrument;
+        juce::AudioProcessor::BusesLayout layout;
+
+        for (int i = 0; i < instance.getBusCount (true); ++i)
+        {
+            if (instrument && ! allowInstrumentAudioInput)
+            {
+                layout.inputBuses.add (juce::AudioChannelSet::disabled());
+                continue;
+            }
+
+            if (auto* bus = instance.getBus (true, i))
+            {
+                auto channels = bus->getDefaultLayout();
+                if (channels.isDisabled())
+                    channels = juce::AudioChannelSet::stereo();
+                layout.inputBuses.add (channels);
+            }
+            else
+            {
+                layout.inputBuses.add (juce::AudioChannelSet::stereo());
+            }
+        }
+
+        for (int i = 0; i < instance.getBusCount (false); ++i)
+        {
+            if (auto* bus = instance.getBus (false, i))
+            {
+                auto channels = bus->isEnabled() ? bus->getCurrentLayout()
+                                                 : bus->getDefaultLayout();
+                if (channels.isDisabled())
+                    channels = juce::AudioChannelSet::stereo();
+                layout.outputBuses.add (channels);
+            }
+            else
+            {
+                layout.outputBuses.add (juce::AudioChannelSet::stereo());
+            }
+        }
+
+        if (layout.outputBuses.isEmpty())
+            layout.outputBuses.add (juce::AudioChannelSet::stereo());
+
+        if (! instrument && layout.inputBuses.isEmpty())
+            layout.inputBuses.add (juce::AudioChannelSet::stereo());
+
+        if (! instance.setBusesLayout (layout))
+            instance.enableAllBuses();
+    }
+
     std::unique_ptr<juce::AudioPluginInstance> createPluginInstance (const juce::File& pluginFile,
                                                                      double sampleRate,
                                                                      int blockSize,
+                                                                     bool allowInstrumentAudioInput,
                                                                      juce::String& error)
     {
         juce::AudioPluginFormatManager formatManager;
@@ -43,6 +101,7 @@ namespace
             return {};
         }
 
+        configureDefaultBuses (*instance, allowInstrumentAudioInput);
         return instance;
     }
 }
@@ -64,15 +123,21 @@ bool PluginAudioEngine::loadPlugin (const juce::File& pluginFile, juce::String& 
     stopFixture();
     stopAudioDevice();
 
-    const juce::ScopedLock lock (processLock);
-    plugin.reset();
+    {
+        const juce::ScopedLock lock (processLock);
+        plugin.reset();
+    }
 
-    auto instance = createPluginInstance (pluginFile, deviceSampleRate, deviceBlockSize, error);
+    auto instance = createPluginInstance (pluginFile, deviceSampleRate, deviceBlockSize,
+                                          allowInstrumentAudioInput.load(), error);
     if (instance == nullptr)
         return false;
 
+    instance->setPlayHead (this);
+    instance->suspendProcessing (true);
+
+    const juce::ScopedLock lock (processLock);
     plugin = std::move (instance);
-    plugin->setPlayHead (this);
     return true;
 }
 
@@ -80,6 +145,11 @@ bool PluginAudioEngine::loadPlugin (const juce::PluginDescription& description, 
 {
     stopFixture();
     stopAudioDevice();
+
+    {
+        const juce::ScopedLock lock (processLock);
+        plugin.reset();
+    }
 
     juce::AudioPluginFormatManager pluginFormats;
     juce::addDefaultFormatsToManager (pluginFormats);
@@ -93,9 +163,14 @@ bool PluginAudioEngine::loadPlugin (const juce::PluginDescription& description, 
         return false;
     }
 
+    configureDefaultBuses (*instance, allowInstrumentAudioInput.load());
+    instance->setPlayHead (this);
+    // Stay suspended until the editor is up and the audio device starts — avoids
+    // AU/WebView plugins (e.g. Lunacy BEAM) racing processBlock during UI init.
+    instance->suspendProcessing (true);
+
     const juce::ScopedLock lock (processLock);
     plugin = std::move (instance);
-    plugin->setPlayHead (this);
     return true;
 }
 
@@ -178,6 +253,10 @@ juce::AudioProcessorEditor* PluginAudioEngine::createEditor()
         destroyEditor (toDelete);
     }
 
+    // Keep DSP suspended while WebView/Cocoa editors initialise (can take seconds).
+    // Always leave suspended here — startAudioDevice() is responsible for resuming.
+    plugin->suspendProcessing (true);
+
     return plugin->createEditorAndMakeActive();
 }
 
@@ -233,7 +312,10 @@ bool PluginAudioEngine::startAudioDevice (juce::String& error)
     }
 
     if (plugin != nullptr)
+    {
         plugin->prepareToPlay (deviceSampleRate, deviceBlockSize);
+        plugin->suspendProcessing (false);
+    }
 
     deviceManager.addAudioCallback (this);
     applyMidiInputSelection();
@@ -415,6 +497,25 @@ void PluginAudioEngine::setMetronomeClickEnabled (bool enabled)
         metronomeClickPosition = -1;
         pendingClickOffset = -1;
     }
+}
+
+void PluginAudioEngine::setAllowInstrumentAudioInput (bool allow)
+{
+    const bool previous = allowInstrumentAudioInput.exchange (allow);
+    if (previous == allow)
+        return;
+
+    const juce::ScopedLock lock (processLock);
+    if (plugin == nullptr || ! plugin->getPluginDescription().isInstrument)
+        return;
+
+    const bool wasSuspended = plugin->isSuspended();
+    plugin->suspendProcessing (true);
+    configureDefaultBuses (*plugin, allow);
+    plugin->prepareToPlay (deviceSampleRate, deviceBlockSize);
+
+    if (! wasSuspended && deviceManager.getCurrentAudioDevice() != nullptr)
+        plugin->suspendProcessing (false);
 }
 
 void PluginAudioEngine::resetHostClockTiming()
@@ -690,51 +791,64 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
 {
     juce::ignoreUnused (inputChannelData, numInputChannels, context);
 
-    juce::AudioBuffer<float> buffer (juce::jmax (1, numOutputChannels), numSamples);
-    buffer.clear();
+    int processChannels = juce::jmax (1, numOutputChannels);
 
     {
         const juce::ScopedLock lock (processLock);
 
-        if (! restoringState.load())
+        if (plugin != nullptr)
+            processChannels = juce::jmax (processChannels,
+                                          plugin->getTotalNumInputChannels(),
+                                          plugin->getTotalNumOutputChannels());
+
+        juce::AudioBuffer<float> buffer (processChannels, numSamples);
+        buffer.clear();
+
+        if (! restoringState.load() && plugin != nullptr && ! plugin->isSuspended())
         {
-            if (playing)
+            // Fixture → plugin inputs. Instruments only when Settings allows it.
+            if (playing
+                && (! plugin->getPluginDescription().isInstrument
+                    || allowInstrumentAudioInput.load()))
                 fillFixtureBlock (buffer, numSamples);
 
-            if (plugin != nullptr)
+            juce::MidiBuffer midi;
             {
-                juce::MidiBuffer midi;
-                {
-                    const juce::ScopedLock midiScopedLock (midiLock);
-                    midi.swapWith (pendingMidi);
-                }
-
-                const bool clockEnabled = hostClockEnabled.load();
-                if (clockEnabled)
-                {
-                    applyPendingHostClockTransport (midi);
-
-                    if (hostClockPlaying.load())
-                        generateHostClockMidi (midi, numSamples);
-                }
-
-                plugin->processBlock (buffer, midi);
-
-                if (clockEnabled && hostClockPlaying.load())
-                    playHeadSamples.fetch_add (numSamples);
+                const juce::ScopedLock midiScopedLock (midiLock);
+                midi.swapWith (pendingMidi);
             }
+
+            const bool clockEnabled = hostClockEnabled.load();
+            if (clockEnabled)
+            {
+                applyPendingHostClockTransport (midi);
+
+                if (hostClockPlaying.load())
+                    generateHostClockMidi (midi, numSamples);
+            }
+
+            plugin->processBlock (buffer, midi);
+
+            if (clockEnabled && hostClockPlaying.load())
+                playHeadSamples.fetch_add (numSamples);
 
             // Host monitoring click — mixed after the plugin, like a DAW metronome.
             mixMetronomeClick (buffer, numSamples);
         }
-    }
+        else if (! restoringState.load())
+        {
+            if (playing)
+                fillFixtureBlock (buffer, numSamples);
+            mixMetronomeClick (buffer, numSamples);
+        }
 
-    for (int ch = 0; ch < numOutputChannels; ++ch)
-    {
-        if (outputChannelData[ch] == nullptr)
-            continue;
+        for (int ch = 0; ch < numOutputChannels; ++ch)
+        {
+            if (outputChannelData[ch] == nullptr)
+                continue;
 
-        const int srcCh = ch % buffer.getNumChannels();
-        juce::FloatVectorOperations::copy (outputChannelData[ch], buffer.getReadPointer (srcCh), numSamples);
+            const int srcCh = ch % buffer.getNumChannels();
+            juce::FloatVectorOperations::copy (outputChannelData[ch], buffer.getReadPointer (srcCh), numSamples);
+        }
     }
 }

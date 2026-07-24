@@ -2,18 +2,35 @@
 #include "HostConfig.h"
 #include "HostLog.h"
 #include "HostLookAndFeel.h"
+#include "HostPreferences.h"
+#include "AuPluginScanner.h"
+#include "PluginScannerOOP.h"
+#include "AppVersion.h"
 
 class PluginHostApplication : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override { return "AU Effects Explorer"; }
-    const juce::String getApplicationVersion() override { return "1.0.0"; }
-    bool moreThanOneInstanceAllowed() override { return false; }
+    const juce::String getApplicationName() override { return AUFX_APP_NAME; }
+    const juce::String getApplicationVersion() override { return AUFX_VERSION_STRING; }
+
+    bool moreThanOneInstanceAllowed() override
+    {
+        // Scanner worker is a second process of the same executable.
+        const auto cmd = juce::JUCEApplicationBase::getCommandLineParameterArray().joinIntoString (" ");
+        return cmd.contains ("--" + juce::String (kAuPluginScannerProcessUID) + ":");
+    }
 
     void initialise (const juce::String& commandLine) override
     {
-        juce::ignoreUnused (commandLine);
+        if (tryInitialiseAsPluginScannerWorker (commandLine))
+        {
+            // Running as out-of-process AU scanner — no UI.
+            return;
+        }
+
         const juce::StringArray args = juce::JUCEApplicationBase::getCommandLineParameterArray();
+
+        HostPreferences::get().initialise();
 
         HostCommandLineOptions cli;
         juce::String error;
@@ -29,23 +46,36 @@ public:
             return;
         }
 
-        HostConfig config;
-        if (! HostConfig::loadFromFile (cli.configFile, cli.projectRoot, config, error))
+        juce::File configFile, dataRoot, resourcesDir;
+        if (! HostPreferences::get().resolveLaunchPaths (cli, configFile, dataRoot, resourcesDir, error))
         {
-            juce::Logger::writeToLog ("Error: " + error);
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                    "AU Effects Explorer",
+                                                    error);
+            quit();
+            return;
+        }
+
+        HostConfig config;
+        if (! HostConfig::loadFromFile (configFile, dataRoot, config, error, resourcesDir))
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                    "AU Effects Explorer",
+                                                    error);
             quit();
             return;
         }
 
         HostLog::open (config.sessionLogFile);
-        HostLog::info ("Config loaded from " + cli.configFile.getFullPathName());
+        HostLog::info ("Config loaded from " + configFile.getFullPathName());
+        HostLog::info ("Exploration data root " + dataRoot.getFullPathName());
         HostLog::info ("Session hash " + config.sessionHash);
         HostLog::info ("Logging to " + config.sessionLogFile.getFullPathName());
 
         lookAndFeel = std::make_unique<HostLookAndFeel>();
         juce::LookAndFeel::setDefaultLookAndFeel (lookAndFeel.get());
 
-        mainWindow = std::make_unique<MainWindow> (config);
+        mainWindow = std::make_unique<MainWindow> (std::move (config));
     }
 
     void shutdown() override
@@ -65,11 +95,14 @@ private:
     static void printUsage()
     {
         juce::Logger::writeToLog (
-            "Usage: plugin_host_app [--config PATH] [--project-root PATH]\n"
+            "Usage: \"AU Effects Explorer\" [--config PATH] [--project-root PATH | --data-root PATH]\n"
             "\n"
-            "Defaults:\n"
-            "  --project-root  current working directory\n"
-            "  --config        <project-root>/host.config.json");
+            "When launched as a Mac app bundle with no arguments, exploration data defaults to\n"
+            "~/Library/Application Support/AU Effects Explorer/ and config is seeded from the bundle.\n"
+            "\n"
+            "Path resolution:\n"
+            "  data root:  CLI > Settings > system plist > Application Support (bundle) or cwd (dev)\n"
+            "  config:     CLI > Settings > system plist > <data-root>/host.config.json > bundled");
     }
 
     std::unique_ptr<HostLookAndFeel> lookAndFeel;

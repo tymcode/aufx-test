@@ -6,32 +6,56 @@ Snapshots can then be promoted to be added as testcases to run in `pytest` autom
 
 Snapshot artifacts (input WAV, output WAV, and preset) can also be added to bug reports so the developer can reproduce issues.
 
-The old terminal-only `explore` REPL is still available for scripting, but `aufx-test host` **is the recommended workflow**.
+The old terminal-only `explore` REPL is still available for scripting. For day-to-day work, launch **AU Effects Explorer** directly (see [Launch the host app](#launch-the-host-app)); the Python `aufx-test host` wrapper is optional.
 
 ## Prerequisites
 
+Build the native host (Python is **not** required to launch it):
+
 ```bash
 cd ~/dev/aufx-test
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-
 cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
 cmake --build native/build --target plugin_host_app
 ```
 
-Verify:
+The app lands at:
 
-```bash
-aufx-test --help          # CLI installed in venv
-ls native/build/plugin_host_app/plugin_host_app_artefacts/Release/
+```text
+native/build/plugin_host_app/plugin_host_app_artefacts/Release/AU Effects Explorer.app
 ```
 
+Or package a shareable copy into `dist/`:
 
+```bash
+./scripts/package_mac_app.sh
+```
 
+Optional — only needed for `aufx-test` CLI helpers (`session`, `explore`, pytest, or the `aufx-test host` wrapper):
+
+```bash
+# Use Homebrew Python — avoid old pyenv 3.9 builds (broken ssl / ancient pip)
+/opt/homebrew/opt/python@3.13/bin/python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+pip install -e ".[dev]"
+aufx-test --help
+```
+
+If activate/pip fails with permission errors or `ssl` / TLS warnings (often a stale pyenv Python linked against removed `openssl@1.1`):
+
+```bash
+xattr -cr .venv 2>/dev/null || true
+rm -rf .venv
+/opt/homebrew/opt/python@3.13/bin/python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+pip install -e ".[dev]"
+```
+
+Confirm: `python -c "import ssl; print(ssl.OPENSSL_VERSION)"` must succeed before `pip install`.
 ## Configure plugins
 
-Edit `host.config.json` at the project root. The plugin selector is populated **only** from this list (no AU scan):
+Edit `host.config.json` at the project root for the repo-rooted workflow. The toolbar dropdown is seeded from this list; use **Plugins → Add Plugin…** / **More plugins…** to pick from the AU cache and append entries.
 
 ```json
 {
@@ -60,14 +84,42 @@ Each host launch appends an 8-character session hash to `log_file` (e.g. `sessio
 
 ## Launch the host app
 
-From the project directory:
+### Recommended (no Python)
+
+From the project directory, open the built app and point it at the repo config:
+
+```bash
+cd ~/dev/aufx-test
+
+APP="native/build/plugin_host_app/plugin_host_app_artefacts/Release/AU Effects Explorer.app"
+
+open "$APP" --args \
+  --config "$(pwd)/host.config.json" \
+  --project-root "$(pwd)"
+```
+
+Or run the binary directly:
+
+```bash
+"$APP/Contents/MacOS/AU Effects Explorer" \
+  --config "$(pwd)/host.config.json" \
+  --project-root "$(pwd)"
+```
+
+After packaging, the same flags work with `dist/AU Effects Explorer.app`.
+
+Without `--project-root` / `--config`, the app uses its exploration data folder (default `~/Library/Application Support/AU Effects Explorer/`) — see [mac-app-distribution.md](mac-app-distribution.md).
+
+### Optional Python wrapper
+
+If your venv works, this is equivalent to the `open … --args` form above:
 
 ```bash
 source .venv/bin/activate
 aufx-test host
 ```
 
-Optional overrides:
+Overrides:
 
 ```bash
 aufx-test host --config path/to/host.config.json --project-root .
@@ -79,9 +131,7 @@ If `aufx-test` is not on your PATH:
 .venv/bin/aufx-test host
 ```
 
-
-
-## Using the app
+You do **not** need a working venv just to run the host UI.## Using the app
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -115,7 +165,8 @@ Tweak the plugin UI between captures. Each capture creates a new snapshot you ca
 
 ```bash
 # Catalog the snapshots for a given session folder
-aufx-test session show "DEEPZ exploration"
+aufx-test session show                      # list exploration folders
+aufx-test session show "DEEPZ exploration"  # summary for one session
 
 # Promote shapshots as automatable testcases
 
@@ -153,11 +204,12 @@ process.wait()
 
 | Problem                         | Fix                                                                      |
 | ------------------------------- | ------------------------------------------------------------------------ |
-| `aufx-test: command not found`  | `source .venv/bin/activate` or use `.venv/bin/aufx-test`                 |
+| venv activate / pip SSL errors | Recreate with Homebrew Python: `rm -rf .venv && /opt/homebrew/opt/python@3.13/bin/python3.13 -m venv .venv` then `pip install -U pip && pip install -e ".[dev]"` — or skip Python and `open` the `.app` (see Launch) |
+| `aufx-test: command not found`  | Recreate/activate `.venv`, or use `.venv/bin/aufx-test`, or launch the `.app` directly |
 | Plugin host app not found       | Build: `cmake --build native/build --target plugin_host_app`             |
 | Config / plugin path errors     | Edit `host.config.json`; ensure each `path` exists                       |
 | No presets in dropdown          | Set `presets_dir` for that plugin entry                                  |
-| Capture fails on session update | Ensure `python_cli` in config points at `.venv/bin/aufx-test`            |
+| Capture fails on session update | Ensure `python_cli` in config points at `.venv/bin/aufx-test` when using Python session tools |
 | Need error details              | Check `sessions/plugin_host_<hash>.log` (from `log_file` + session hash) |
 | No audio on Play                | Check macOS output device; restart the host app                          |
 

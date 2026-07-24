@@ -60,6 +60,14 @@ public:
     void setMetronomeClickEnabled (bool enabled);
     bool isMetronomeClickEnabled() const { return metronomeClickEnabled.load(); }
 
+    /**
+     * When true, instruments/samplers get audio input buses enabled and the
+     * source clip is fed into those inputs (for sampling). Default false —
+     * enabling input without a feed crashes some AUs (DecentSampler, ASR-V).
+     */
+    void setAllowInstrumentAudioInput (bool allow);
+    bool getAllowInstrumentAudioInput() const { return allowInstrumentAudioInput.load(); }
+
     void audioDeviceAboutToStart (juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
     void audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
@@ -122,4 +130,6 @@ private:
     juce::AudioBuffer<float> metronomeClickBuffer;
     int metronomeClickPosition { -1 };
     int pendingClickOffset { -1 };
+
+    std::atomic<bool> allowInstrumentAudioInput { false };
 };

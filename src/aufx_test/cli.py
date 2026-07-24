@@ -128,6 +128,18 @@ def _cmd_session_new(args: argparse.Namespace) -> int:
     return 0
 
 
+def _list_session_folders(root: Path) -> list[str]:
+    """Folder names under root that contain a session.json (sorted)."""
+    if not root.is_dir():
+        return []
+    names = [
+        path.parent.name
+        for path in sorted(root.glob("*/session.json"))
+        if path.parent.is_dir()
+    ]
+    return names
+
+
 def _load_session(name: str, root: Path) -> ExperimentSession:
     candidates = [
         root / name,
@@ -165,6 +177,15 @@ def _cmd_session_snap(args: argparse.Namespace) -> int:
 
 
 def _cmd_session_show(args: argparse.Namespace) -> int:
+    if not args.name:
+        names = _list_session_folders(args.root)
+        if not names:
+            print(f"No exploration sessions found in {args.root.resolve()}")
+            return 0
+        for name in names:
+            print(name)
+        return 0
+
     session = _load_session(args.name, args.root)
     print(session.summary())
     return 0
@@ -366,8 +387,16 @@ def main(argv: list[str] | None = None) -> int:
     session_snap.add_argument("--tags", help="Comma-separated tags")
     session_snap.set_defaults(func=_cmd_session_snap)
 
-    session_show = session_sub.add_parser("show", help="Show session summary")
-    session_show.add_argument("name")
+    session_show = session_sub.add_parser(
+        "show",
+        help="Show session summary, or list exploration folders when name is omitted",
+    )
+    session_show.add_argument(
+        "name",
+        nargs="?",
+        default=None,
+        help="Session name or folder (omit to list valid exploration folders)",
+    )
     session_show.set_defaults(func=_cmd_session_show)
 
     session_promote = session_sub.add_parser("promote", help="Promote snapshot to automatable test")
