@@ -14,6 +14,7 @@ public:
     juce::File getSelectedDataRoot() const;
     juce::File getSelectedConfigOverride() const;
     bool getAllowInstrumentAudioInput() const;
+    int getPluginScanTimeoutMs() const;
     bool wantsResetToDefaults() const { return resetRequested; }
     bool didModifyPluginCache() const { return pluginCacheModified; }
 
@@ -39,6 +40,8 @@ private:
     juce::TextButton chooseConfigButton { "Choose..." };
     juce::TextButton clearConfigButton { "Clear" };
     juce::ToggleButton allowInstrumentInputToggle;
+    juce::Label scanTimeoutLabel;
+    juce::ComboBox scanTimeoutBox;
     juce::Label skippedHeading;
     juce::ListBox skippedList { "skipped", this };
     juce::TextButton retrySkippedButton { "Retry selected" };

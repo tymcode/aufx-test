@@ -12,6 +12,17 @@ inline constexpr const char* kAuPluginScannerProcessUID = "aueffectsexplorerscan
 /** Default per-plugin budget before the child worker is torn down as hung. */
 inline constexpr int kAuPluginScanTimeoutMs = 15000;
 
+enum class OopScanFailureReason
+{
+    none,
+    timeout,
+    connectionLost,
+    sendFailed,
+    cancelled,
+};
+
+juce::String oopScanFailureReasonString (OopScanFailureReason reason);
+
 /**
  * If this process was launched as an out-of-process AU scanner worker, connect
  * and take over. Returns true when the app should stay in worker mode (no UI).
@@ -37,6 +48,9 @@ public:
 
     void scanFinished() override;
 
+    OopScanFailureReason getLastFailureReason() const { return lastFailureReason; }
+    int getLastScanDurationMs() const { return lastScanDurationMs; }
+
 private:
     class Superprocess;
 
@@ -47,6 +61,8 @@ private:
     std::unique_ptr<Superprocess> superprocess;
     std::atomic<bool>* cancelFlag { nullptr };
     int pluginTimeoutMs { kAuPluginScanTimeoutMs };
+    OopScanFailureReason lastFailureReason { OopScanFailureReason::none };
+    int lastScanDurationMs { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OutOfProcessPluginScanner)
 };

@@ -4,6 +4,7 @@
 
 namespace
 {
+    constexpr double bypassFadeSeconds = 0.008;
     juce::String formatNameForPluginFile (const juce::File& pluginFile)
     {
         if (pluginFile.hasFileExtension (".vst3"))
@@ -122,6 +123,8 @@ bool PluginAudioEngine::loadPlugin (const juce::File& pluginFile, juce::String& 
 {
     stopFixture();
     stopAudioDevice();
+    bypassed.store (false);
+    bypassFade = 0.0f;
 
     {
         const juce::ScopedLock lock (processLock);
@@ -145,6 +148,8 @@ bool PluginAudioEngine::loadPlugin (const juce::PluginDescription& description, 
 {
     stopFixture();
     stopAudioDevice();
+    bypassed.store (false);
+    bypassFade = 0.0f;
 
     {
         const juce::ScopedLock lock (processLock);
@@ -292,6 +297,26 @@ void PluginAudioEngine::stopFixture()
 {
     playing.store (false);
     fixtureReadPosition = 0.0;
+}
+
+void PluginAudioEngine::setBypassed (bool shouldBypass)
+{
+    bypassed.store (shouldBypass);
+}
+
+void PluginAudioEngine::setMixAmount (float amount)
+{
+    mixAmount.store (juce::jlimit (0.0f, 1.0f, amount));
+}
+
+void PluginAudioEngine::setSendLevelDb (float decibels)
+{
+    sendLevelDb.store (decibels);
+
+    if (decibels <= -119.9f)
+        sendGain.store (0.0f);
+    else
+        sendGain.store (juce::Decibels::decibelsToGain (decibels));
 }
 
 bool PluginAudioEngine::startAudioDevice (juce::String& error)
@@ -723,6 +748,8 @@ void PluginAudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
     deviceSampleRate = device->getCurrentSampleRate();
     deviceBlockSize = device->getCurrentBufferSizeSamples();
+    bypassFadeLengthSamples = juce::jmax (1, (int) std::lround (deviceSampleRate * bypassFadeSeconds));
+    bypassFade = bypassed.load() ? 1.0f : 0.0f;
 
     const juce::ScopedLock lock (processLock);
     if (plugin != nullptr)
@@ -782,6 +809,49 @@ void PluginAudioEngine::fillFixtureBlock (juce::AudioBuffer<float>& buffer, int 
     }
 }
 
+void PluginAudioEngine::applyBypassCrossfade (juce::AudioBuffer<float>& wetBuffer,
+                                              const juce::AudioBuffer<float>& dryBuffer,
+                                              int numSamples)
+{
+    const float target = bypassed.load() ? 1.0f : 0.0f;
+
+    if (bypassFade <= 0.0f && target <= 0.0f)
+        return;
+
+    const float fadeStart = bypassFade;
+    float fadeEnd = fadeStart;
+
+    if (std::abs (fadeStart - target) > 1.0e-6f)
+    {
+        const float step = (float) numSamples / (float) bypassFadeLengthSamples;
+
+        if (target > fadeStart)
+            fadeEnd = juce::jmin (target, fadeStart + step);
+        else
+            fadeEnd = juce::jmax (target, fadeStart - step);
+    }
+
+    const float fadeStep = (fadeEnd - fadeStart) / (float) juce::jmax (1, numSamples);
+    constexpr float halfPi = juce::MathConstants<float>::halfPi;
+
+    for (int ch = 0; ch < wetBuffer.getNumChannels(); ++ch)
+    {
+        auto* wet = wetBuffer.getWritePointer (ch);
+        const auto* dry = dryBuffer.getReadPointer (ch);
+        float fade = fadeStart;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float dryGain = std::sin (fade * halfPi);
+            const float wetGain = std::cos (fade * halfPi);
+            wet[i] = dry[i] * dryGain + wet[i] * wetGain;
+            fade += fadeStep;
+        }
+    }
+
+    bypassFade = fadeEnd;
+}
+
 void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
                                                           int numInputChannels,
                                                           float* const* outputChannelData,
@@ -812,6 +882,10 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                     || allowInstrumentAudioInput.load()))
                 fillFixtureBlock (buffer, numSamples);
 
+            const float send = sendGain.load();
+            if (send != 1.0f)
+                buffer.applyGain (send);
+
             juce::MidiBuffer midi;
             {
                 const juce::ScopedLock midiScopedLock (midiLock);
@@ -827,7 +901,29 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                     generateHostClockMidi (midi, numSamples);
             }
 
+            const float wetMix = mixAmount.load();
+            const bool blendDry = wetMix < 1.0f;
+            juce::AudioBuffer<float> dryBuffer;
+            dryBuffer.setSize (buffer.getNumChannels(), numSamples, false, false, true);
+
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                dryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+
             plugin->processBlock (buffer, midi);
+
+            if (blendDry)
+            {
+                const float dryMix = 1.0f - wetMix;
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                {
+                    auto* wet = buffer.getWritePointer (ch);
+                    const auto* dry = dryBuffer.getReadPointer (ch);
+                    for (int i = 0; i < numSamples; ++i)
+                        wet[i] = dry[i] * dryMix + wet[i] * wetMix;
+                }
+            }
+
+            applyBypassCrossfade (buffer, dryBuffer, numSamples);
 
             if (clockEnabled && hostClockPlaying.load())
                 playHeadSamples.fetch_add (numSamples);

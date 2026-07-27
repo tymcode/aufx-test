@@ -7,6 +7,20 @@
 #include <fcntl.h>
 #include <chrono>
 
+juce::String oopScanFailureReasonString (OopScanFailureReason reason)
+{
+    switch (reason)
+    {
+        case OopScanFailureReason::none:           return "ok";
+        case OopScanFailureReason::timeout:        return "timeout";
+        case OopScanFailureReason::connectionLost: return "subprocess_lost";
+        case OopScanFailureReason::sendFailed:     return "send_failed";
+        case OopScanFailureReason::cancelled:      return "cancelled";
+    }
+
+    return "unknown";
+}
+
 //==============================================================================
 namespace
 {
@@ -193,6 +207,11 @@ bool OutOfProcessPluginScanner::addPluginDescriptions (const juce::String& forma
                                                        const juce::String& fileOrIdentifier,
                                                        juce::OwnedArray<juce::PluginDescription>& result)
 {
+    lastFailureReason = OopScanFailureReason::none;
+    lastScanDurationMs = 0;
+
+    const auto scanStarted = std::chrono::steady_clock::now();
+
     if (superprocess == nullptr)
         superprocess = std::make_unique<Superprocess>();
 
@@ -202,7 +221,13 @@ bool OutOfProcessPluginScanner::addPluginDescriptions (const juce::String& forma
     stream.writeString (fileOrIdentifier);
 
     if (! superprocess->sendMessageToWorker (block))
+    {
+        lastFailureReason = OopScanFailureReason::sendFailed;
+        lastScanDurationMs = (int) std::chrono::duration_cast<std::chrono::milliseconds> (
+                                   std::chrono::steady_clock::now() - scanStarted)
+                                   .count();
         return false;
+    }
 
     const auto deadline = std::chrono::steady_clock::now()
                           + std::chrono::milliseconds (pluginTimeoutMs);
@@ -210,12 +235,22 @@ bool OutOfProcessPluginScanner::addPluginDescriptions (const juce::String& forma
     for (;;)
     {
         if (shouldExit() || (cancelFlag != nullptr && cancelFlag->load()))
+        {
+            lastFailureReason = OopScanFailureReason::cancelled;
+            lastScanDurationMs = (int) std::chrono::duration_cast<std::chrono::milliseconds> (
+                                       std::chrono::steady_clock::now() - scanStarted)
+                                       .count();
             return true;
+        }
 
         if (std::chrono::steady_clock::now() >= deadline)
         {
             // Hung plugin: kill the worker so the next scan can proceed.
             superprocess = nullptr;
+            lastFailureReason = OopScanFailureReason::timeout;
+            lastScanDurationMs = (int) std::chrono::duration_cast<std::chrono::milliseconds> (
+                                       std::chrono::steady_clock::now() - scanStarted)
+                                       .count();
             return false;
         }
 
@@ -223,6 +258,10 @@ bool OutOfProcessPluginScanner::addPluginDescriptions (const juce::String& forma
 
         if (response.state == Superprocess::State::timeout)
             continue;
+
+        lastScanDurationMs = (int) std::chrono::duration_cast<std::chrono::milliseconds> (
+                                   std::chrono::steady_clock::now() - scanStarted)
+                                   .count();
 
         if (response.xml != nullptr)
         {
@@ -235,7 +274,11 @@ bool OutOfProcessPluginScanner::addPluginDescriptions (const juce::String& forma
             }
         }
 
-        return response.state == Superprocess::State::gotResult;
+        if (response.state == Superprocess::State::gotResult)
+            return true;
+
+        lastFailureReason = OopScanFailureReason::connectionLost;
+        return false;
     }
 }
 

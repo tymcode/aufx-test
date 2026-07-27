@@ -27,12 +27,19 @@ namespace
             copyrightLabel.setColour (juce::Label::textColourId, juce::Colours::grey);
             addAndMakeVisible (copyrightLabel);
 
+            attributionLink.setButtonText ("Some source clips by kind courtesy of VintageDigital.com.au");
+            attributionLink.setURL (juce::URL ("https://vintagedigital.com.au"));
+            attributionLink.setFont (juce::FontOptions (12.0f), false);
+            attributionLink.setJustificationType (juce::Justification::centred);
+            attributionLink.setColour (juce::HyperlinkButton::textColourId, juce::Colour (0xff6699cc));
+            addAndMakeVisible (attributionLink);
+
             auto image = juce::ImageFileFormat::loadFrom (BinaryData::app_icon_png,
                                                           BinaryData::app_icon_pngSize);
             if (image.isValid())
                 icon = image.rescaled (256, 256, juce::Graphics::highResamplingQuality);
 
-            setSize (320, 380);
+            setSize (340, 420);
         }
 
         void paint (juce::Graphics& g) override
@@ -52,7 +59,9 @@ namespace
             area.removeFromTop (6);
             versionLabel.setBounds (area.removeFromTop (22));
             area.removeFromTop (10);
-            copyrightLabel.setBounds (area.removeFromTop (22));
+            copyrightLabel.setBounds (area.removeFromTop (26));
+            area.removeFromTop (8);
+            attributionLink.setBounds (area.removeFromTop (36));
         }
 
     private:
@@ -60,6 +69,7 @@ namespace
         juce::Label titleLabel;
         juce::Label versionLabel;
         juce::Label copyrightLabel;
+        juce::HyperlinkButton attributionLink { {}, juce::URL ("https://vintagedigital.com.au") };
     };
 }
 

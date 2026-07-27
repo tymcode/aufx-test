@@ -30,6 +30,21 @@ public:
     void setLooping (bool shouldLoop) { looping.store (shouldLoop); }
     bool isLooping() const { return looping.load(); }
 
+    /**
+     * Host bypass: crossfades between dry (pre-plugin) and wet (post-plugin) over
+     * a few milliseconds to avoid clicks. Reset to off whenever a plugin is reloaded.
+     */
+    void setBypassed (bool shouldBypass);
+    bool isBypassed() const { return bypassed.load(); }
+
+    /** Dry/wet mix: 0 = source clip only, 1 = fully processed (default). */
+    void setMixAmount (float amount);
+    float getMixAmount() const { return mixAmount.load(); }
+
+    /** Input send level in dB (-inf mute .. +6 dB, default 0 dB). */
+    void setSendLevelDb (float decibels);
+    float getSendLevelDb() const { return sendLevelDb.load(); }
+
     juce::File getCurrentFixtureFile() const { return currentFixtureFile; }
 
     bool startAudioDevice (juce::String& error);
@@ -88,6 +103,9 @@ private:
     void generateHostClockMidi (juce::MidiBuffer& midi, int numSamples);
     void resetHostClockTiming();
     void mixMetronomeClick (juce::AudioBuffer<float>& buffer, int numSamples);
+    void applyBypassCrossfade (juce::AudioBuffer<float>& wetBuffer,
+                               const juce::AudioBuffer<float>& dryBuffer,
+                               int numSamples);
     static PendingTransport classifyTransportMessage (const juce::MidiMessage& message);
 
     // AudioPlayHead: how a DAW communicates tempo/transport to the plugin.
@@ -104,6 +122,12 @@ private:
     juce::File currentFixtureFile;
     std::atomic<bool> playing { false };
     std::atomic<bool> looping { true };
+    std::atomic<bool> bypassed { false };
+    float bypassFade { 0.0f };
+    int bypassFadeLengthSamples { 441 };
+    std::atomic<float> mixAmount { 1.0f };
+    std::atomic<float> sendLevelDb { 0.0f };
+    std::atomic<float> sendGain { 1.0f };
 
     double deviceSampleRate { 44100.0 };
     int deviceBlockSize { 512 };

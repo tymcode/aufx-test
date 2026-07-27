@@ -9,6 +9,10 @@
 #include "SettingsDialog.h"
 #include "Utf8.h"
 
+#if JUCE_MAC
+ #include "LightsOutManager_mac.h"
+#endif
+
 namespace
 {
     juce::Array<juce::File> collectFiles (const juce::File& root, const juce::String& extension, bool recursive)
@@ -498,6 +502,197 @@ public:
     }
 };
 
+/** Horizontal slider matching the host chrome (dark recess + orange fill). */
+class HostChromeSlider : public juce::Slider
+{
+public:
+    HostChromeSlider()
+    {
+        setSliderStyle (juce::Slider::LinearHorizontal);
+        setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const float proportion = (float) valueToProportionOfLength (getValue());
+        const auto bounds = getLocalBounds();
+        const auto fillBounds = paintChromeTrack (g, bounds, proportion);
+        paintInvertedValueText (g, bounds, fillBounds, formatValueText());
+    }
+
+protected:
+    virtual juce::String formatValueText() const { return {}; }
+
+    static juce::Rectangle<float> paintChromeTrack (juce::Graphics& g, juce::Rectangle<int> area, float proportion)
+    {
+        auto bounds = area.toFloat().reduced (0.5f);
+        constexpr float corner = 3.0f;
+
+        g.setColour (juce::Colour (0xff101510));
+        g.fillRoundedRectangle (bounds, corner);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.drawRoundedRectangle (bounds, corner, 1.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.05f));
+        g.drawRoundedRectangle (bounds.reduced (0.5f), corner, 0.5f);
+
+        auto fill = bounds.reduced (2.0f);
+        fill.setWidth (fill.getWidth() * proportion);
+        const auto fillForText = fill;
+
+        if (fill.getWidth() > 2.0f)
+        {
+            g.setColour (juce::Colour (0xffff6a2a).withAlpha (0.85f));
+            g.fillRoundedRectangle (fill, 2.0f);
+            g.setColour (juce::Colour (0xffff8a5c).withAlpha (0.35f));
+            g.fillRoundedRectangle (fill.removeFromTop (fill.getHeight() * 0.45f), 2.0f);
+        }
+
+        const float thumbW = 5.0f;
+        const float travel = juce::jmax (0.0f, bounds.getWidth() - 4.0f - thumbW);
+        const float thumbX = bounds.getX() + 2.0f + travel * proportion;
+        auto thumb = juce::Rectangle<float> (thumbX, bounds.getY() + 3.0f, thumbW, bounds.getHeight() - 6.0f);
+
+        g.setColour (juce::Colour (0xffffc8a8));
+        g.fillRoundedRectangle (thumb, 1.5f);
+        g.setColour (juce::Colour (0xffff6a2a));
+        g.drawRoundedRectangle (thumb, 1.5f, 0.8f);
+
+        return fillForText;
+    }
+
+    void paintInvertedValueText (juce::Graphics& g,
+                                 juce::Rectangle<int> area,
+                                 juce::Rectangle<float> fill,
+                                 const juce::String& text) const
+    {
+        if (text.isEmpty())
+            return;
+
+        g.setFont (juce::Font (juce::FontOptions (11.0f)));
+        const auto lightText = findColour (juce::Label::textColourId);
+        const auto inner = area.reduced (2);
+        const auto fillI = fill.toNearestInt().getIntersection (inner);
+
+        if (! fillI.isEmpty())
+        {
+            g.saveState();
+            g.reduceClipRegion (fillI);
+            g.setColour (juce::Colours::black);
+            g.drawText (text, area, juce::Justification::centred, false);
+            g.restoreState();
+        }
+
+        if (fillI.getX() > inner.getX())
+        {
+            g.saveState();
+            g.reduceClipRegion (inner.getX(), inner.getY(),
+                                fillI.getX() - inner.getX(), inner.getHeight());
+            g.setColour (lightText);
+            g.drawText (text, area, juce::Justification::centred, false);
+            g.restoreState();
+        }
+
+        if (fillI.getRight() < inner.getRight())
+        {
+            g.saveState();
+            g.reduceClipRegion (fillI.getRight(), inner.getY(),
+                                inner.getRight() - fillI.getRight(), inner.getHeight());
+            g.setColour (lightText);
+            g.drawText (text, area, juce::Justification::centred, false);
+            g.restoreState();
+        }
+    }
+};
+
+class MixSlider : public HostChromeSlider
+{
+public:
+    MixSlider()
+    {
+        setRange (0.0, 100.0, 1.0);
+        setValue (100.0, juce::dontSendNotification);
+        setTooltip (utf8 ("Dry/wet mix — 0% is source only, 100% is fully processed"));
+    }
+
+protected:
+    juce::String formatValueText() const override
+    {
+        return formatMixPercent (juce::roundToInt (getValue()));
+    }
+};
+
+/** Send level: mute .. 0 dB (log taper) .. +6 dB (0 dB 60 px from the right edge). */
+class SendSlider : public HostChromeSlider
+{
+public:
+    static constexpr double muteDb = -120.0;
+    static constexpr double maxPositiveDb = 6.0;
+    static constexpr double positiveTravelPx = 60.0;
+    static constexpr double positiveExp = 2.8;
+    static constexpr double negativeSkew = 0.16;
+
+    SendSlider()
+    {
+        setRange (muteDb, maxPositiveDb, 0.01);
+        setValue (0.0, juce::dontSendNotification);
+        setTooltip (utf8 ("Send level — mute at minimum, 0 dB unity, +6 dB max"));
+    }
+
+protected:
+    juce::String formatValueText() const override
+    {
+        return formatSendLevelDb (getValue(), muteDb);
+    }
+
+    double valueToProportionOfLength (double value) override
+    {
+        const auto W = travelWidthPx();
+        const auto negTravel = juce::jmax (1.0, W - positiveTravelPx);
+
+        if (value >= 0.0)
+        {
+            const auto p = std::pow (juce::jlimit (0.0, 1.0, value / maxPositiveDb),
+                                     1.0 / positiveExp);
+            const auto x = negTravel + p * positiveTravelPx;
+            return juce::jlimit (0.0, 1.0, x / W);
+        }
+
+        if (value <= muteDb + 0.05)
+            return 0.0;
+
+        const auto normalized = (value - muteDb) / (0.0 - muteDb);
+        const auto t = std::pow (juce::jlimit (0.0, 1.0, normalized), 1.0 / negativeSkew);
+        return juce::jlimit (0.0, 1.0, (t * negTravel) / W);
+    }
+
+    double proportionOfLengthToValue (double proportion) override
+    {
+        const auto W = travelWidthPx();
+        const auto negTravel = juce::jmax (1.0, W - positiveTravelPx);
+        const auto x = juce::jlimit (0.0, W, proportion * W);
+
+        if (x >= negTravel - 0.5)
+        {
+            const auto p = juce::jlimit (0.0, 1.0, (x - negTravel) / positiveTravelPx);
+            const auto db = maxPositiveDb * std::pow (p, positiveExp);
+            return juce::jlimit (0.0, maxPositiveDb, db);
+        }
+
+        if (x <= 0.5)
+            return muteDb;
+
+        const auto t = x / negTravel;
+        const auto normalized = std::pow (t, negativeSkew);
+        return muteDb + normalized * (0.0 - muteDb);
+    }
+
+private:
+    double travelWidthPx() const
+    {
+        return juce::jmax (positiveTravelPx + 1.0, (double) getLocalBounds().reduced (2).getWidth());
+    }
+};
+
 /** Combo-styled multi-select for MIDI inputs; closed label lists selected names shortest-first. */
 class MidiSourceField : public juce::Component,
                         public juce::SettableTooltipClient
@@ -735,15 +930,41 @@ public:
         resetButton.setTooltip ("Reload the plugin at its default state");
         configureButton (loadPresetButton, "Load");
         configureButton (savePresetButton, "Save");
-        configureButton (captureButton, "Capture Test Case");
 
         transportButton.addListener (this);
         addAndMakeVisible (transportButton);
+
+        bypassButton.setButtonText ("Bypass");
+        bypassButton.setClickingTogglesState (true);
+        bypassButton.setTooltip ("Pass the source clip through unprocessed (A/B the plugin)");
+        bypassButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffc47a1e));
+        bypassButton.addListener (this);
+        addAndMakeVisible (bypassButton);
 
         loopToggle.setToggleState (true, juce::dontSendNotification);
         loopToggle.addListener (this);
         addAndMakeVisible (loopToggle);
         engine.setLooping (true);
+
+        sendLabel.setText ("Send", juce::dontSendNotification);
+        sendLabel.setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (sendLabel);
+        addAndMakeVisible (sendSlider);
+        sendSlider.onValueChange = [this]
+        {
+            engine.setSendLevelDb ((float) sendSlider.getValue());
+        };
+        engine.setSendLevelDb (0.0f);
+
+        mixLabel.setText ("Mix", juce::dontSendNotification);
+        mixLabel.setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (mixLabel);
+        addAndMakeVisible (mixSlider);
+        mixSlider.onValueChange = [this]
+        {
+            engine.setMixAmount ((float) mixSlider.getValue() / 100.0f);
+        };
+        engine.setMixAmount (1.0f);
         engine.setAllowInstrumentAudioInput (HostPreferences::get().getAllowInstrumentAudioInput());
 
         savePresetNameLabel.setText ("Save as", juce::dontSendNotification);
@@ -754,7 +975,7 @@ public:
         savePresetNameEditor.setJustification (juce::Justification::centredLeft);
         addAndMakeVisible (savePresetNameEditor);
 
-        midiLabel.setText ("MIDI", juce::dontSendNotification);
+        midiLabel.setText ("MIDI Sources", juce::dontSendNotification);
         midiLabel.setJustificationType (juce::Justification::centredRight);
         addAndMakeVisible (midiLabel);
         midiField.setTooltip (utf8 ("MIDI inputs from Audio MIDI Setup — check one or more to merge"));
@@ -843,7 +1064,24 @@ public:
 
         juce::Array<int> added;
         if (! showAddPluginDialog (config, knownPlugins, this, added))
+        {
+            HostLog::info ("Add Plugin: picker cancelled or nothing selected");
             return;
+        }
+
+        juce::String addedNames;
+        for (const int index : added)
+        {
+            if (juce::isPositiveAndBelow (index, config.plugins.size()))
+            {
+                if (addedNames.isNotEmpty())
+                    addedNames += ", ";
+                addedNames += config.plugins.getReference (index).displayLabel();
+            }
+        }
+
+        HostLog::info ("Add Plugin: added " + juce::String (added.size()) + " plugin(s)"
+                       + (addedNames.isNotEmpty() ? ": " + addedNames : juce::String()));
 
         populatePluginBox();
         if (! added.isEmpty())
@@ -870,11 +1108,18 @@ public:
         juce::String error;
         if (! AuPluginScanner::ensureCache (config.projectRoot, knownPlugins, this, error, true))
         {
+            HostLog::error ("AU rescan failed: " + error);
             setStatus ("AU rescan failed: " + error, true);
             return;
         }
 
+        HostLog::info ("AU rescan finished (" + juce::String (knownPlugins.getTypes().size()) + " cached types)");
         setStatus ("Rescanned Audio Units (" + juce::String (knownPlugins.getTypes().size()) + " found)");
+    }
+
+    void openCaptureTestCase()
+    {
+        promptCaptureTestCase();
     }
 
     /** Call after the host window is on-screen so AU Cocoa UIs can attach to an NSWindow. */
@@ -1016,9 +1261,7 @@ public:
         bounds.removeFromTop (4);
         auto row2 = bounds.removeFromTop (rowH);
 
-        // Right column: host clock on row1; Capture on row2.
-        constexpr int captureW = 150;
-
+        // Right column: host clock on row1.
         clickToggle.setBounds (row1.removeFromRight (26).withSizeKeepingCentre (26, 26));
         row1.removeFromRight (gap);
         bpmLabel.setBounds (row1.removeFromRight (30).withSizeKeepingCentre (30, ctrlH));
@@ -1027,9 +1270,6 @@ public:
         row1.removeFromRight (gap);
         hostClockToggle.setBounds (row1.removeFromRight (100).withSizeKeepingCentre (100, ctrlH));
         row1.removeFromRight (groupGap);
-
-        captureButton.setBounds (row2.removeFromRight (captureW).withSizeKeepingCentre (captureW, ctrlH));
-        row2.removeFromRight (groupGap);
 
         // Left columns — shared field width + identical action buttons
         auto left0 = row0.removeFromLeft (leftColW);
@@ -1064,15 +1304,19 @@ public:
         row1.removeFromLeft (groupGap);
         row2.removeFromLeft (groupGap);
 
+        constexpr int bypassButtonW = 64;
+        bypassButton.setBounds (row0.removeFromRight (bypassButtonW).withSizeKeepingCentre (bypassButtonW, ctrlH));
+        row0.removeFromRight (gap);
+
         // Status LCD spans the rest of row0 to the right edge
         statusDisplay.setBounds (row0.withSizeKeepingCentre (row0.getWidth(), ctrlH));
 
-        // MIDI + Source Clip share label width so their dropdowns line up
+        // MIDI + Source Clip share label width; clip dropdown is half-width so Send can grow.
         constexpr int midLabelW = leftLabelW;
-        const int midW = juce::jmax (180, juce::jmin (row1.getWidth(), row2.getWidth()));
+        const int mid1W = juce::jmax (180, row1.getWidth());
 
         {
-            auto mid1 = row1.removeFromLeft (midW);
+            auto mid1 = row1.removeFromLeft (mid1W);
             midiLabel.setBounds (place (mid1, midLabelW));
             mid1.removeFromLeft (gap);
             midiLed.setBounds (mid1.removeFromRight (16).withSizeKeepingCentre (16, 16));
@@ -1080,17 +1324,36 @@ public:
             midiField.setBounds (place (mid1, mid1.getWidth()));
         }
 
+        constexpr int beginButtonW = 72;
+        const int clipControlsW = 26 + gap + beginButtonW + gap;
+        const int fixtureDropFull = juce::jmax (120, mid1W - midLabelW - gap - clipControlsW);
+        const int fixtureDropW = juce::jmax (60, fixtureDropFull / 2);
+        const int mid2W = midLabelW + gap + fixtureDropW + gap + clipControlsW;
+
         {
-            auto mid2 = row2.removeFromLeft (midW);
+            auto mid2 = row2.removeFromLeft (mid2W);
             fixtureLabel.setBounds (place (mid2, midLabelW));
             mid2.removeFromLeft (gap);
             loopToggle.setBounds (mid2.removeFromRight (26).withSizeKeepingCentre (26, 26));
             mid2.removeFromRight (gap);
-            constexpr int beginButtonW = 72;
             transportButton.setBounds (mid2.removeFromRight (beginButtonW).withSizeKeepingCentre (beginButtonW, ctrlH));
             mid2.removeFromRight (gap);
-            fixtureBox.setBounds (place (mid2, mid2.getWidth()));
+            fixtureBox.setBounds (place (mid2, fixtureDropW));
         }
+
+        row2.removeFromLeft (gap);
+        sendLabel.setBounds (place (row2, 32));
+        row2.removeFromLeft (gap);
+
+        constexpr int mixLabelW = 28;
+        const int mixSliderW = juce::jmax (72, row2.getWidth() / 5);
+        const int mixSectionW = mixLabelW + gap + mixSliderW;
+        auto mixSection = row2.removeFromRight (mixSectionW);
+        mixLabel.setBounds (place (mixSection, mixLabelW));
+        mixSection.removeFromLeft (gap);
+        mixSlider.setBounds (mixSection.withSizeKeepingCentre (mixSection.getWidth(), ctrlH));
+
+        sendSlider.setBounds (row2.withSizeKeepingCentre (juce::jmax (80, row2.getWidth()), ctrlH));
 
         bounds.removeFromTop (8);
         controlStripDivider = juce::Rectangle<int> (bounds.getX(), bounds.getY(), bounds.getWidth(), 1);
@@ -1691,15 +1954,49 @@ private:
 
     void populateFixtures()
     {
-        fixtureFiles = collectFiles (config.fixturesDir, ".wav", false);
         fixtureBox.clear();
+        fixtureFiles.clearQuick();
 
         int impulseId = 0;
-        for (int i = 0; i < fixtureFiles.size(); ++i)
+
+        // Clips directly in fixtures/ sit at the top level of the menu.
+        for (const auto& file : collectFiles (config.fixturesDir, ".wav", false))
         {
-            fixtureBox.addItem (fixtureFiles[i].getFileNameWithoutExtension(), i + 1);
-            if (fixtureFiles[i].getFileName().equalsIgnoreCase ("impulse.wav"))
-                impulseId = i + 1;
+            fixtureFiles.add (file);
+            fixtureBox.addItem (file.getFileNameWithoutExtension(), fixtureFiles.size());
+            if (file.getFileName().equalsIgnoreCase ("impulse.wav"))
+                impulseId = fixtureFiles.size();
+        }
+
+        // Each subfolder of fixtures/ becomes a submenu of its .wav files.
+        auto folders = config.fixturesDir.findChildFiles (juce::File::findDirectories, false);
+        struct FolderComparator
+        {
+            static int compareElements (const juce::File& a, const juce::File& b)
+            {
+                return a.getFileName().compareIgnoreCase (b.getFileName());
+            }
+        };
+        FolderComparator folderComparator;
+        folders.sort (folderComparator);
+
+        for (const auto& folder : folders)
+        {
+            const auto clips = collectFiles (folder, ".wav", true);
+            if (clips.isEmpty())
+                continue;
+
+            juce::PopupMenu subMenu;
+            for (const auto& file : clips)
+            {
+                fixtureFiles.add (file);
+                auto display = file.getRelativePathFrom (folder);
+                if (display.endsWithIgnoreCase (".wav"))
+                    display = display.dropLastCharacters (4);
+                subMenu.addItem (fixtureFiles.size(), display);
+            }
+
+            fixtureBox.getRootMenu()->addSubMenu (folder.getFileName(), subMenu);
         }
 
         if (impulseId > 0)
@@ -1745,6 +2042,10 @@ private:
 
         // Keep the transport glyph in sync (one-shot clips stop themselves).
         transportButton.setPlaying (engine.isPlaying());
+
+        // Bypass resets in the engine whenever a plugin (re)loads.
+        if (bypassButton.getToggleState() != engine.isBypassed())
+            bypassButton.setToggleState (engine.isBypassed(), juce::dontSendNotification);
 
         // DAW surface Play/Stop (MIDI Start/Stop or Mackie notes 94/93).
         if (engine.consumeTransportPlayRequest())
@@ -1933,6 +2234,13 @@ private:
             return;
         }
 
+        if (button == &bypassButton)
+        {
+            engine.setBypassed (bypassButton.getToggleState());
+            setStatus (bypassButton.getToggleState() ? "Plugin bypassed" : "Plugin active");
+            return;
+        }
+
         if (button == &hostClockToggle)
         {
             applyBpmFromEditor();
@@ -1945,9 +2253,6 @@ private:
             engine.setMetronomeClickEnabled (clickToggle.getToggleState());
             return;
         }
-
-        if (button == &captureButton)
-            promptCaptureTestCase();
     }
 
     void comboBoxChanged (juce::ComboBox* box) override
@@ -2147,8 +2452,12 @@ private:
     juce::Label savePresetNameLabel;
     juce::TextEditor savePresetNameEditor;
     TransportButton transportButton;
+    juce::TextButton bypassButton;
     LoopToggleButton loopToggle;
-    juce::TextButton captureButton;
+    juce::Label sendLabel;
+    SendSlider sendSlider;
+    juce::Label mixLabel;
+    MixSlider mixSlider;
     juce::Label midiLabel;
     MidiSourceField midiField;
     MidiActivityLed midiLed;
@@ -2200,6 +2509,15 @@ MainWindow::MainWindow (HostConfig hostConfig)
 #endif
 
     setVisible (true);
+    lightsOut.setHostWindow (this);
+    addKeyListener (this);
+
+#if JUCE_MAC
+    juce::Timer::callAfterDelay (0, []
+    {
+        lightsOutSyncMenuItem (false);
+    });
+#endif
 
     // AU Cocoa editors need a real NSWindow parent; create after the host is shown.
     juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainContent> (mainContent)]
@@ -2211,6 +2529,8 @@ MainWindow::MainWindow (HostConfig hostConfig)
 
 MainWindow::~MainWindow()
 {
+    lightsOut.release();
+
 #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (nullptr);
 #else
@@ -2226,15 +2546,54 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeButtonPressed()
 {
+    lightsOut.release();
     juce::JUCEApplication::getInstance()->systemRequestedQuit();
+}
+
+void MainWindow::toggleLightsOut()
+{
+    lightsOut.setHostWindow (this);
+    lightsOut.setEnabled (! lightsOut.isEnabled());
+    menuItemsChanged();
+
+#if JUCE_MAC
+    // JUCE rebuilds the native menu after menuItemsChanged() and clears key equivalents.
+    const bool ticked = lightsOut.isEnabled();
+    juce::Timer::callAfterDelay (0, [ticked]
+    {
+        lightsOutSyncMenuItem (ticked);
+    });
+#endif
+}
+
+void MainWindow::toggleLightsOutFromMenu()
+{
+    juce::Timer::callAfterDelay (150, [safe = juce::Component::SafePointer<MainWindow> (this)]
+                                  {
+                                      if (safe != nullptr)
+                                          safe->toggleLightsOut();
+                                  });
+}
+
+bool MainWindow::keyPressed (const juce::KeyPress& key, juce::Component* originatingComponent)
+{
+    juce::ignoreUnused (originatingComponent);
+
+    if (key == juce::KeyPress ('l', juce::ModifierKeys::commandModifier, 0))
+    {
+        toggleLightsOut();
+        return true;
+    }
+
+    return false;
 }
 
 juce::StringArray MainWindow::getMenuBarNames()
 {
 #if JUCE_MAC
-    return { "Plugins" };
+    return { "Session", "Plugins" };
 #else
-    return { "AU Effects Explorer", "Plugins" };
+    return { "AU Effects Explorer", "Session", "Plugins" };
 #endif
 }
 
@@ -2245,6 +2604,19 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
 
 #if JUCE_MAC
     if (topLevelMenuIndex == 0)
+    {
+        menu.addItem (menuCaptureTestCase, "Capture Test Case...");
+        menu.addSeparator();
+        {
+            juce::PopupMenu::Item item;
+            item.itemID = menuLightsOut;
+            item.text = "Lights Out";
+            item.isTicked = lightsOut.isEnabled();
+            item.shortcutKeyDescription = "Cmd+L";
+            menu.addItem (std::move (item));
+        }
+    }
+    else if (topLevelMenuIndex == 1)
     {
         menu.addItem (menuAddPlugin, "Add Plugin...");
         menu.addItem (menuRescanPlugins, "Rescan Audio Units...");
@@ -2257,6 +2629,19 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
         menu.addItem (menuSettings, "Settings...");
     }
     else if (topLevelMenuIndex == 1)
+    {
+        menu.addItem (menuCaptureTestCase, "Capture Test Case...");
+        menu.addSeparator();
+        {
+            juce::PopupMenu::Item item;
+            item.itemID = menuLightsOut;
+            item.text = "Lights Out";
+            item.isTicked = lightsOut.isEnabled();
+            item.shortcutKeyDescription = "Cmd+L";
+            menu.addItem (std::move (item));
+        }
+    }
+    else if (topLevelMenuIndex == 2)
     {
         menu.addItem (menuAddPlugin, "Add Plugin...");
         menu.addItem (menuRescanPlugins, "Rescan Audio Units...");
@@ -2286,10 +2671,12 @@ void MainWindow::menuItemSelected (int menuItemID, int topLevelMenuIndex)
 
                                          switch (menuItemID)
                                          {
-                                             case menuAbout:          mainContent->openAbout(); break;
-                                             case menuSettings:       mainContent->openSettings(); break;
-                                             case menuAddPlugin:      mainContent->openAddPlugin(); break;
-                                             case menuRescanPlugins:  mainContent->rescanPlugins(); break;
+                                             case menuAbout:            mainContent->openAbout(); break;
+                                             case menuSettings:         mainContent->openSettings(); break;
+                                             case menuCaptureTestCase:  mainContent->openCaptureTestCase(); break;
+                                             case menuLightsOut:        window->toggleLightsOutFromMenu(); break;
+                                             case menuAddPlugin:        mainContent->openAddPlugin(); break;
+                                             case menuRescanPlugins:    mainContent->rescanPlugins(); break;
                                              default: break;
                                          }
                                      });

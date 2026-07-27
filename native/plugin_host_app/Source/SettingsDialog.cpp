@@ -29,6 +29,19 @@ SettingsPanel::SettingsPanel (const HostConfig& config, juce::KnownPluginList* k
                                                juce::dontSendNotification);
     addAndMakeVisible (allowInstrumentInputToggle);
 
+    scanTimeoutLabel.setText ("Plugin scan timeout", juce::dontSendNotification);
+    addAndMakeVisible (scanTimeoutLabel);
+    scanTimeoutBox.addItem ("15 seconds", HostPreferences::defaultPluginScanTimeoutMs);
+    scanTimeoutBox.addItem ("30 seconds", 30000);
+    scanTimeoutBox.addItem ("1 minute", 60000);
+    scanTimeoutBox.addItem ("2 minutes", 120000);
+    scanTimeoutBox.addItem ("5 minutes", HostPreferences::maxPluginScanTimeoutMs);
+    scanTimeoutBox.setTooltip (
+        "How long each Audio Unit may take to respond during scan or Retry selected. "
+        "Increase this if plugins time out under load; applies to the next scan or retry.");
+    scanTimeoutBox.setSelectedId (HostPreferences::get().getPluginScanTimeoutMs(), juce::dontSendNotification);
+    addAndMakeVisible (scanTimeoutBox);
+
     skippedHeading.setText ("Skipped AU plugins (crashed / hung during scan)", juce::dontSendNotification);
     addAndMakeVisible (skippedHeading);
 
@@ -95,6 +108,7 @@ SettingsPanel::SettingsPanel (const HostConfig& config, juce::KnownPluginList* k
                                 juce::dontSendNotification);
         configEditor.clear();
         allowInstrumentInputToggle.setToggleState (false, juce::dontSendNotification);
+        scanTimeoutBox.setSelectedId (HostPreferences::defaultPluginScanTimeoutMs, juce::dontSendNotification);
         reloadSkippedList();
     };
 
@@ -204,6 +218,11 @@ void SettingsPanel::resized()
     area.removeFromTop (14);
 
     allowInstrumentInputToggle.setBounds (area.removeFromTop (28));
+    area.removeFromTop (8);
+
+    auto timeoutRow = area.removeFromTop (28);
+    scanTimeoutLabel.setBounds (timeoutRow.removeFromLeft (160));
+    scanTimeoutBox.setBounds (timeoutRow.removeFromLeft (180));
     area.removeFromTop (12);
 
     skippedHeading.setBounds (area.removeFromTop (22));
@@ -231,12 +250,21 @@ bool SettingsPanel::getAllowInstrumentAudioInput() const
     return allowInstrumentInputToggle.getToggleState();
 }
 
+int SettingsPanel::getPluginScanTimeoutMs() const
+{
+    const int selected = scanTimeoutBox.getSelectedId();
+    if (selected > 0)
+        return selected;
+
+    return HostPreferences::defaultPluginScanTimeoutMs;
+}
+
 bool showSettingsDialog (HostConfig& config,
                          juce::KnownPluginList* knownPlugins,
                          juce::Component* centreAround)
 {
     SettingsPanel panel (config, knownPlugins);
-    panel.setSize (560, 420);
+    panel.setSize (560, 450);
 
     juce::AlertWindow window ("Settings",
                               "Changing the exploration folder moves its data (including the AU plugin cache) to the new location. "
@@ -305,5 +333,6 @@ bool showSettingsDialog (HostConfig& config,
     prefs.setConfigPathPref (configOverride != juce::File() ? configOverride.getFullPathName()
                                                             : juce::String());
     prefs.setAllowInstrumentAudioInput (panel.getAllowInstrumentAudioInput());
+    prefs.setPluginScanTimeoutMs (panel.getPluginScanTimeoutMs());
     return true;
 }

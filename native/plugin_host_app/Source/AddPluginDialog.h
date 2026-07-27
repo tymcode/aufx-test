@@ -29,7 +29,7 @@ private:
     void rebuildFilter();
     void acceptSelectionIfAny();
 
-    const juce::KnownPluginList& knownList;
+    juce::Array<juce::PluginDescription> cachedTypes;
     juce::Array<int> filteredIndices;
     juce::Label filterLabel;
     juce::TextEditor filterEditor;

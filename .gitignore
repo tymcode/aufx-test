@@ -29,3 +29,6 @@ native/**/plugin_renderer_artefacts/
 plugin-cache.xml
 plugin-scan-crashes.txt
 plugin-scan-skip.txt
+plugin-scan-failures.log
+plugin-scan-last-run.txt
+plugin-scan-in-progress.txt

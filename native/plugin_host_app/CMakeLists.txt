@@ -69,11 +69,13 @@ target_sources(plugin_host_app
         Source/PluginAudioEngine.cpp
         Source/OfflineCapture.cpp
         Source/SessionSnap.cpp
+        Source/PluginScanLog.cpp
         Source/AuPluginScanner.cpp
         Source/PluginScannerOOP.cpp
         Source/SettingsDialog.cpp
         Source/AddPluginDialog.cpp
         Source/AboutDialog.cpp
+        Source/LightsOutManager.cpp
         ${AUFX_GEN_DIR}/AppVersion.cpp
         ../plugin_renderer/Source/AUpresetLoader.cpp
         ../plugin_renderer/Source/ParameterHelpers.cpp)
@@ -99,13 +101,18 @@ target_sources(plugin_host_app PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Resources/ho
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/Resources/host.config.json"
     PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
 
-# Bundle fixture WAVs from the repo fixtures/ directory
+# Bundle fixture WAVs from the repo fixtures/ directory (subfolders preserved —
+# the host shows them as submenus in the Source Clip dropdown). Sync the whole
+# tree on each build so removed/moved files don't linger in the .app bundle.
 set(AUFX_FIXTURES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../fixtures")
-file(GLOB AUFX_FIXTURE_WAVS CONFIGURE_DEPENDS "${AUFX_FIXTURES_DIR}/*.wav")
-foreach(fixture_wav IN LISTS AUFX_FIXTURE_WAVS)
-    target_sources(plugin_host_app PRIVATE "${fixture_wav}")
-    set_source_files_properties("${fixture_wav}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources/fixtures")
-endforeach()
+add_custom_command(TARGET plugin_host_app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E rm -rf
+        "$<TARGET_BUNDLE_DIR:plugin_host_app>/Contents/Resources/fixtures"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${AUFX_FIXTURES_DIR}"
+        "$<TARGET_BUNDLE_DIR:plugin_host_app>/Contents/Resources/fixtures"
+    COMMENT "Syncing fixtures into app bundle"
+    VERBATIM)
 
 target_compile_definitions(plugin_host_app
     PRIVATE
@@ -130,9 +137,12 @@ target_link_libraries(plugin_host_app
 if(APPLE)
     target_sources(plugin_host_app PRIVATE Source/AUpresetSaver_mac.mm)
     target_sources(plugin_host_app PRIVATE Source/HostPreferences_mac.mm)
+    target_sources(plugin_host_app PRIVATE Source/LightsOutManager.mm)
+    set_source_files_properties(Source/LightsOutManager.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     target_sources(plugin_host_app PRIVATE Source/PluginScannerWorker_mac.mm)
     target_sources(plugin_host_app PRIVATE ../plugin_renderer/Source/AUpresetLoader_mac.mm)
     target_link_libraries(plugin_host_app PRIVATE
+        "-framework AppKit"
         "-framework Foundation"
         "-framework CoreFoundation")
 else()

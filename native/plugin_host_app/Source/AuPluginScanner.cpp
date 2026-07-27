@@ -1,12 +1,22 @@
 #include "AuPluginScanner.h"
 #include "PluginScannerOOP.h"
+#include "PluginScanLog.h"
+#include "HostLog.h"
+#include "HostPreferences.h"
+#include "AppVersion.h"
 #include "Utf8.h"
 
 #include <thread>
 #include <vector>
+#include <chrono>
 
 namespace
 {
+    int scanTimeoutMs()
+    {
+        return HostPreferences::get().getPluginScanTimeoutMs();
+    }
+
     juce::StringArray readLinesFile (const juce::File& file)
     {
         juce::StringArray lines;
@@ -205,6 +215,9 @@ namespace
 
         bool runScan (juce::String& error)
         {
+            const auto scanStarted = std::chrono::steady_clock::now();
+            PluginScanLog scanLog (dataRoot);
+
             juce::AudioPluginFormatManager formatManager;
             juce::addDefaultFormatsToManager (formatManager);
 
@@ -227,6 +240,7 @@ namespace
             // Recover from a previous hang: stamp left behind => permanent skip.
             const auto stampFile = AuPluginScanner::inProgressStampFile (dataRoot);
             auto skipList = AuPluginScanner::loadSkipList (dataRoot);
+            int preSkippedCount = 0;
 
             if (stampFile.existsAsFile())
             {
@@ -240,6 +254,7 @@ namespace
                         skipList.add (hungId);
                         AuPluginScanner::saveSkipList (dataRoot, skipList);
                     }
+                    ++preSkippedCount;
                     appendFailed ("Skipped (hung last time): "
                                   + displayNameForPluginId (*auFormat, hungId));
                 }
@@ -252,6 +267,7 @@ namespace
                 if (crashed.isNotEmpty() && ! skipList.contains (crashed))
                 {
                     skipList.add (crashed);
+                    ++preSkippedCount;
                     appendFailed ("Skipped (previous crash): "
                                   + displayNameForPluginId (*auFormat, crashed));
                 }
@@ -271,6 +287,7 @@ namespace
             {
                 if (skipList.contains (file))
                 {
+                    ++preSkippedCount;
                     appendFailed ("Skipped: " + displayNameForPluginId (*auFormat, file));
                     continue;
                 }
@@ -285,8 +302,24 @@ namespace
                 6,
                 juce::jmax (1, (int) std::thread::hardware_concurrency()));
 
+            const int timeoutMs = scanTimeoutMs();
+
+            scanLog.logScanStart (workerCount,
+                                  timeoutMs,
+                                  files.size(),
+                                  toScan.size(),
+                                  preSkippedCount);
+
+            HostLog::info ("AU scan started: workers=" + juce::String (workerCount)
+                           + " timeout_ms=" + juce::String (timeoutMs)
+                           + " discovered=" + juce::String (files.size())
+                           + " to_scan=" + juce::String (toScan.size())
+                           + " pre_skipped=" + juce::String (preSkippedCount));
+
             std::atomic<int> nextIndex { 0 };
             std::atomic<int> completedCount { 0 };
+            std::atomic<int> succeededCount { 0 };
+            std::atomic<int> failedCount { 0 };
             std::mutex listMutex;
             std::mutex skipMutex;
             std::mutex stampMutex;
@@ -349,7 +382,7 @@ namespace
                     if (workerAu == nullptr)
                         return;
 
-                    OutOfProcessPluginScanner scanner (&shared.cancelRequested, kAuPluginScanTimeoutMs);
+                    OutOfProcessPluginScanner scanner (&shared.cancelRequested, timeoutMs);
 
                     for (;;)
                     {
@@ -382,6 +415,8 @@ namespace
 
                         juce::OwnedArray<juce::PluginDescription> typesFound;
                         const bool workerOk = scanner.findPluginTypesFor (*workerAu, typesFound, file);
+                        const int durationMs = scanner.getLastScanDurationMs();
+                        const auto failureReason = scanner.getLastFailureReason();
 
                         {
                             const std::scoped_lock lock (listMutex);
@@ -406,6 +441,12 @@ namespace
 
                         if (typesFound.isEmpty())
                         {
+                            ++failedCount;
+
+                            juce::String outcome = workerOk ? "no_types"
+                                                            : oopScanFailureReasonString (failureReason);
+                            scanLog.logPluginResult (w, file, niceName, outcome, durationMs, 0);
+
                             {
                                 const std::scoped_lock lock (skipMutex);
                                 if (! skipList.contains (file))
@@ -416,9 +457,26 @@ namespace
                             }
 
                             if (! workerOk)
-                                appendFailedLocked ("Crashed or timed out (subprocess): " + niceName);
+                            {
+                                if (failureReason == OopScanFailureReason::timeout)
+                                    appendFailedLocked ("Timed out (subprocess): " + niceName);
+                                else if (failureReason == OopScanFailureReason::connectionLost)
+                                    appendFailedLocked ("Subprocess crashed or lost: " + niceName);
+                                else if (failureReason == OopScanFailureReason::sendFailed)
+                                    appendFailedLocked ("Failed to start scan worker: " + niceName);
+                                else
+                                    appendFailedLocked ("Crashed or timed out (subprocess): " + niceName);
+                            }
                             else
-                                appendFailedLocked ("Failed: " + niceName);
+                                appendFailedLocked ("Failed (no types): " + niceName);
+                        }
+                        else
+                        {
+                            ++succeededCount;
+
+                            const juce::String outcome = durationMs >= 10000 ? "ok_slow" : "ok";
+                            if (durationMs >= 10000)
+                                scanLog.logPluginResult (w, file, niceName, outcome, durationMs, typesFound.size());
                         }
 
                         const int done = ++completedCount;
@@ -434,8 +492,29 @@ namespace
 
             stampFile.deleteFile();
 
+            const auto scanDurationMs = std::chrono::duration_cast<std::chrono::milliseconds> (
+                                            std::chrono::steady_clock::now() - scanStarted)
+                                            .count();
+
+            juce::String failedLogCopy;
+            {
+                const juce::ScopedLock sl (shared.lock);
+                failedLogCopy = shared.failedLog;
+            }
+
             if (shared.cancelRequested.load() || threadShouldExit())
             {
+                scanLog.logScanEnd (false,
+                                    true,
+                                    succeededCount.load(),
+                                    failedCount.load(),
+                                    preSkippedCount,
+                                    scanDurationMs,
+                                    failedLogCopy);
+                HostLog::info ("AU scan cancelled after "
+                               + juce::String (scanDurationMs) + " ms (succeeded="
+                               + juce::String (succeededCount.load()) + " failed="
+                               + juce::String (failedCount.load()) + ")");
                 error = "Scan cancelled";
                 return false;
             }
@@ -443,8 +522,42 @@ namespace
             shared.progress = 1.0;
             setStatus ("Saving plugin cache...");
 
-            if (! AuPluginScanner::saveCache (dataRoot, list, error))
+            AuPluginScanner::ScanRunStats stats;
+            stats.workerCount = workerCount;
+            stats.timeoutMs = timeoutMs;
+            stats.discovered = files.size();
+            stats.preSkipped = preSkippedCount;
+            stats.scanned = toScan.size();
+            stats.succeeded = succeededCount.load();
+            stats.failed = failedCount.load();
+            stats.durationMs = scanDurationMs;
+
+            if (! AuPluginScanner::saveCache (dataRoot, list, error, &stats))
+            {
+                scanLog.logScanEnd (false,
+                                    false,
+                                    stats.succeeded,
+                                    stats.failed,
+                                    preSkippedCount,
+                                    scanDurationMs,
+                                    failedLogCopy);
+                HostLog::error ("AU scan cache save failed: " + error);
                 return false;
+            }
+
+            scanLog.logScanEnd (true,
+                                false,
+                                stats.succeeded,
+                                stats.failed,
+                                preSkippedCount,
+                                scanDurationMs,
+                                failedLogCopy);
+
+            HostLog::info ("AU scan finished: succeeded=" + juce::String (stats.succeeded)
+                           + " failed=" + juce::String (stats.failed)
+                           + " pre_skipped=" + juce::String (preSkippedCount)
+                           + " duration_ms=" + juce::String (stats.durationMs)
+                           + " cached_types=" + juce::String (list.getTypes().size()));
 
             setStatus ("Scan complete (" + juce::String (workerCount) + " workers, out-of-process)");
             return true;
@@ -502,7 +615,10 @@ bool AuPluginScanner::loadCache (const juce::File& dataRoot, juce::KnownPluginLi
     return true;
 }
 
-bool AuPluginScanner::saveCache (const juce::File& dataRoot, const juce::KnownPluginList& list, juce::String& error)
+bool AuPluginScanner::saveCache (const juce::File& dataRoot,
+                                 const juce::KnownPluginList& list,
+                                 juce::String& error,
+                                 const ScanRunStats* stats)
 {
     dataRoot.createDirectory();
     auto xml = list.createXml();
@@ -514,6 +630,19 @@ bool AuPluginScanner::saveCache (const juce::File& dataRoot, const juce::KnownPl
 
     xml->setAttribute ("scanTime", juce::Time::getCurrentTime().toISO8601 (true));
     xml->setAttribute ("os", juce::SystemStats::getOperatingSystemName());
+    xml->setAttribute ("hostVersion", aufx_version::versionString());
+
+    if (stats != nullptr)
+    {
+        xml->setAttribute ("scanWorkerCount", stats->workerCount);
+        xml->setAttribute ("scanTimeoutMs", stats->timeoutMs);
+        xml->setAttribute ("scanDiscovered", stats->discovered);
+        xml->setAttribute ("scanPreSkipped", stats->preSkipped);
+        xml->setAttribute ("scanAttempted", stats->scanned);
+        xml->setAttribute ("scanSucceeded", stats->succeeded);
+        xml->setAttribute ("scanFailed", stats->failed);
+        xml->setAttribute ("scanDurationMs", (int) stats->durationMs);
+    }
 
     if (! xml->writeTo (cacheFile (dataRoot)))
     {
@@ -654,9 +783,14 @@ bool AuPluginScanner::retrySkippedPlugin (const juce::File& dataRoot,
 
     inProgressStampFile (dataRoot).replaceWithText (pluginId + "\n");
 
-    OutOfProcessPluginScanner scanner (nullptr, kAuPluginScanTimeoutMs);
+    const int timeoutMs = scanTimeoutMs();
+    HostLog::info ("AU scan retry starting for " + niceName + " timeout_ms=" + juce::String (timeoutMs));
+
+    OutOfProcessPluginScanner scanner (nullptr, timeoutMs);
     juce::OwnedArray<juce::PluginDescription> typesFound;
     const bool workerOk = scanner.findPluginTypesFor (*auFormat, typesFound, pluginId);
+    const int durationMs = scanner.getLastScanDurationMs();
+    const auto failureReason = scanner.getLastFailureReason();
     scanner.scanFinished();
 
     inProgressStampFile (dataRoot).deleteFile();
@@ -667,8 +801,14 @@ bool AuPluginScanner::retrySkippedPlugin (const juce::File& dataRoot,
         writeLinesFile (pedal, crashedPlugins);
     }
 
+    PluginScanLog scanLog (dataRoot);
+
     if (! workerOk || typesFound.isEmpty())
     {
+        const juce::String outcome = workerOk ? "no_types"
+                                              : oopScanFailureReasonString (failureReason);
+        scanLog.logRetry (pluginId, niceName, outcome, durationMs, typesFound.size());
+
         addToSkipList (dataRoot, pluginId);
         if (typesFound.isEmpty())
             list.addToBlacklist (pluginId);
@@ -677,9 +817,12 @@ bool AuPluginScanner::retrySkippedPlugin (const juce::File& dataRoot,
         saveCache (dataRoot, list, ignore);
 
         error = "Retry failed for " + niceName
-                + (workerOk ? " (no types found)" : " (scan worker crashed or timed out)");
+                + (workerOk ? " (no types found)" : " (" + outcome + ")");
+        HostLog::error ("AU scan retry: " + error + " duration_ms=" + juce::String (durationMs));
         return false;
     }
+
+    scanLog.logRetry (pluginId, niceName, "ok", durationMs, typesFound.size());
 
     for (auto* desc : typesFound)
         if (desc != nullptr)
@@ -692,6 +835,8 @@ bool AuPluginScanner::retrySkippedPlugin (const juce::File& dataRoot,
         return false;
     }
 
+    HostLog::info ("AU scan retry succeeded for " + niceName + " (types="
+                   + juce::String (typesFound.size()) + " duration_ms=" + juce::String (durationMs) + ")");
     return true;
 }
 
@@ -704,7 +849,12 @@ bool AuPluginScanner::ensureCache (const juce::File& dataRoot,
     if (! forceRescan && cacheExists (dataRoot))
     {
         if (loadCache (dataRoot, list, error))
+        {
+            HostLog::info ("AU plugin cache loaded (" + juce::String (list.getTypes().size()) + " types)");
             return true;
+        }
+
+        HostLog::error ("AU plugin cache load failed: " + error);
     }
 
     dataRoot.createDirectory();
@@ -735,10 +885,15 @@ bool AuPluginScanner::ensureCache (const juce::File& dataRoot,
     {
         const juce::ScopedLock sl (shared.lock);
         error = shared.error.isNotEmpty() ? shared.error : "AU scan failed or was cancelled";
+        HostLog::error ("AU scan did not complete: " + error);
         // Still try to load whatever was cached if a previous cache exists.
         juce::String loadError;
         if (cacheExists (dataRoot) && loadCache (dataRoot, list, loadError))
+        {
+            HostLog::info ("AU plugin cache loaded from previous scan (" + juce::String (list.getTypes().size())
+                           + " types)");
             return true;
+        }
         return false;
     }
 

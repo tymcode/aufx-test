@@ -12,6 +12,10 @@ public:
     static constexpr const char* keyExplorationDataRoot = "explorationDataRoot";
     static constexpr const char* keyConfigPath = "configPath";
     static constexpr const char* keyAllowInstrumentAudioInput = "allowInstrumentAudioInput";
+    static constexpr const char* keyPluginScanTimeoutMs = "pluginScanTimeoutMs";
+    static constexpr int defaultPluginScanTimeoutMs = 15000;
+    static constexpr int minPluginScanTimeoutMs = 5000;
+    static constexpr int maxPluginScanTimeoutMs = 300000;
     static constexpr const char* systemKeyExplorationDataRoot = "ExplorationDataRoot";
     static constexpr const char* systemKeyConfigPath = "ConfigPath";
 
@@ -29,9 +33,11 @@ public:
     juce::String getExplorationDataRootPref() const;
     juce::String getConfigPathPref() const;
     bool getAllowInstrumentAudioInput() const;
+    int getPluginScanTimeoutMs() const;
     void setExplorationDataRootPref (const juce::String& path);
     void setConfigPathPref (const juce::String& path);
     void setAllowInstrumentAudioInput (bool allow);
+    void setPluginScanTimeoutMs (int timeoutMs);
     void clearPrefs();
 
     /** Read org-level defaults from /Library/Preferences (macOS). */

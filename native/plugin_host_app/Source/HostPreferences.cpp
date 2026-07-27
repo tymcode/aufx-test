@@ -101,6 +101,17 @@ bool HostPreferences::getAllowInstrumentAudioInput() const
     return false;
 }
 
+int HostPreferences::getPluginScanTimeoutMs() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+    {
+        const int ms = s->getIntValue (keyPluginScanTimeoutMs, defaultPluginScanTimeoutMs);
+        return juce::jlimit (minPluginScanTimeoutMs, maxPluginScanTimeoutMs, ms);
+    }
+
+    return defaultPluginScanTimeoutMs;
+}
+
 void HostPreferences::setExplorationDataRootPref (const juce::String& path)
 {
     if (auto* s = settings())
@@ -134,6 +145,16 @@ void HostPreferences::setAllowInstrumentAudioInput (bool allow)
     }
 }
 
+void HostPreferences::setPluginScanTimeoutMs (int timeoutMs)
+{
+    if (auto* s = settings())
+    {
+        s->setValue (keyPluginScanTimeoutMs,
+                     juce::jlimit (minPluginScanTimeoutMs, maxPluginScanTimeoutMs, timeoutMs));
+        s->saveIfNeeded();
+    }
+}
+
 void HostPreferences::clearPrefs()
 {
     if (auto* s = settings())
@@ -141,6 +162,7 @@ void HostPreferences::clearPrefs()
         s->removeValue (keyExplorationDataRoot);
         s->removeValue (keyConfigPath);
         s->removeValue (keyAllowInstrumentAudioInput);
+        s->removeValue (keyPluginScanTimeoutMs);
         s->saveIfNeeded();
     }
 }

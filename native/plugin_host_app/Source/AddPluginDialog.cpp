@@ -1,8 +1,9 @@
 #include "AddPluginDialog.h"
 
 AddPluginPanel::AddPluginPanel (const juce::KnownPluginList& list)
-    : knownList (list)
 {
+    cachedTypes = list.getTypes();
+
     filterLabel.setText ("Search", juce::dontSendNotification);
     addAndMakeVisible (filterLabel);
     filterEditor.setTextToShowWhenEmpty ("Name or manufacturer...", juce::Colours::grey);
@@ -38,10 +39,9 @@ void AddPluginPanel::rebuildFilter()
     const auto query = filterEditor.getText().trim().toLowerCase();
     filteredIndices.clear();
 
-    const auto types = knownList.getTypes();
-    for (int i = 0; i < types.size(); ++i)
+    for (int i = 0; i < cachedTypes.size(); ++i)
     {
-        const auto& desc = types.getReference (i);
+        const auto& desc = cachedTypes.getReference (i);
         if (query.isNotEmpty())
         {
             const auto hay = (desc.name + " " + desc.manufacturerName + " " + desc.fileOrIdentifier).toLowerCase();
@@ -65,13 +65,17 @@ void AddPluginPanel::paintListBoxItem (int rowNumber, juce::Graphics& g, int wid
     if (! juce::isPositiveAndBelow (rowNumber, filteredIndices.size()))
         return;
 
-    if (rowIsSelected)
-        g.fillAll (juce::Colours::dodgerblue.withAlpha (0.35f));
+    const int typeIndex = filteredIndices.getUnchecked (rowNumber);
+    if (! juce::isPositiveAndBelow (typeIndex, cachedTypes.size()))
+        return;
 
-    const auto& desc = knownList.getTypes().getReference (filteredIndices[rowNumber]);
-    auto name = desc.name;
+    const auto& desc = cachedTypes.getReference (typeIndex);
+    juce::String name = desc.name;
     if (desc.manufacturerName.isNotEmpty())
         name = desc.manufacturerName + " - " + desc.name;
+
+    if (rowIsSelected)
+        g.fillAll (juce::Colours::dodgerblue.withAlpha (0.35f));
 
     g.setColour (juce::Colours::white.withAlpha (0.9f));
     g.setFont (14.0f);
@@ -136,13 +140,16 @@ bool AddPluginPanel::keyPressed (const juce::KeyPress& key, juce::Component* ori
 juce::Array<juce::PluginDescription> AddPluginPanel::getSelectedPlugins() const
 {
     juce::Array<juce::PluginDescription> selected;
-    const auto types = knownList.getTypes();
     auto rows = listBox.getSelectedRows();
     for (int i = 0; i < rows.size(); ++i)
     {
         const int filteredRow = rows[i];
-        if (juce::isPositiveAndBelow (filteredRow, filteredIndices.size()))
-            selected.add (types.getReference (filteredIndices[filteredRow]));
+        if (! juce::isPositiveAndBelow (filteredRow, filteredIndices.size()))
+            continue;
+
+        const int typeIndex = filteredIndices.getUnchecked (filteredRow);
+        if (juce::isPositiveAndBelow (typeIndex, cachedTypes.size()))
+            selected.add (cachedTypes.getReference (typeIndex));
     }
     return selected;
 }

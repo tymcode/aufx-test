@@ -16,3 +16,31 @@ inline juce::String utf8 (const char* text)
 {
     return juce::String (juce::CharPointer_UTF8 (text));
 }
+
+/** -∞dB mute label (UTF-8 infinity — never pass through juce::String(const char*) alone). */
+inline juce::String utf8InfinityDb()
+{
+    return utf8 ("-\xE2\x88\x9E" "dB");
+}
+
+/** Send slider readout: -∞dB when muted, otherwise one decimal with + on boost. */
+inline juce::String formatSendLevelDb (double db, double muteDb = -120.0)
+{
+    if (db <= muteDb + 0.05)
+        return utf8InfinityDb();
+
+    juce::String text;
+
+    if (db > 0.0)
+        text = "+";
+
+    text += juce::String (db, 1);
+    text += "dB";
+    return text;
+}
+
+/** Mix slider readout. */
+inline juce::String formatMixPercent (int percent)
+{
+    return juce::String (percent) + "%";
+}
