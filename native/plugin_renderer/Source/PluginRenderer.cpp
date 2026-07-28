@@ -6,7 +6,7 @@
 
 namespace
 {
-    std::unique_ptr<juce::AudioPluginInstance> loadPlugin (const juce::File& pluginFile,
+    std::unique_ptr<juce::AudioPluginInstance> loadPlugin (const juce::String& pluginRef,
                                                            double sampleRate,
                                                            int blockSize,
                                                            juce::String& error)
@@ -21,7 +21,7 @@ namespace
             if (format == nullptr)
                 continue;
 
-            format->findAllTypesForFile (descriptions, pluginFile.getFullPathName());
+            format->findAllTypesForFile (descriptions, pluginRef);
         }
 
         if (descriptions.isEmpty())
@@ -30,7 +30,7 @@ namespace
             for (auto* format : formatManager.getFormats())
                 formatNames << (formatNames.isEmpty() ? "" : ", ") << format->getName();
 
-            error = "No plugin types found in: " + pluginFile.getFullPathName()
+            error = "No plugin types found in: " + pluginRef
                   + (formatNames.isEmpty() ? " (no plugin formats enabled — rebuild with PLUGINHOST_AU)"
                                            : " (scanned formats: " + formatNames + ")");
             return {};
@@ -213,7 +213,7 @@ int PluginRenderer::run (const CommandLineOptions& options)
             return 1;
         }
 
-        auto plugin = loadPlugin (options.pluginPath, 44100.0, options.blockSize, error);
+        auto plugin = loadPlugin (options.pluginRef, 44100.0, options.blockSize, error);
         if (plugin == nullptr)
         {
             std::cerr << error << std::endl;
@@ -250,7 +250,7 @@ int PluginRenderer::run (const CommandLineOptions& options)
     }
 
     const double renderRate = options.sampleRate > 0.0 ? options.sampleRate : inputReader->sampleRate;
-    auto plugin = loadPlugin (options.pluginPath, renderRate, options.blockSize, error);
+    auto plugin = loadPlugin (options.pluginRef, renderRate, options.blockSize, error);
     if (plugin == nullptr)
     {
         std::cerr << error << std::endl;

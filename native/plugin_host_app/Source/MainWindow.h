@@ -21,14 +21,19 @@ public:
     void menuItemSelected (int menuItemID, int topLevelMenuIndex) override;
 
     void toggleLightsOut();
-
-    /** Defer until AppKit menu tracking finishes — immediate toggle aborts the process. */
     void toggleLightsOutFromMenu();
+    void toggleHardwareMode();
+    void toggleHardwareModeFromMenu();
+    void openHardwareAudioSetup();
+    void openMidiSetup();
+    void refreshHardwareUi();
+    void setLightsOutEnabled (bool shouldEnable);
 
 private:
     using juce::Component::keyPressed;
 
     bool keyPressed (const juce::KeyPress& key, juce::Component* originatingComponent) override;
+    void syncNativeMenuShortcuts();
 
     class MainContent;
 
@@ -39,7 +44,10 @@ private:
         menuAddPlugin,
         menuRescanPlugins,
         menuCaptureTestCase,
-        menuLightsOut
+        menuLightsOut,
+        menuHardwareAudioSetup,
+        menuMidiSetup,
+        menuUseHardware
     };
 
     HostConfig config;

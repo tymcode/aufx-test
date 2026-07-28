@@ -82,8 +82,40 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             spectral_distance_max=thresholds.spectral_distance_max,
         )
 
-    actual = Waveform.from_file(args.actual)
-    expected = Waveform.from_file(args.expected)
+    actual_path = args.actual
+    expected_path = args.expected
+
+    # Convenience mode:
+    #   aufx-test compare --root <sessions_root> <session_name> <snapshot_id>
+    # Compares the hardware capture against the software/rendered output from
+    # that snapshot (output_audio_hw vs output_audio).
+    if args.root is not None:
+        session = _load_session(args.actual, args.root)
+        snap = session.get_snapshot(args.expected)
+        payload = json.loads(session.session_file.read_text())
+        snap_json = next((s for s in payload.get("snapshots", []) if s.get("id") == snap.id), None)
+
+        if snap_json is None:
+            raise KeyError(f"Snapshot metadata not found in {session.session_file}: {snap.id}")
+
+        sw_output = snap_json.get("output_audio")
+        hw_output = snap_json.get("output_audio_hw")
+        if not sw_output:
+            raise ValueError(f"Snapshot {snap.id!r} has no output_audio")
+        if not hw_output:
+            raise ValueError(
+                f"Snapshot {snap.id!r} has no output_audio_hw; capture with source='Both' first."
+            )
+
+        actual_path = session.resolve_path(hw_output)
+        expected_path = session.resolve_path(sw_output)
+        if not args.json:
+            print(f"Comparing snapshot {snap.id} ({snap.name})")
+            print(f"  actual   (hardware): {actual_path}")
+            print(f"  expected (software): {expected_path}")
+
+    actual = Waveform.from_file(actual_path)
+    expected = Waveform.from_file(expected_path)
     result = compare_waveforms(actual, expected, thresholds=thresholds)
     band_summary = _band_compare_summary(actual, expected, config=config)
 
@@ -313,8 +345,18 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command")
 
     compare = sub.add_parser("compare", help="Compare two WAV files")
-    compare.add_argument("actual", help="Actual output WAV")
-    compare.add_argument("expected", help="Expected reference WAV")
+    compare.add_argument("actual", help="Actual output WAV, or session name when --root is set")
+    compare.add_argument("expected", help="Expected WAV, or snapshot id/name when --root is set")
+    compare.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help=(
+            "Sessions root for snapshot compare mode. When set, positional args "
+            "are interpreted as <session_name> <snapshot_id>, and the command "
+            "compares output_audio_hw (actual) vs output_audio (expected)."
+        ),
+    )
     compare.add_argument(
         "--snr-min",
         type=float,

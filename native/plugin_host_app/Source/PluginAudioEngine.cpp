@@ -5,6 +5,30 @@
 namespace
 {
     constexpr double bypassFadeSeconds = 0.008;
+    constexpr int monitorRingCapacity = 32768;
+
+    juce::String resolveMonitorOutputDeviceName (juce::AudioDeviceManager& deviceManager,
+                                                 const juce::String& configuredName)
+    {
+        if (configuredName.isNotEmpty()
+            && configuredName != HardwareLoopSettings::systemDefaultMonitorOutputName)
+            return configuredName;
+
+        for (auto* type : deviceManager.getAvailableDeviceTypes())
+        {
+            if (type == nullptr)
+                continue;
+
+            type->scanForDevices();
+            const auto names = type->getDeviceNames (false);
+            const int defaultIndex = type->getDefaultDeviceIndex (false);
+            if (defaultIndex >= 0 && defaultIndex < names.size())
+                return names[defaultIndex];
+        }
+
+        return configuredName;
+    }
+
     juce::String formatNameForPluginFile (const juce::File& pluginFile)
     {
         if (pluginFile.hasFileExtension (".vst3"))
@@ -107,9 +131,32 @@ namespace
     }
 }
 
+struct PluginAudioEngine::MonitorOutputHandler : juce::AudioIODeviceCallback
+{
+    explicit MonitorOutputHandler (PluginAudioEngine& ownerIn) : owner (ownerIn) {}
+
+    void audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
+                                           int numInputChannels,
+                                           float* const* outputChannelData,
+                                           int numOutputChannels,
+                                           int numSamples,
+                                           const juce::AudioIODeviceCallbackContext& context) override
+    {
+        juce::ignoreUnused (inputChannelData, numInputChannels, context);
+        owner.pullMonitorOutput (outputChannelData, numOutputChannels, numSamples);
+    }
+
+    void audioDeviceAboutToStart (juce::AudioIODevice*) override {}
+    void audioDeviceStopped() override {}
+
+    PluginAudioEngine& owner;
+};
+
 PluginAudioEngine::PluginAudioEngine()
 {
     formatManager.registerBasicFormats();
+    monitorRingBuffer.setSize (2, monitorRingCapacity, false, true, true);
+    monitorOutputHandler = std::make_unique<MonitorOutputHandler> (*this);
 }
 
 PluginAudioEngine::~PluginAudioEngine()
@@ -319,16 +366,113 @@ void PluginAudioEngine::setSendLevelDb (float decibels)
         sendGain.store (juce::Decibels::decibelsToGain (decibels));
 }
 
+bool PluginAudioEngine::openConfiguredAudioDevice (juce::String& error)
+{
+    if (! hardwareSettings.isConfigured())
+    {
+        const juce::String result = deviceManager.initialiseWithDefaultDevices (0, 2);
+        if (result.isNotEmpty())
+        {
+            error = result;
+            return false;
+        }
+        return true;
+    }
+
+    // Ensure device types are registered.
+    if (deviceManager.getAvailableDeviceTypes().isEmpty()
+        || deviceManager.getCurrentAudioDevice() == nullptr)
+    {
+        const juce::String initError = deviceManager.initialise (2, 2, nullptr, true);
+        if (deviceManager.getAvailableDeviceTypes().isEmpty() && initError.isNotEmpty())
+        {
+            error = initError;
+            return false;
+        }
+    }
+
+    auto setup = deviceManager.getAudioDeviceSetup();
+    setup.outputDeviceName = hardwareSettings.deviceName;
+    setup.inputDeviceName = hardwareSettings.deviceName;
+    setup.sampleRate = 0.0; // keep device default / last
+    setup.bufferSize = hardwareSettings.bufferSize > 0 ? hardwareSettings.bufferSize : 512;
+
+    // Probe the full channel count so we enable Apollo ins 5-6, etc. — not just
+    // CoreAudio's default first stereo pair.
+    int numIns = 2;
+    int numOuts = 2;
+    for (auto* type : deviceManager.getAvailableDeviceTypes())
+    {
+        if (type == nullptr)
+            continue;
+
+        type->scanForDevices();
+        std::unique_ptr<juce::AudioIODevice> probe (
+            type->createDevice (hardwareSettings.deviceName, hardwareSettings.deviceName));
+        if (probe == nullptr)
+            continue;
+
+        numIns = juce::jmax (2, probe->getInputChannelNames().size());
+        numOuts = juce::jmax (2, probe->getOutputChannelNames().size());
+        break;
+    }
+
+    setup.useDefaultInputChannels = false;
+    setup.useDefaultOutputChannels = false;
+    setup.inputChannels.clear();
+    setup.outputChannels.clear();
+    setup.inputChannels.setRange (0, numIns, true);
+    setup.outputChannels.setRange (0, numOuts, true);
+
+    // Also ensure the specifically configured pairs are enabled.
+    setup.inputChannels.setBit (hardwareSettings.returnChannelL);
+    setup.inputChannels.setBit (hardwareSettings.returnChannelR);
+    setup.outputChannels.setBit (hardwareSettings.sendChannelL);
+    setup.outputChannels.setBit (hardwareSettings.sendChannelR);
+    if (! hardwareSettings.usesSeparateMonitorOutput())
+    {
+        setup.outputChannels.setBit (hardwareSettings.monitorChannelL);
+        setup.outputChannels.setBit (hardwareSettings.monitorChannelR);
+    }
+
+    deviceManager.setAudioDeviceSetup (setup, true);
+
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+    {
+        // If the open device still has fewer channels than requested (driver
+        // quirk), widen the masks from the live channel-name lists and re-apply.
+        const int liveIns = juce::jmax (numIns, device->getInputChannelNames().size());
+        const int liveOuts = juce::jmax (numOuts, device->getOutputChannelNames().size());
+        if (liveIns > numIns || liveOuts > numOuts
+            || device->getActiveInputChannels().countNumberOfSetBits() < liveIns
+            || device->getActiveOutputChannels().countNumberOfSetBits() < liveOuts)
+        {
+            setup = deviceManager.getAudioDeviceSetup();
+            setup.useDefaultInputChannels = false;
+            setup.useDefaultOutputChannels = false;
+            setup.inputChannels.clear();
+            setup.outputChannels.clear();
+            setup.inputChannels.setRange (0, liveIns, true);
+            setup.outputChannels.setRange (0, liveOuts, true);
+            deviceManager.setAudioDeviceSetup (setup, true);
+        }
+    }
+
+    if (deviceManager.getCurrentAudioDevice() == nullptr)
+    {
+        error = "Failed to open audio device: " + hardwareSettings.deviceName;
+        return false;
+    }
+
+    return true;
+}
+
 bool PluginAudioEngine::startAudioDevice (juce::String& error)
 {
     stopAudioDevice();
 
-    const juce::String result = deviceManager.initialiseWithDefaultDevices (0, 2);
-    if (result.isNotEmpty())
-    {
-        error = result;
+    if (! openConfiguredAudioDevice (error))
         return false;
-    }
 
     if (auto* device = deviceManager.getCurrentAudioDevice())
     {
@@ -336,10 +480,19 @@ bool PluginAudioEngine::startAudioDevice (juce::String& error)
         deviceBlockSize = device->getCurrentBufferSizeSamples();
     }
 
+    ensureLatencyBufferSize (2, juce::jmax (hardwareSettings.latencySamples + deviceBlockSize * 4,
+                                            deviceBlockSize * 8));
+
     if (plugin != nullptr)
     {
         plugin->prepareToPlay (deviceSampleRate, deviceBlockSize);
         plugin->suspendProcessing (false);
+    }
+
+    if (hardwareSettings.usesSeparateMonitorOutput())
+    {
+        if (! startMonitorOutput (error))
+            return false;
     }
 
     deviceManager.addAudioCallback (this);
@@ -351,6 +504,299 @@ bool PluginAudioEngine::startAudioDevice (juce::String& error)
     return true;
 }
 
+void PluginAudioEngine::setHardwareLoopSettings (const HardwareLoopSettings& settings)
+{
+    const juce::ScopedLock lock (processLock);
+    hardwareSettings = settings;
+    ensureLatencyBufferSize (2, juce::jmax (settings.latencySamples + deviceBlockSize * 4,
+                                            deviceBlockSize * 8));
+}
+
+HardwareLoopSettings PluginAudioEngine::getHardwareLoopSettings() const
+{
+    return hardwareSettings;
+}
+
+bool PluginAudioEngine::hasHardwareLoopConfigured() const
+{
+    return hardwareSettings.isConfigured();
+}
+
+void PluginAudioEngine::setHardwareMode (bool shouldUseHardware)
+{
+    if (shouldUseHardware && ! hardwareSettings.isConfigured())
+        return;
+
+    hardwareMode.store (shouldUseHardware);
+}
+
+void PluginAudioEngine::ensureLatencyBufferSize (int numChannels, int capacity)
+{
+    capacity = juce::jmax (capacity, 1);
+    if (latencyCapacity >= capacity && latencyBuffer.getNumChannels() >= numChannels)
+        return;
+
+    latencyBuffer.setSize (numChannels, capacity, false, true, false);
+    latencyBuffer.clear();
+    latencyWritePos = 0;
+    latencyCapacity = capacity;
+}
+
+void PluginAudioEngine::pushReturnToLatencyBuffer (const float* const* inputChannelData,
+                                                    int numInputChannels,
+                                                    int numSamples)
+{
+    if (latencyCapacity <= 0 || inputChannelData == nullptr)
+        return;
+
+    const int retL = hardwareSettings.returnChannelL;
+    const int retR = hardwareSettings.returnChannelR;
+    const float* inL = (retL >= 0 && retL < numInputChannels) ? inputChannelData[retL] : nullptr;
+    const float* inR = (retR >= 0 && retR < numInputChannels) ? inputChannelData[retR] : nullptr;
+
+        float peakL = 0.0f;
+        float peakR = 0.0f;
+        double sumSq = 0.0;
+        int meterSamples = 0;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float l = inL != nullptr ? inL[i] : 0.0f;
+            const float r = inR != nullptr ? inR[i] : l;
+            latencyBuffer.setSample (0, latencyWritePos, l);
+            if (latencyBuffer.getNumChannels() > 1)
+                latencyBuffer.setSample (1, latencyWritePos, r);
+
+            peakL = juce::jmax (peakL, std::abs (l));
+            peakR = juce::jmax (peakR, std::abs (r));
+            sumSq += (double) l * (double) l + (double) r * (double) r;
+            meterSamples += 2;
+
+            latencyWritePos = (latencyWritePos + 1) % latencyCapacity;
+        }
+
+        returnPeakL.store (peakL);
+        returnPeakR.store (peakR);
+        if (meterSamples > 0)
+            returnRms.store ((float) std::sqrt (sumSq / (double) meterSamples));
+    }
+
+void PluginAudioEngine::readDelayedReturn (juce::AudioBuffer<float>& dest, int numSamples)
+{
+    dest.clear();
+    if (latencyCapacity <= 0)
+        return;
+
+    const int delay = juce::jlimit (0, latencyCapacity - 1, hardwareSettings.latencySamples);
+    int readPos = latencyWritePos - delay - numSamples;
+    while (readPos < 0)
+        readPos += latencyCapacity;
+
+    const int channels = juce::jmin (2, dest.getNumChannels());
+    for (int i = 0; i < numSamples; ++i)
+    {
+        for (int ch = 0; ch < channels; ++ch)
+            dest.setSample (ch, i, latencyBuffer.getSample (ch % latencyBuffer.getNumChannels(), readPos));
+
+        readPos = (readPos + 1) % latencyCapacity;
+    }
+}
+
+void PluginAudioEngine::clearOutputChannels (float* const* outputChannelData, int numOutputChannels, int numSamples)
+{
+    for (int ch = 0; ch < numOutputChannels; ++ch)
+        if (outputChannelData[ch] != nullptr)
+            juce::FloatVectorOperations::clear (outputChannelData[ch], numSamples);
+}
+
+void PluginAudioEngine::writeMonitorSamples (const juce::AudioBuffer<float>& stereoMonitor,
+                                             int numSamples,
+                                             float* const* outputChannelData,
+                                             int numOutputChannels)
+{
+    if (hardwareSettings.usesSeparateMonitorOutput())
+    {
+        pushMonitorOutput (stereoMonitor.getReadPointer (0),
+                           stereoMonitor.getReadPointer (1),
+                           numSamples);
+        return;
+    }
+
+    const int monL = hardwareSettings.monitorChannelL;
+    const int monR = hardwareSettings.monitorChannelR;
+
+    if (monL >= 0 && monL < numOutputChannels && outputChannelData[monL] != nullptr)
+        juce::FloatVectorOperations::copy (outputChannelData[monL],
+                                           stereoMonitor.getReadPointer (0), numSamples);
+    if (monR >= 0 && monR < numOutputChannels && outputChannelData[monR] != nullptr)
+        juce::FloatVectorOperations::copy (outputChannelData[monR],
+                                           stereoMonitor.getReadPointer (1), numSamples);
+}
+
+void PluginAudioEngine::pushMonitorOutput (const float* left, const float* right, int numSamples)
+{
+    if (! monitorOutputActive.load() || left == nullptr || right == nullptr || numSamples <= 0)
+        return;
+
+    int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
+    monitorFifo.prepareToWrite (numSamples, start1, size1, start2, size2);
+
+    const int written = size1 + size2;
+    if (written <= 0)
+        return;
+
+    auto writeBlock = [&] (int ringStart, int count, const float*& srcL, const float*& srcR)
+    {
+        monitorRingBuffer.copyFrom (0, ringStart, srcL, count);
+        monitorRingBuffer.copyFrom (1, ringStart, srcR, count);
+        srcL += count;
+        srcR += count;
+    };
+
+    writeBlock (start1, size1, left, right);
+    writeBlock (start2, size2, left, right);
+    monitorFifo.finishedWrite (written);
+}
+
+void PluginAudioEngine::pullMonitorOutput (float* const* outputChannelData,
+                                           int numOutputChannels,
+                                           int numSamples)
+{
+    for (int ch = 0; ch < numOutputChannels; ++ch)
+        if (outputChannelData[ch] != nullptr)
+            juce::FloatVectorOperations::clear (outputChannelData[ch], numSamples);
+
+    int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
+    monitorFifo.prepareToRead (numSamples, start1, size1, start2, size2);
+
+    const int available = size1 + size2;
+    if (available <= 0)
+        return;
+
+    int outPos = 0;
+    auto readBlock = [&] (int ringStart, int count)
+    {
+        if (outputChannelData[0] != nullptr)
+            juce::FloatVectorOperations::copy (outputChannelData[0] + outPos,
+                                               monitorRingBuffer.getReadPointer (0, ringStart),
+                                               count);
+        if (numOutputChannels > 1 && outputChannelData[1] != nullptr)
+            juce::FloatVectorOperations::copy (outputChannelData[1] + outPos,
+                                               monitorRingBuffer.getReadPointer (1, ringStart),
+                                               count);
+        else if (outputChannelData[0] != nullptr)
+            juce::FloatVectorOperations::copy (outputChannelData[0] + outPos,
+                                               monitorRingBuffer.getReadPointer (1, ringStart),
+                                               count);
+
+        outPos += count;
+    };
+
+    readBlock (start1, size1);
+    readBlock (start2, size2);
+    monitorFifo.finishedRead (available);
+}
+
+bool PluginAudioEngine::startMonitorOutput (juce::String& error)
+{
+    stopMonitorOutput();
+
+    if (! hardwareSettings.usesSeparateMonitorOutput())
+        return true;
+
+    if (monitorDeviceManager.getAvailableDeviceTypes().isEmpty())
+    {
+        const juce::String initError = monitorDeviceManager.initialise (0, 2, nullptr, true);
+        if (initError.isNotEmpty())
+        {
+            error = "Monitor output: " + initError;
+            return false;
+        }
+    }
+
+    const auto deviceName = resolveMonitorOutputDeviceName (monitorDeviceManager,
+                                                            hardwareSettings.monitorOutputDeviceName);
+    if (deviceName.isEmpty())
+    {
+        error = "Monitor output: no output device available";
+        return false;
+    }
+
+    juce::AudioDeviceManager::AudioDeviceSetup setup;
+    setup.outputDeviceName = deviceName;
+    setup.inputDeviceName.clear();
+    setup.sampleRate = deviceSampleRate > 0.0 ? deviceSampleRate : 0.0;
+    setup.bufferSize = deviceBlockSize > 0 ? deviceBlockSize : hardwareSettings.bufferSize;
+    setup.useDefaultInputChannels = false;
+    setup.useDefaultOutputChannels = true;
+
+    const juce::String setupError = monitorDeviceManager.setAudioDeviceSetup (setup, true);
+    if (setupError.isNotEmpty())
+    {
+        error = "Monitor output (\"" + deviceName + "\"): " + setupError;
+        return false;
+    }
+
+    monitorFifo.reset();
+    monitorRingBuffer.clear();
+    monitorDeviceManager.addAudioCallback (monitorOutputHandler.get());
+    monitorOutputActive.store (true);
+    return true;
+}
+
+void PluginAudioEngine::stopMonitorOutput()
+{
+    monitorOutputActive.store (false);
+
+    if (monitorOutputHandler != nullptr)
+        monitorDeviceManager.removeAudioCallback (monitorOutputHandler.get());
+
+    monitorDeviceManager.closeAudioDevice();
+    monitorFifo.reset();
+    monitorRingBuffer.clear();
+}
+
+void PluginAudioEngine::applyHardwareMonitorCrossfade (juce::AudioBuffer<float>& softwareBuffer,
+                                                       const juce::AudioBuffer<float>& hardwareBuffer,
+                                                       int numSamples)
+{
+    const float target = hardwareMode.load() ? 1.0f : 0.0f;
+
+    if (hardwareFade <= 0.0f && target <= 0.0f)
+        return;
+
+    const float fadeStart = hardwareFade;
+    float fadeEnd = fadeStart;
+
+    if (std::abs (fadeStart - target) > 1.0e-6f)
+    {
+        const float step = (float) numSamples / (float) hardwareFadeLengthSamples;
+        fadeEnd = target > fadeStart ? juce::jmin (target, fadeStart + step)
+                                     : juce::jmax (target, fadeStart - step);
+    }
+
+    const float fadeStep = (fadeEnd - fadeStart) / (float) juce::jmax (1, numSamples);
+    constexpr float halfPi = juce::MathConstants<float>::halfPi;
+    const int channels = juce::jmin (softwareBuffer.getNumChannels(), hardwareBuffer.getNumChannels());
+
+    for (int ch = 0; ch < channels; ++ch)
+    {
+        auto* soft = softwareBuffer.getWritePointer (ch);
+        const auto* hard = hardwareBuffer.getReadPointer (ch);
+        float fade = fadeStart;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float hwGain = std::sin (fade * halfPi);
+            const float swGain = std::cos (fade * halfPi);
+            soft[i] = soft[i] * swGain + hard[i] * hwGain;
+            fade += fadeStep;
+        }
+    }
+
+    hardwareFade = fadeEnd;
+}
+
 void PluginAudioEngine::stopAudioDevice()
 {
     stopFixture();
@@ -358,6 +804,7 @@ void PluginAudioEngine::stopAudioDevice()
     hostClockPlaying.store (false);
     resetHostClockTiming();
     deviceManager.removeAudioCallback (this);
+    stopMonitorOutput();
     deviceManager.closeAudioDevice();
 
     if (plugin != nullptr)
@@ -367,6 +814,11 @@ void PluginAudioEngine::stopAudioDevice()
 juce::Array<juce::MidiDeviceInfo> PluginAudioEngine::getMidiInputDevices() const
 {
     return juce::MidiInput::getAvailableDevices();
+}
+
+juce::Array<juce::MidiDeviceInfo> PluginAudioEngine::getMidiOutputDevices() const
+{
+    return juce::MidiOutput::getAvailableDevices();
 }
 
 juce::StringArray PluginAudioEngine::getSelectedMidiInputNames() const
@@ -543,6 +995,13 @@ void PluginAudioEngine::setAllowInstrumentAudioInput (bool allow)
         plugin->suspendProcessing (false);
 }
 
+void PluginAudioEngine::setPluginProcessingSuspended (bool shouldSuspend)
+{
+    const juce::ScopedLock lock (processLock);
+    if (plugin != nullptr)
+        plugin->suspendProcessing (shouldSuspend);
+}
+
 void PluginAudioEngine::resetHostClockTiming()
 {
     clockSampleCounter = 0.0;
@@ -667,6 +1126,12 @@ void PluginAudioEngine::mixMetronomeClick (juce::AudioBuffer<float>& buffer, int
 
 void PluginAudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& message)
 {
+    if (message.isSysEx() && collectSysex.load())
+    {
+        const juce::ScopedLock lock (sysexLock);
+        pendingSysex.add (message);
+    }
+
     bool forward = true;
 
     // Transport from MIDI realtime (Start/Stop/Continue), MMC, or Mackie/HUI notes.
@@ -749,7 +1214,11 @@ void PluginAudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     deviceSampleRate = device->getCurrentSampleRate();
     deviceBlockSize = device->getCurrentBufferSizeSamples();
     bypassFadeLengthSamples = juce::jmax (1, (int) std::lround (deviceSampleRate * bypassFadeSeconds));
+    hardwareFadeLengthSamples = bypassFadeLengthSamples;
     bypassFade = bypassed.load() ? 1.0f : 0.0f;
+    hardwareFade = hardwareMode.load() ? 1.0f : 0.0f;
+    ensureLatencyBufferSize (2, juce::jmax (hardwareSettings.latencySamples + deviceBlockSize * 4,
+                                            deviceBlockSize * 8));
 
     const juce::ScopedLock lock (processLock);
     if (plugin != nullptr)
@@ -859,9 +1328,101 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                                                           int numSamples,
                                                           const juce::AudioIODeviceCallbackContext& context)
 {
-    juce::ignoreUnused (inputChannelData, numInputChannels, context);
+    juce::ignoreUnused (context);
 
-    int processChannels = juce::jmax (1, numOutputChannels);
+    clearOutputChannels (outputChannelData, numOutputChannels, numSamples);
+
+    const bool loopConfigured = hardwareSettings.isConfigured();
+    if (loopConfigured)
+        pushReturnToLatencyBuffer (inputChannelData, numInputChannels, numSamples);
+
+    // Latency / capture special ops: drive send from loopPlayBuffer, record return.
+    const auto op = loopOp.load();
+    if (op != LoopOp::idle && loopConfigured)
+    {
+        const int sendL = hardwareSettings.sendChannelL;
+        const int sendR = hardwareSettings.sendChannelR;
+
+        double sendSumSq = 0.0;
+        int sendCount = 0;
+        float peakL = 0.0f;
+        float peakR = 0.0f;
+        juce::AudioBuffer<float> loopMonitor (2, numSamples);
+        loopMonitor.clear();
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float l = 0.0f, r = 0.0f;
+            if (loopPlayPosition < loopPlayBuffer.getNumSamples())
+            {
+                l = loopPlayBuffer.getSample (0, loopPlayPosition);
+                r = loopPlayBuffer.getNumChannels() > 1
+                        ? loopPlayBuffer.getSample (1, loopPlayPosition)
+                        : l;
+                ++loopPlayPosition;
+            }
+
+            if (sendL >= 0 && sendL < numOutputChannels && outputChannelData[sendL] != nullptr)
+                outputChannelData[sendL][i] = l;
+            if (sendR >= 0 && sendR < numOutputChannels && outputChannelData[sendR] != nullptr)
+                outputChannelData[sendR][i] = r;
+
+            loopMonitor.setSample (0, i, l);
+            loopMonitor.setSample (1, i, r);
+
+            peakL = juce::jmax (peakL, std::abs (l));
+            peakR = juce::jmax (peakR, std::abs (r));
+            sendSumSq += (double) l * (double) l + (double) r * (double) r;
+            sendCount += 2;
+
+            if (loopRecordPosition < loopRecordCapacity)
+            {
+                const int retL = hardwareSettings.returnChannelL;
+                const int retR = hardwareSettings.returnChannelR;
+                const float rl = (retL >= 0 && retL < numInputChannels && inputChannelData != nullptr
+                                  && inputChannelData[retL] != nullptr)
+                                     ? inputChannelData[retL][i] : 0.0f;
+                const float rr = (retR >= 0 && retR < numInputChannels && inputChannelData != nullptr
+                                  && inputChannelData[retR] != nullptr)
+                                     ? inputChannelData[retR][i] : rl;
+                loopRecordBuffer.setSample (0, loopRecordPosition, rl);
+                if (loopRecordBuffer.getNumChannels() > 1)
+                    loopRecordBuffer.setSample (1, loopRecordPosition, rr);
+                ++loopRecordPosition;
+            }
+        }
+
+        writeMonitorSamples (loopMonitor, numSamples, outputChannelData, numOutputChannels);
+
+        if (sendCount > 0)
+            sendRms.store ((float) std::sqrt (sendSumSq / (double) sendCount));
+        sendPeakL.store (peakL);
+        sendPeakR.store (peakR);
+
+        const bool playDone = loopPlayPosition >= loopPlayBuffer.getNumSamples();
+        const bool recordFull = loopRecordPosition >= loopRecordCapacity;
+        if (playDone && (op == LoopOp::calibrate || recordFull
+                         || loopRecordPosition >= loopPlayBuffer.getNumSamples()
+                                                    + (int) (deviceSampleRate * 2.0)))
+        {
+            // For calibrate, keep recording a bit after the impulse ends.
+            if (op == LoopOp::calibrate && ! recordFull
+                && loopRecordPosition < loopPlayBuffer.getNumSamples()
+                                            + (int) (deviceSampleRate * 1.5))
+            {
+                // keep going
+            }
+            else
+            {
+                loopOp.store (LoopOp::idle);
+                loopOpFinished.store (true);
+            }
+        }
+
+        return;
+    }
+
+    int processChannels = juce::jmax (1, loopConfigured ? 2 : numOutputChannels);
 
     {
         const juce::ScopedLock lock (processLock);
@@ -874,9 +1435,13 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
         juce::AudioBuffer<float> buffer (processChannels, numSamples);
         buffer.clear();
 
+        juce::AudioBuffer<float> sendBuffer (2, numSamples);
+        sendBuffer.clear();
+
         if (! restoringState.load() && plugin != nullptr && ! plugin->isSuspended())
         {
-            // Fixture → plugin inputs. Instruments only when Settings allows it.
+            const bool mutePlugin = softwareEffectMuted.load();
+
             if (playing
                 && (! plugin->getPluginDescription().isInstrument
                     || allowInstrumentAudioInput.load()))
@@ -885,6 +1450,14 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
             const float send = sendGain.load();
             if (send != 1.0f)
                 buffer.applyGain (send);
+
+            // Capture what we'll send to hardware (pre-plugin fixture).
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const int src = juce::jmin (ch, buffer.getNumChannels() - 1);
+                if (src >= 0)
+                    sendBuffer.copyFrom (ch, 0, buffer, src, 0, numSamples);
+            }
 
             juce::MidiBuffer midi;
             {
@@ -901,50 +1474,482 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                     generateHostClockMidi (midi, numSamples);
             }
 
-            const float wetMix = mixAmount.load();
-            const bool blendDry = wetMix < 1.0f;
-            juce::AudioBuffer<float> dryBuffer;
-            dryBuffer.setSize (buffer.getNumChannels(), numSamples, false, false, true);
-
-            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                dryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
-
-            plugin->processBlock (buffer, midi);
-
-            if (blendDry)
+            if (mutePlugin)
             {
-                const float dryMix = 1.0f - wetMix;
-                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-                {
-                    auto* wet = buffer.getWritePointer (ch);
-                    const auto* dry = dryBuffer.getReadPointer (ch);
-                    for (int i = 0; i < numSamples; ++i)
-                        wet[i] = dry[i] * dryMix + wet[i] * wetMix;
-                }
+                // Keep hardware send alive; do not feed the software effect.
+                buffer.clear();
             }
+            else
+            {
+                const float wetMix = mixAmount.load();
+                const bool blendDry = wetMix < 1.0f;
+                juce::AudioBuffer<float> dryBuffer;
+                dryBuffer.setSize (buffer.getNumChannels(), numSamples, false, false, true);
 
-            applyBypassCrossfade (buffer, dryBuffer, numSamples);
+                for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    dryBuffer.copyFrom (ch, 0, buffer, ch, 0, numSamples);
+
+                plugin->processBlock (buffer, midi);
+
+                if (blendDry)
+                {
+                    const float dryMix = 1.0f - wetMix;
+                    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                    {
+                        auto* wet = buffer.getWritePointer (ch);
+                        const auto* dry = dryBuffer.getReadPointer (ch);
+                        for (int i = 0; i < numSamples; ++i)
+                            wet[i] = dry[i] * dryMix + wet[i] * wetMix;
+                    }
+                }
+
+                applyBypassCrossfade (buffer, dryBuffer, numSamples);
+            }
 
             if (clockEnabled && hostClockPlaying.load())
                 playHeadSamples.fetch_add (numSamples);
 
-            // Host monitoring click — mixed after the plugin, like a DAW metronome.
-            mixMetronomeClick (buffer, numSamples);
+            if (! mutePlugin)
+                mixMetronomeClick (buffer, numSamples);
         }
         else if (! restoringState.load())
         {
             if (playing)
+            {
                 fillFixtureBlock (buffer, numSamples);
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    const int src = juce::jmin (ch, buffer.getNumChannels() - 1);
+                    if (src >= 0)
+                        sendBuffer.copyFrom (ch, 0, buffer, src, 0, numSamples);
+                }
+            }
             mixMetronomeClick (buffer, numSamples);
         }
 
-        for (int ch = 0; ch < numOutputChannels; ++ch)
         {
-            if (outputChannelData[ch] == nullptr)
-                continue;
+            float peakL = 0.0f;
+            float peakR = 0.0f;
+            double sumSq = 0.0;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float l = sendBuffer.getSample (0, i);
+                const float r = sendBuffer.getSample (1, i);
+                peakL = juce::jmax (peakL, std::abs (l));
+                peakR = juce::jmax (peakR, std::abs (r));
+                sumSq += (double) l * (double) l + (double) r * (double) r;
+            }
+            sendPeakL.store (peakL);
+            sendPeakR.store (peakR);
+            sendRms.store ((float) std::sqrt (sumSq / (double) juce::jmax (1, numSamples * 2)));
+        }
 
-            const int srcCh = ch % buffer.getNumChannels();
-            juce::FloatVectorOperations::copy (outputChannelData[ch], buffer.getReadPointer (srcCh), numSamples);
+        juce::AudioBuffer<float> monitorBuffer (2, numSamples);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const int src = juce::jmin (ch, buffer.getNumChannels() - 1);
+            if (src >= 0)
+                monitorBuffer.copyFrom (ch, 0, buffer, src, 0, numSamples);
+            else
+                monitorBuffer.clear (ch, 0, numSamples);
+        }
+
+        if (loopConfigured)
+        {
+            juce::AudioBuffer<float> hardwareMonitor (2, numSamples);
+            readDelayedReturn (hardwareMonitor, numSamples);
+            applyHardwareMonitorCrossfade (monitorBuffer, hardwareMonitor, numSamples);
+
+            const int sendL = hardwareSettings.sendChannelL;
+            const int sendR = hardwareSettings.sendChannelR;
+
+            if (sendL >= 0 && sendL < numOutputChannels && outputChannelData[sendL] != nullptr)
+                juce::FloatVectorOperations::copy (outputChannelData[sendL],
+                                                   sendBuffer.getReadPointer (0), numSamples);
+            if (sendR >= 0 && sendR < numOutputChannels && outputChannelData[sendR] != nullptr)
+                juce::FloatVectorOperations::copy (outputChannelData[sendR],
+                                                   sendBuffer.getReadPointer (1), numSamples);
+
+            writeMonitorSamples (monitorBuffer, numSamples, outputChannelData, numOutputChannels);
+        }
+        else
+        {
+            for (int ch = 0; ch < numOutputChannels; ++ch)
+            {
+                if (outputChannelData[ch] == nullptr)
+                    continue;
+
+                const int srcCh = ch % monitorBuffer.getNumChannels();
+                juce::FloatVectorOperations::copy (outputChannelData[ch],
+                                                   monitorBuffer.getReadPointer (srcCh),
+                                                   numSamples);
+            }
         }
     }
+}
+
+bool PluginAudioEngine::setMidiOutputDevice (const juce::String& identifier, juce::String& error)
+{
+    midiOutput.reset();
+    midiOutputIdentifier.clear();
+
+    if (identifier.isEmpty())
+        return true;
+
+    midiOutput = juce::MidiOutput::openDevice (identifier);
+    if (midiOutput == nullptr)
+    {
+        error = "Failed to open MIDI output device";
+        return false;
+    }
+
+    midiOutputIdentifier = identifier;
+    return true;
+}
+
+bool PluginAudioEngine::sendMidiMessage (const juce::MidiMessage& message)
+{
+    if (midiOutput == nullptr)
+        return false;
+
+    midiOutput->sendMessageNow (message);
+    return true;
+}
+
+bool PluginAudioEngine::sendMidiMessages (const juce::Array<juce::MidiMessage>& messages)
+{
+    if (midiOutput == nullptr)
+        return false;
+
+    for (const auto& message : messages)
+        midiOutput->sendMessageNow (message);
+
+    return true;
+}
+
+bool PluginAudioEngine::waitForSysexDump (std::function<bool (const juce::MidiMessage&)> isAcceptable,
+                                          juce::MidiMessage& outMessage,
+                                          int timeoutMs,
+                                          juce::String& error)
+{
+    {
+        const juce::ScopedLock lock (sysexLock);
+        pendingSysex.clear();
+    }
+
+    collectSysex.store (true);
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + (double) timeoutMs;
+
+    while (juce::Time::getMillisecondCounterHiRes() < deadline)
+    {
+        {
+            const juce::ScopedLock lock (sysexLock);
+            for (int i = 0; i < pendingSysex.size(); ++i)
+            {
+                if (isAcceptable (pendingSysex.getReference (i)))
+                {
+                    outMessage = pendingSysex.getReference (i);
+                    pendingSysex.clear();
+                    collectSysex.store (false);
+                    return true;
+                }
+            }
+        }
+
+        juce::Thread::sleep (10);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    }
+
+    collectSysex.store (false);
+    error = "Timed out waiting for sysex dump";
+    return false;
+}
+
+bool PluginAudioEngine::autoDetectLatency (const juce::File& impulseFile,
+                                           int& outLatencySamples,
+                                           float& outLoopGainDb,
+                                           juce::String& error)
+{
+    if (! hardwareSettings.isConfigured())
+    {
+        error = "Configure a hardware audio device first";
+        return false;
+    }
+
+    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (impulseFile));
+    if (reader == nullptr)
+    {
+        error = "Failed to read impulse file: " + impulseFile.getFullPathName();
+        return false;
+    }
+
+    const int impulseSamples = (int) reader->lengthInSamples;
+    loopPlayBuffer.setSize (2, impulseSamples, false, true, false);
+    reader->read (&loopPlayBuffer, 0, impulseSamples, 0, true, true);
+
+    const int recordSamples = impulseSamples + (int) (deviceSampleRate * 2.0) + deviceBlockSize * 4;
+    loopRecordBuffer.setSize (2, recordSamples, false, true, false);
+    loopRecordBuffer.clear();
+    loopPlayPosition = 0;
+    loopRecordPosition = 0;
+    loopRecordCapacity = recordSamples;
+    loopOpFinished.store (false);
+    loopOp.store (LoopOp::calibrate);
+
+    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 8000.0;
+    while (! loopOpFinished.load() && juce::Time::getMillisecondCounterHiRes() < deadline)
+    {
+        juce::Thread::sleep (10);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+    }
+
+    loopOp.store (LoopOp::idle);
+
+    if (! loopOpFinished.load())
+    {
+        error = "Latency detection timed out";
+        return false;
+    }
+
+    const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
+    if (recorded < impulseSamples)
+    {
+        error = "Not enough return audio recorded";
+        return false;
+    }
+
+    // Cross-correlate mono impulse against return L (simple time-domain).
+    juce::AudioBuffer<float> impulseMono (1, impulseSamples);
+    for (int i = 0; i < impulseSamples; ++i)
+    {
+        const float l = loopPlayBuffer.getSample (0, i);
+        const float r = loopPlayBuffer.getNumChannels() > 1 ? loopPlayBuffer.getSample (1, i) : l;
+        impulseMono.setSample (0, i, 0.5f * (l + r));
+    }
+
+    double bestCorr = -1.0e300;
+    int bestLag = 0;
+    const int maxLag = recorded - impulseSamples;
+
+    for (int lag = 0; lag <= maxLag; ++lag)
+    {
+        double corr = 0.0;
+        for (int i = 0; i < impulseSamples; ++i)
+        {
+            const float ret = 0.5f * (loopRecordBuffer.getSample (0, lag + i)
+                                      + loopRecordBuffer.getSample (1, lag + i));
+            corr += (double) impulseMono.getSample (0, i) * (double) ret;
+        }
+
+        if (corr > bestCorr)
+        {
+            bestCorr = corr;
+            bestLag = lag;
+        }
+    }
+
+    // Peak amplitude ratio near the detected lag.
+    float impulsePeak = 0.0f, returnPeakLocal = 0.0f;
+    for (int i = 0; i < impulseSamples; ++i)
+    {
+        impulsePeak = juce::jmax (impulsePeak, std::abs (impulseMono.getSample (0, i)));
+        if (bestLag + i < recorded)
+        {
+            const float ret = 0.5f * (loopRecordBuffer.getSample (0, bestLag + i)
+                                      + loopRecordBuffer.getSample (1, bestLag + i));
+            returnPeakLocal = juce::jmax (returnPeakLocal, std::abs (ret));
+        }
+    }
+
+    outLatencySamples = bestLag;
+    outLoopGainDb = (impulsePeak > 1.0e-8f)
+                        ? juce::Decibels::gainToDecibels (returnPeakLocal / impulsePeak)
+                        : -120.0f;
+
+    hardwareSettings.latencySamples = bestLag;
+    ensureLatencyBufferSize (2, juce::jmax (bestLag + deviceBlockSize * 4, deviceBlockSize * 8));
+    return true;
+}
+
+bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
+                                               const juce::File& outputFile,
+                                               double tailSilenceSeconds,
+                                               double silenceThresholdDb,
+                                               double maxTailSeconds,
+                                               juce::String& error,
+                                               const std::atomic<bool>* cancelRequested)
+{
+    if (! hardwareSettings.isConfigured())
+    {
+        error = "Configure a hardware audio device first";
+        return false;
+    }
+
+    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (fixtureFile));
+    if (reader == nullptr)
+    {
+        error = "Failed to read fixture: " + fixtureFile.getFullPathName();
+        return false;
+    }
+
+    const int sourceSamples = (int) reader->lengthInSamples;
+    if (sourceSamples <= 0)
+    {
+        error = "Fixture has no audio samples: " + fixtureFile.getFullPathName();
+        return false;
+    }
+
+    juce::AudioBuffer<float> sourceBuffer (juce::jmax (1, (int) reader->numChannels), sourceSamples);
+    reader->read (sourceBuffer.getArrayOfWritePointers(),
+                  sourceBuffer.getNumChannels(),
+                  0,
+                  sourceSamples);
+
+    const double sourceRate = reader->sampleRate > 1.0 ? reader->sampleRate : deviceSampleRate;
+    const int fixtureSamples = juce::jmax (1, (int) std::llround ((double) sourceSamples * deviceSampleRate / sourceRate));
+    loopPlayBuffer.setSize (2, fixtureSamples, false, true, false);
+
+    for (int i = 0; i < fixtureSamples; ++i)
+    {
+        const double srcPos = (double) i * sourceRate / deviceSampleRate;
+        const int src0 = juce::jlimit (0, sourceSamples - 1, (int) std::floor (srcPos));
+        const int src1 = juce::jmin (sourceSamples - 1, src0 + 1);
+        const float frac = (float) juce::jlimit (0.0, 1.0, srcPos - (double) src0);
+
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const int srcCh = juce::jmin (ch, sourceBuffer.getNumChannels() - 1);
+            const float a = sourceBuffer.getSample (srcCh, src0);
+            const float b = sourceBuffer.getSample (srcCh, src1);
+            loopPlayBuffer.setSample (ch, i, a + (b - a) * frac);
+        }
+    }
+
+    const float send = sendGain.load();
+    if (send != 1.0f)
+        loopPlayBuffer.applyGain (send);
+
+    const int maxRecord = fixtureSamples
+                          + (int) (deviceSampleRate * maxTailSeconds)
+                          + hardwareSettings.latencySamples
+                          + deviceBlockSize * 4;
+    loopRecordBuffer.setSize (2, maxRecord, false, true, false);
+    loopRecordBuffer.clear();
+    loopPlayPosition = 0;
+    loopRecordPosition = 0;
+    loopRecordCapacity = maxRecord;
+    loopOpFinished.store (false);
+    loopOp.store (LoopOp::capture);
+
+    const float silenceThresh = juce::Decibels::decibelsToGain ((float) silenceThresholdDb);
+    const int silenceHold = juce::jmax (1, (int) (deviceSampleRate * tailSilenceSeconds));
+    int silentSamples = 0;
+    bool pastFixture = false;
+    int lastRecorded = -1;
+    int stagnantIterations = 0;
+
+    const auto deadline = juce::Time::getMillisecondCounterHiRes()
+                          + (maxTailSeconds + (double) fixtureSamples / deviceSampleRate + 5.0) * 1000.0;
+
+    while (juce::Time::getMillisecondCounterHiRes() < deadline)
+    {
+        if (cancelRequested != nullptr && cancelRequested->load())
+        {
+            loopOp.store (LoopOp::idle);
+            error = "Capture cancelled";
+            return false;
+        }
+
+        juce::Thread::sleep (10);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+        const int recorded = loopRecordPosition;
+        if (recorded == lastRecorded)
+            ++stagnantIterations;
+        else
+            stagnantIterations = 0;
+
+        lastRecorded = recorded;
+
+        if (stagnantIterations > 1500) // about 30s with sleep+dispatch cadence
+        {
+            loopOp.store (LoopOp::idle);
+            error = "Hardware capture stalled (audio device not advancing)";
+            return false;
+        }
+
+        if (loopPlayPosition >= fixtureSamples)
+            pastFixture = true;
+
+        if (pastFixture && recorded > hardwareSettings.latencySamples + fixtureSamples)
+        {
+            const int checkFrom = juce::jmax (0, recorded - deviceBlockSize);
+            float peak = 0.0f;
+            for (int i = checkFrom; i < recorded; ++i)
+                peak = juce::jmax (peak,
+                                   std::abs (loopRecordBuffer.getSample (0, i)),
+                                   std::abs (loopRecordBuffer.getSample (1, i)));
+
+            if (peak < silenceThresh)
+                silentSamples += deviceBlockSize;
+            else
+                silentSamples = 0;
+
+            if (silentSamples >= silenceHold || recorded >= maxRecord)
+            {
+                loopOp.store (LoopOp::idle);
+                loopOpFinished.store (true);
+                break;
+            }
+        }
+    }
+
+    loopOp.store (LoopOp::idle);
+
+    if (cancelRequested != nullptr && cancelRequested->load())
+    {
+        error = "Capture cancelled";
+        return false;
+    }
+
+    const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
+    const int latency = juce::jlimit (0, recorded, hardwareSettings.latencySamples);
+    const int usable = recorded - latency;
+    if (usable <= 0)
+    {
+        error = "Hardware capture produced no usable audio (check latency / routing)";
+        return false;
+    }
+
+    juce::AudioBuffer<float> trimmed (2, usable);
+    for (int ch = 0; ch < 2; ++ch)
+        trimmed.copyFrom (ch, 0, loopRecordBuffer, ch, latency, usable);
+
+    outputFile.deleteFile();
+    outputFile.getParentDirectory().createDirectory();
+
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::FileOutputStream> stream (outputFile.createOutputStream());
+    if (stream == nullptr)
+    {
+        error = "Failed to create output file: " + outputFile.getFullPathName();
+        return false;
+    }
+
+    std::unique_ptr<juce::AudioFormatWriter> writer (
+        wav.createWriterFor (stream.get(), deviceSampleRate, 2, 24, {}, 0));
+    if (writer == nullptr)
+    {
+        error = "Failed to create WAV writer";
+        return false;
+    }
+
+    stream.release();
+    if (! writer->writeFromAudioSampleBuffer (trimmed, 0, usable))
+    {
+        error = "Failed to write hardware capture WAV";
+        return false;
+    }
+
+    return true;
 }

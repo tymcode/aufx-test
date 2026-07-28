@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <atomic>
+#include "HardwareLoopSettings.h"
 
 class PluginAudioEngine : public juce::AudioIODeviceCallback,
                           private juce::MidiInputCallback,
@@ -50,12 +51,75 @@ public:
     bool startAudioDevice (juce::String& error);
     void stopAudioDevice();
 
+    juce::AudioDeviceManager& getDeviceManager() { return deviceManager; }
+    const juce::AudioDeviceManager& getDeviceManager() const { return deviceManager; }
+    double getDeviceSampleRate() const { return deviceSampleRate; }
+    int getDeviceBlockSize() const { return deviceBlockSize; }
+
+    // --- Hardware insert loop ---
+    void setHardwareLoopSettings (const HardwareLoopSettings& settings);
+    HardwareLoopSettings getHardwareLoopSettings() const;
+    bool hasHardwareLoopConfigured() const;
+
+    /** Crossfaded A/B between plugin monitor and latency-compensated hardware return. */
+    void setHardwareMode (bool shouldUseHardware);
+    bool isHardwareMode() const { return hardwareMode.load(); }
+
+    float getReturnPeakLevel() const { return juce::jmax (returnPeakL.load(), returnPeakR.load()); }
+    float getReturnPeakL() const { return returnPeakL.load(); }
+    float getReturnPeakR() const { return returnPeakR.load(); }
+    float getReturnRmsLevel() const { return returnRms.load(); }
+    float getSendRmsLevel() const { return sendRms.load(); }
+    float getSendPeakL() const { return sendPeakL.load(); }
+    float getSendPeakR() const { return sendPeakR.load(); }
+
+    /**
+     * When true, fixture audio is still sent to the hardware loop but is not
+     * fed into the software plugin (used while Hardware Audio Setup is open).
+     */
+    void setSoftwareEffectMuted (bool shouldMute) { softwareEffectMuted.store (shouldMute); }
+    bool isSoftwareEffectMuted() const { return softwareEffectMuted.load(); }
+
+    /**
+     * Play impulseFile once through the send pair, record the return, find the
+     * correlation peak, and update latencySamples. Sets measuredLoopGainDb.
+     */
+    bool autoDetectLatency (const juce::File& impulseFile,
+                            int& outLatencySamples,
+                            float& outLoopGainDb,
+                            juce::String& error);
+
+    /**
+     * Record the return pair while playing fixtureFile through the send pair.
+     * Trims configured latency from the head and extends through silence tail.
+     */
+    bool captureHardwareToFile (const juce::File& fixtureFile,
+                                const juce::File& outputFile,
+                                double tailSilenceSeconds,
+                                double silenceThresholdDb,
+                                double maxTailSeconds,
+                                juce::String& error,
+                                const std::atomic<bool>* cancelRequested = nullptr);
+
     /** Available hardware/virtual MIDI inputs (Audio MIDI Setup style names). */
     juce::Array<juce::MidiDeviceInfo> getMidiInputDevices() const;
+    juce::Array<juce::MidiDeviceInfo> getMidiOutputDevices() const;
     juce::StringArray getSelectedMidiInputIdentifiers() const { return selectedMidiIdentifiers; }
     juce::StringArray getSelectedMidiInputNames() const;
     /** Enable these MIDI inputs and merge their messages into the plugin. Empty clears selection. */
     void setMidiInputDevices (const juce::StringArray& identifiers);
+
+    bool setMidiOutputDevice (const juce::String& identifier, juce::String& error);
+    juce::String getMidiOutputIdentifier() const { return midiOutputIdentifier; }
+    bool sendMidiMessage (const juce::MidiMessage& message);
+    bool sendMidiMessages (const juce::Array<juce::MidiMessage>& messages);
+
+    /** Collect the next sysex dump matching isAcceptable (timeout in ms). */
+    bool waitForSysexDump (std::function<bool (const juce::MidiMessage&)> isAcceptable,
+                           juce::MidiMessage& outMessage,
+                           int timeoutMs,
+                           juce::String& error);
+
     /** True if MIDI arrived since the previous call (for the activity LED). */
     bool consumeMidiActivity();
 
@@ -82,6 +146,7 @@ public:
      */
     void setAllowInstrumentAudioInput (bool allow);
     bool getAllowInstrumentAudioInput() const { return allowInstrumentAudioInput.load(); }
+    void setPluginProcessingSuspended (bool shouldSuspend);
 
     void audioDeviceAboutToStart (juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
@@ -106,7 +171,28 @@ private:
     void applyBypassCrossfade (juce::AudioBuffer<float>& wetBuffer,
                                const juce::AudioBuffer<float>& dryBuffer,
                                int numSamples);
+    void applyHardwareMonitorCrossfade (juce::AudioBuffer<float>& softwareBuffer,
+                                        const juce::AudioBuffer<float>& hardwareBuffer,
+                                        int numSamples);
+    void ensureLatencyBufferSize (int numChannels, int capacity);
+    void pushReturnToLatencyBuffer (const float* const* inputChannelData, int numInputChannels, int numSamples);
+    void readDelayedReturn (juce::AudioBuffer<float>& dest, int numSamples);
+    void clearOutputChannels (float* const* outputChannelData, int numOutputChannels, int numSamples);
+    void writeMonitorSamples (const juce::AudioBuffer<float>& stereoMonitor, int numSamples,
+                              float* const* outputChannelData, int numOutputChannels);
+    void pushMonitorOutput (const float* left, const float* right, int numSamples);
+    void pullMonitorOutput (float* const* outputChannelData, int numOutputChannels, int numSamples);
+    bool startMonitorOutput (juce::String& error);
+    void stopMonitorOutput();
+    bool openConfiguredAudioDevice (juce::String& error);
     static PendingTransport classifyTransportMessage (const juce::MidiMessage& message);
+
+    struct MonitorOutputHandler;
+    std::unique_ptr<MonitorOutputHandler> monitorOutputHandler;
+    juce::AudioDeviceManager monitorDeviceManager;
+    juce::AudioBuffer<float> monitorRingBuffer;
+    juce::AbstractFifo monitorFifo { 32768 };
+    std::atomic<bool> monitorOutputActive { false };
 
     // AudioPlayHead: how a DAW communicates tempo/transport to the plugin.
     juce::Optional<juce::AudioPlayHead::PositionInfo> getPosition() const override;
@@ -141,6 +227,12 @@ private:
     std::atomic<bool> transportPlayRequest { false };
     std::atomic<bool> transportStopRequest { false };
 
+    std::unique_ptr<juce::MidiOutput> midiOutput;
+    juce::String midiOutputIdentifier;
+    juce::CriticalSection sysexLock;
+    juce::Array<juce::MidiMessage> pendingSysex;
+    std::atomic<bool> collectSysex { false };
+
     std::atomic<bool> hostClockEnabled { false };
     std::atomic<bool> hostClockPlaying { false };
     std::atomic<double> hostClockBpm { 120.0 };
@@ -156,4 +248,29 @@ private:
     int pendingClickOffset { -1 };
 
     std::atomic<bool> allowInstrumentAudioInput { false };
+
+    HardwareLoopSettings hardwareSettings;
+    std::atomic<bool> hardwareMode { false };
+    float hardwareFade { 0.0f };
+    int hardwareFadeLengthSamples { 441 };
+    juce::AudioBuffer<float> latencyBuffer;
+    int latencyWritePos { 0 };
+    int latencyCapacity { 0 };
+    std::atomic<float> returnPeakL { 0.0f };
+    std::atomic<float> returnPeakR { 0.0f };
+    std::atomic<float> returnRms { 0.0f };
+    std::atomic<float> sendRms { 0.0f };
+    std::atomic<float> sendPeakL { 0.0f };
+    std::atomic<float> sendPeakR { 0.0f };
+    std::atomic<bool> softwareEffectMuted { false };
+
+    // Special playback/record modes used by latency detect and hardware capture.
+    enum class LoopOp { idle, calibrate, capture };
+    std::atomic<LoopOp> loopOp { LoopOp::idle };
+    juce::AudioBuffer<float> loopPlayBuffer;
+    int loopPlayPosition { 0 };
+    juce::AudioBuffer<float> loopRecordBuffer;
+    int loopRecordPosition { 0 };
+    int loopRecordCapacity { 0 };
+    std::atomic<bool> loopOpFinished { false };
 };

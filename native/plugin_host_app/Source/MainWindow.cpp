@@ -2,12 +2,17 @@
 #include "AboutDialog.h"
 #include "AddPluginDialog.h"
 #include "AuPluginScanner.h"
+#include "HardwareAudioSetupDialog.h"
+#include "HardwareVuMeters.h"
 #include "HostLog.h"
 #include "HostPreferences.h"
+#include "MidiEndpointInfo.h"
+#include "MidiSetupDialog.h"
 #include "OfflineCapture.h"
 #include "SessionSnap.h"
 #include "SettingsDialog.h"
 #include "Utf8.h"
+#include "sysex/SysexDeviceRegistry.h"
 
 #if JUCE_MAC
  #include "LightsOutManager_mac.h"
@@ -1007,6 +1012,9 @@ public:
         addAndMakeVisible (editorViewport);
         editorViewport.setViewedComponent (&editorPlaceholder, false);
 
+        hardwareMeterPanel = std::make_unique<HardwareLoopMeterPanel> (engine);
+        addChildComponent (*hardwareMeterPanel);
+
         populatePluginBox();
         populatePresets();
         populateFixtures();
@@ -1018,12 +1026,33 @@ public:
                 HostLog::error (clickError);
         }
 
+        {
+            const auto hw = HostPreferences::get().getHardwareLoopSettings();
+            engine.setHardwareLoopSettings (hw);
+
+            juce::String midiError;
+            engine.setMidiOutputDevice (HostPreferences::get().getMidiOutIdentifier(), midiError);
+            if (midiError.isNotEmpty())
+                HostLog::error (midiError);
+
+            const auto dumpIn = HostPreferences::get().getMidiDumpInIdentifier();
+            if (dumpIn.isNotEmpty())
+            {
+                auto ids = engine.getSelectedMidiInputIdentifiers();
+                if (! ids.contains (dumpIn))
+                    ids.add (dumpIn);
+                engine.setMidiInputDevices (ids);
+            }
+        }
+
         loadPluginWithoutEditor();
         startTimerHz (30);
+        refreshHardwareModeUi();
     }
 
     ~MainContent() override
     {
+        hardwareMeterPanel.reset();
         engine.stopFixture();
         engine.stopAudioDevice();
         destroyPluginEditor();
@@ -1035,6 +1064,229 @@ public:
     void openAbout()
     {
         showAboutDialog (this);
+    }
+
+    void openHardwareAudioSetup()
+    {
+        if (showHardwareAudioSetupDialog (engine, config.fixturesDir, this))
+            refreshHardwareModeUi();
+    }
+
+    void openMidiSetup()
+    {
+        showMidiSetupDialog (engine, this);
+    }
+
+    void refreshHardwareModeUi()
+    {
+        const bool hw = engine.isHardwareMode();
+
+        if (hw)
+        {
+            presetLabel.setText ("HW State", juce::dontSendNotification);
+            loadPresetButton.setButtonText ("Send");
+            populateHardwareStates();
+            showHardwareMeters();
+        }
+        else
+        {
+            presetLabel.setText ("Preset", juce::dontSendNotification);
+            loadPresetButton.setButtonText ("Load");
+            populatePresets();
+            showPluginEditorArea();
+        }
+
+        savePresetButton.setEnabled (! hw);
+        savePresetNameEditor.setEnabled (! hw);
+        savePresetNameLabel.setEnabled (! hw);
+        bypassButton.setEnabled (! hw);
+    }
+
+    void showHardwareMeters()
+    {
+        // Tear down the editor view only — plugin instance and its state stay loaded.
+        destroyPluginEditor();
+        editorViewport.setVisible (false);
+
+        if (hardwareMeterPanel != nullptr)
+        {
+            hardwareMeterPanel->setVisible (true);
+            hardwareMeterPanel->toFront (false);
+            resized();
+        }
+    }
+
+    void showPluginEditorArea()
+    {
+        if (hardwareMeterPanel != nullptr)
+            hardwareMeterPanel->setVisible (false);
+
+        editorViewport.setVisible (true);
+
+        if (engine.getPlugin() != nullptr && pluginEditor == nullptr)
+            recreatePluginEditor();
+        else
+            layoutEditor();
+    }
+
+    void populateHardwareStates()
+    {
+        presetBox.clear (juce::dontSendNotification);
+        hardwareStateFiles.clear();
+
+        if (config.plugins.isEmpty())
+            return;
+
+        const auto sessionDir = config.sessionsRoot.getChildFile (HostConfig::slugify (currentPlugin().sessionName));
+        const auto artifactsDir = sessionDir.getChildFile ("artifacts");
+        if (artifactsDir.isDirectory())
+        {
+            for (const auto& file : artifactsDir.findChildFiles (juce::File::findFiles, false, "*.syx"))
+                hardwareStateFiles.add (file);
+        }
+
+        // Also scan sibling session artifact folders for convenience.
+        if (config.sessionsRoot.isDirectory())
+        {
+            for (const auto& session : config.sessionsRoot.findChildFiles (juce::File::findDirectories, false))
+            {
+                const auto art = session.getChildFile ("artifacts");
+                if (! art.isDirectory())
+                    continue;
+                for (const auto& file : art.findChildFiles (juce::File::findFiles, false, "*.syx"))
+                    if (! hardwareStateFiles.contains (file))
+                        hardwareStateFiles.add (file);
+            }
+        }
+
+        struct FileComparator
+        {
+            static int compareElements (const juce::File& a, const juce::File& b)
+            {
+                return a.getFileName().compareNatural (b.getFileName());
+            }
+        } comparator;
+        hardwareStateFiles.sort (comparator);
+
+        for (int i = 0; i < hardwareStateFiles.size(); ++i)
+            presetBox.addItem (hardwareStateFiles[i].getFileNameWithoutExtension(), i + 1);
+
+        if (presetBox.getNumItems() > 0)
+            presetBox.setSelectedItemIndex (0, juce::dontSendNotification);
+    }
+
+    void sendSelectedHardwareState()
+    {
+        const int index = presetBox.getSelectedId() - 1;
+        if (! juce::isPositiveAndBelow (index, hardwareStateFiles.size()))
+        {
+            setStatus ("No hardware state selected", true);
+            return;
+        }
+
+        const auto file = hardwareStateFiles[index];
+        juce::MemoryBlock data;
+        if (! file.loadFileAsData (data) || data.getSize() < 4)
+        {
+            setStatus ("Failed to read " + file.getFileName(), true);
+            return;
+        }
+
+        const auto* bytes = static_cast<const uint8_t*> (data.getData());
+        int offset = 0;
+        int length = (int) data.getSize();
+        if (bytes[0] == 0xf0)
+        {
+            offset = 1;
+            length -= 1;
+            if (length > 0 && bytes[data.getSize() - 1] == 0xf7)
+                --length;
+        }
+
+        const auto message = juce::MidiMessage::createSysExMessage (bytes + offset, length);
+
+        const auto outId = HostPreferences::get().getMidiOutIdentifier();
+        const auto info = findMidiEndpointInfo (outId, true);
+        const auto* module = SysexDeviceRegistry::get().findModule (info.manufacturer, info.model, info.name);
+
+        juce::Array<juce::MidiMessage> messages;
+        if (module != nullptr)
+            messages = module->restoreDump (message);
+        else
+            messages.add (message);
+
+        if (! engine.sendMidiMessages (messages))
+        {
+            setStatus ("MIDI output not configured — open MIDI Setup", true);
+            return;
+        }
+
+        setStatus ("Sent " + file.getFileName() + " to hardware");
+    }
+
+    bool captureHardwareSysex (const juce::File& sysexOut, juce::String& error)
+    {
+        const auto outId = HostPreferences::get().getMidiOutIdentifier();
+        if (outId.isEmpty())
+        {
+            error = "No MIDI out configured";
+            return false;
+        }
+
+        const auto info = findMidiEndpointInfo (outId, true);
+        const auto* module = SysexDeviceRegistry::get().findModule (info.manufacturer, info.model, info.name);
+        if (module == nullptr)
+        {
+            error = "No sysex module for " + info.name;
+            return false;
+        }
+
+        juce::String openError;
+        if (! engine.setMidiOutputDevice (outId, openError))
+        {
+            error = openError;
+            return false;
+        }
+
+        const auto dumpIn = HostPreferences::get().getMidiDumpInIdentifier();
+        if (dumpIn.isNotEmpty())
+        {
+            auto ids = engine.getSelectedMidiInputIdentifiers();
+            if (! ids.contains (dumpIn))
+            {
+                ids.add (dumpIn);
+                engine.setMidiInputDevices (ids);
+            }
+        }
+
+        if (! engine.sendMidiMessage (module->buildDumpRequest()))
+        {
+            error = "Failed to send dump request";
+            return false;
+        }
+
+        juce::MidiMessage dump;
+        if (! engine.waitForSysexDump (
+                [module] (const juce::MidiMessage& m) { return module->isDumpResponse (m); },
+                dump, 5000, error))
+            return false;
+
+        if (! module->validateDump (dump))
+        {
+            error = "Received sysex failed validation";
+            return false;
+        }
+
+        // Write raw .syx including F0/F7 for interchange.
+        juce::MemoryBlock block;
+        block.append (dump.getRawData(), (size_t) dump.getRawDataSize());
+        if (! sysexOut.replaceWithData (block.getData(), block.getSize()))
+        {
+            error = "Failed to write " + sysexOut.getFullPathName();
+            return false;
+        }
+
+        return true;
     }
 
     void openSettings()
@@ -1360,6 +1612,8 @@ public:
         bounds.removeFromTop (4);
 
         editorViewport.setBounds (bounds);
+        if (hardwareMeterPanel != nullptr)
+            hardwareMeterPanel->setBounds (bounds);
         layoutEditor();
     }
 
@@ -1857,6 +2111,12 @@ private:
         {
             HostLog::error ("Plugin reported no editor for " + currentPlugin().displayLabel());
         }
+
+        // createEditor() intentionally suspends DSP during UI construction.
+        // When toggling back from hardware meters, audio is already running, so
+        // resume processing immediately to avoid a dry/no-input path.
+        if (engine.getDeviceManager().getCurrentAudioDevice() != nullptr)
+            engine.setPluginProcessingSuspended (false);
     }
 
     void loadSelectedPreset()
@@ -2206,7 +2466,10 @@ private:
     {
         if (button == &loadPresetButton)
         {
-            loadSelectedPreset();
+            if (engine.isHardwareMode())
+                sendSelectedHardwareState();
+            else
+                loadSelectedPreset();
             return;
         }
 
@@ -2312,10 +2575,14 @@ private:
                            lastCaptureDescription.isNotEmpty() ? lastCaptureDescription : "snapshot",
                            "Description");
         aw->addComboBox ("role", { "golden", "suspect", "broken" }, "Type");
+        aw->addComboBox ("source", { "Rendered plugin", "Hardware", "Both" }, "Capture");
 
         if (auto* roleBox = aw->getComboBoxComponent ("role"))
             roleBox->setSelectedItemIndex (juce::jlimit (0, 2, lastCaptureRoleIndex),
                                            juce::dontSendNotification);
+        if (auto* sourceBox = aw->getComboBoxComponent ("source"))
+            sourceBox->setSelectedItemIndex (juce::jlimit (0, 2, lastCaptureSourceIndex),
+                                             juce::dontSendNotification);
 
         aw->addButton ("Capture", 1, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -2334,14 +2601,20 @@ private:
                                      if (auto* roleBox = dialog->getComboBoxComponent ("role"))
                                          roleIndex = juce::jmax (0, roleBox->getSelectedItemIndex());
 
+                                     int sourceIndex = 0;
+                                     if (auto* sourceBox = dialog->getComboBoxComponent ("source"))
+                                         sourceIndex = juce::jmax (0, sourceBox->getSelectedItemIndex());
+
                                      safe->lastCaptureDescription = description;
                                      safe->lastCaptureRoleIndex = roleIndex;
-                                     safe->captureTestCase (description, roleIndex);
+                                     safe->lastCaptureSourceIndex = sourceIndex;
+                                     dialog.reset();
+                                     safe->captureTestCase (description, roleIndex, sourceIndex);
                                  }),
                              true);
     }
 
-    void captureTestCase (const juce::String& snapshotName, int roleIndex)
+    void captureTestCase (const juce::String& snapshotName, int roleIndex, int sourceIndex)
     {
         if (snapshotName.isEmpty())
         {
@@ -2356,9 +2629,18 @@ private:
             return;
         }
 
-        if (engine.getPlugin() == nullptr)
+        const bool wantPlugin = (sourceIndex == 0 || sourceIndex == 2);
+        const bool wantHardware = (sourceIndex == 1 || sourceIndex == 2);
+
+        if (wantPlugin && engine.getPlugin() == nullptr)
         {
             setStatus ("No plugin loaded", true);
+            return;
+        }
+
+        if (wantHardware && ! engine.hasHardwareLoopConfigured())
+        {
+            setStatus ("Configure Hardware Audio Setup before capturing hardware", true);
             return;
         }
 
@@ -2371,37 +2653,128 @@ private:
         const auto keyword = keywordFromDescription (snapshotName);
         const auto token = juce::Uuid().toString().substring (0, 8);
         const auto stem = keyword.isNotEmpty() ? keyword + "_" + token : token;
-        // Always dump the live plugin state — never copy the selected library
-        // .aupreset, which may be stale after UI tweaks.
         const auto presetOut = captureDir.getChildFile (stem + ".aupreset");
         const auto roleSuffix = artifactRoleCode (roleIndex);
         const auto outputOut = captureDir.getChildFile (stem + "_output_" + roleSuffix + ".wav");
+        const auto hwOutputOut = captureDir.getChildFile (stem + "_output_hw_" + roleSuffix + ".wav");
+        const auto sysexOut = captureDir.getChildFile (stem + ".syx");
 
         juce::String error;
-        if (! engine.saveCurrentPreset (presetOut, error))
+        const bool originalHardwareMode = engine.isHardwareMode();
+
+        struct HardwareModeRestore
         {
-            setStatus ("Failed to save preset: " + error, true);
-            return;
+            PluginAudioEngine& engineRef;
+            MainContent& owner;
+            bool restoreHardwareMode;
+            ~HardwareModeRestore()
+            {
+                engineRef.setHardwareMode (restoreHardwareMode);
+                owner.refreshHardwareModeUi();
+            }
+        } restoreMode { engine, *this, originalHardwareMode };
+
+        auto showCaptureMode = [this] (bool hardwareMode)
+        {
+            if (engine.isHardwareMode() != hardwareMode)
+                engine.setHardwareMode (hardwareMode);
+            refreshHardwareModeUi();
+        };
+
+        if (wantPlugin)
+        {
+            showCaptureMode (false);
+
+            if (! engine.saveCurrentPreset (presetOut, error))
+            {
+                setStatus ("Failed to save preset: " + error, true);
+                return;
+            }
         }
 
         engine.stopFixture();
-        engine.stopAudioDevice();
 
-        OfflineCaptureOptions renderOptions;
-        if (! OfflineCapture::renderPluginToFile (*engine.getPlugin(), fixtureFile, outputOut, renderOptions, error))
+        if (wantPlugin)
         {
-            engine.startAudioDevice (error);
-            setStatus ("Offline capture failed: " + error, true);
-            return;
+            engine.stopAudioDevice();
+
+            OfflineCaptureOptions renderOptions;
+            if (! OfflineCapture::renderPluginToFile (*engine.getPlugin(), fixtureFile, outputOut, renderOptions, error))
+            {
+                juce::String restartError;
+                if (! engine.startAudioDevice (restartError))
+                    HostLog::error ("Failed to restart audio after offline capture failure: " + restartError);
+                setStatus ("Offline capture failed: " + error, true);
+                return;
+            }
+
+            if (! engine.startAudioDevice (error))
+            {
+                setStatus ("Capture rendered but audio restart failed: " + error, true);
+                return;
+            }
         }
 
-        engine.startAudioDevice (error);
+        if (wantHardware)
+        {
+            showCaptureMode (true);
 
-        if (! registerSnapshot (snapshotName, fixtureFile, outputOut, presetOut, error))
+            std::atomic<bool> cancelRequested { false };
+            juce::AlertWindow progress ("Capturing Hardware",
+                                        "Recording hardware return... press Cancel to stop.",
+                                        juce::MessageBoxIconType::NoIcon,
+                                        this);
+            progress.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            if (auto* cancelButton = progress.getButton ("Cancel"))
+                cancelButton->onClick = [&cancelRequested] { cancelRequested.store (true); };
+            progress.setAlwaysOnTop (true);
+            progress.centreAroundComponent (this, 460, 190);
+            progress.enterModalState (true, nullptr, false);
+
+            if (! engine.captureHardwareToFile (fixtureFile, hwOutputOut, 1.0, -60.0, 120.0, error, &cancelRequested))
+            {
+                progress.exitModalState (0);
+                setStatus ("Hardware capture failed: " + error, true);
+                return;
+            }
+            progress.exitModalState (0);
+
+            juce::String sysexError;
+            if (! captureHardwareSysex (sysexOut, sysexError))
+                HostLog::info ("Sysex dump skipped: " + sysexError);
+        }
+
+        SessionSnapRequest request;
+        request.sessionsRoot = config.sessionsRoot;
+        request.sessionName = currentPlugin().sessionName;
+        request.snapshotName = snapshotName;
+        request.inputFile = fixtureFile;
+        if (wantPlugin)
+        {
+            request.outputFile = outputOut;
+            request.presetFile = presetOut;
+        }
+        if (wantHardware)
+        {
+            request.hardwareOutputFile = hwOutputOut;
+            if (sysexOut.existsAsFile())
+                request.sysexFile = sysexOut;
+        }
+        request.pluginPath = currentPlugin().identifierForLoad();
+        request.notes = "Captured from AU Effects Explorer";
+
+        if (! SessionSnap::registerSnapshot (request, error))
         {
             setStatus ("Capture saved to disk but session update failed: " + error, true);
             return;
         }
+
+        if (engine.isHardwareMode())
+            populateHardwareStates();
+
+        if (auto* window = findParentComponentOfClass<MainWindow>())
+            window->setLightsOutEnabled (false);
+        captureDir.revealToUser();
 
         setStatus ("Captured test case: " + snapshotName);
     }
@@ -2472,13 +2845,16 @@ private:
     juce::Rectangle<int> controlStripDivider;
     juce::Viewport editorViewport;
     juce::Component editorPlaceholder;
+    std::unique_ptr<HardwareLoopMeterPanel> hardwareMeterPanel;
     juce::AudioProcessorEditor* pluginEditor { nullptr };
     juce::Array<juce::File> presetFiles;
+    juce::Array<juce::File> hardwareStateFiles;
     juce::Array<juce::File> fixtureFiles;
     juce::Component* keyListenerOwner { nullptr };
     juce::ScopedMessageBox replacePresetDialog;
     juce::String lastCaptureDescription { "snapshot" };
     int lastCaptureRoleIndex { 2 }; // broken
+    int lastCaptureSourceIndex { 0 }; // rendered plugin
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContent)
 };
@@ -2513,9 +2889,10 @@ MainWindow::MainWindow (HostConfig hostConfig)
     addKeyListener (this);
 
 #if JUCE_MAC
-    juce::Timer::callAfterDelay (0, []
+    juce::Timer::callAfterDelay (0, [safe = juce::Component::SafePointer<MainWindow> (this)]
     {
-        lightsOutSyncMenuItem (false);
+        if (safe != nullptr)
+            safe->syncNativeMenuShortcuts();
     });
 #endif
 
@@ -2555,15 +2932,7 @@ void MainWindow::toggleLightsOut()
     lightsOut.setHostWindow (this);
     lightsOut.setEnabled (! lightsOut.isEnabled());
     menuItemsChanged();
-
-#if JUCE_MAC
-    // JUCE rebuilds the native menu after menuItemsChanged() and clears key equivalents.
-    const bool ticked = lightsOut.isEnabled();
-    juce::Timer::callAfterDelay (0, [ticked]
-    {
-        lightsOutSyncMenuItem (ticked);
-    });
-#endif
+    syncNativeMenuShortcuts();
 }
 
 void MainWindow::toggleLightsOutFromMenu()
@@ -2575,6 +2944,68 @@ void MainWindow::toggleLightsOutFromMenu()
                                   });
 }
 
+void MainWindow::toggleHardwareMode()
+{
+    if (engine == nullptr || ! engine->hasHardwareLoopConfigured())
+        return;
+
+    engine->setHardwareMode (! engine->isHardwareMode());
+    refreshHardwareUi();
+    menuItemsChanged();
+    syncNativeMenuShortcuts();
+}
+
+void MainWindow::toggleHardwareModeFromMenu()
+{
+    juce::Timer::callAfterDelay (150, [safe = juce::Component::SafePointer<MainWindow> (this)]
+                                  {
+                                      if (safe != nullptr)
+                                          safe->toggleHardwareMode();
+                                  });
+}
+
+void MainWindow::openHardwareAudioSetup()
+{
+    if (auto* mainContent = dynamic_cast<MainContent*> (getContentComponent()))
+        mainContent->openHardwareAudioSetup();
+}
+
+void MainWindow::openMidiSetup()
+{
+    if (auto* mainContent = dynamic_cast<MainContent*> (getContentComponent()))
+        mainContent->openMidiSetup();
+}
+
+void MainWindow::refreshHardwareUi()
+{
+    if (auto* mainContent = dynamic_cast<MainContent*> (getContentComponent()))
+        mainContent->refreshHardwareModeUi();
+}
+
+void MainWindow::setLightsOutEnabled (bool shouldEnable)
+{
+    lightsOut.setHostWindow (this);
+    if (lightsOut.isEnabled() == shouldEnable)
+        return;
+
+    lightsOut.setEnabled (shouldEnable);
+    menuItemsChanged();
+    syncNativeMenuShortcuts();
+}
+
+void MainWindow::syncNativeMenuShortcuts()
+{
+#if JUCE_MAC
+    const bool lightsTicked = lightsOut.isEnabled();
+    const bool hwTicked = engine != nullptr && engine->isHardwareMode();
+    juce::Timer::callAfterDelay (0, [lightsTicked, hwTicked]
+    {
+        lightsOutSyncMenuItem (lightsTicked);
+        nativeSyncMenuItem ("Use Hardware", "u", true, false, hwTicked, true);
+    });
+#endif
+}
+
 bool MainWindow::keyPressed (const juce::KeyPress& key, juce::Component* originatingComponent)
 {
     juce::ignoreUnused (originatingComponent);
@@ -2582,6 +3013,12 @@ bool MainWindow::keyPressed (const juce::KeyPress& key, juce::Component* origina
     if (key == juce::KeyPress ('l', juce::ModifierKeys::commandModifier, 0))
     {
         toggleLightsOut();
+        return true;
+    }
+
+    if (key == juce::KeyPress ('u', juce::ModifierKeys::commandModifier, 0))
+    {
+        toggleHardwareMode();
         return true;
     }
 
@@ -2602,10 +3039,21 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
     juce::ignoreUnused (menuName);
     juce::PopupMenu menu;
 
-#if JUCE_MAC
-    if (topLevelMenuIndex == 0)
+    auto addSessionItems = [this, &menu]()
     {
         menu.addItem (menuCaptureTestCase, "Capture Test Case...");
+        menu.addSeparator();
+        menu.addItem (menuHardwareAudioSetup, "Hardware Audio Setup...");
+        menu.addItem (menuMidiSetup, "MIDI Setup...");
+        {
+            juce::PopupMenu::Item item;
+            item.itemID = menuUseHardware;
+            item.text = "Use Hardware";
+            item.isTicked = engine != nullptr && engine->isHardwareMode();
+            item.isEnabled = engine != nullptr && engine->hasHardwareLoopConfigured();
+            item.shortcutKeyDescription = "Cmd+U";
+            menu.addItem (std::move (item));
+        }
         menu.addSeparator();
         {
             juce::PopupMenu::Item item;
@@ -2615,7 +3063,11 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
             item.shortcutKeyDescription = "Cmd+L";
             menu.addItem (std::move (item));
         }
-    }
+    };
+
+#if JUCE_MAC
+    if (topLevelMenuIndex == 0)
+        addSessionItems();
     else if (topLevelMenuIndex == 1)
     {
         menu.addItem (menuAddPlugin, "Add Plugin...");
@@ -2629,18 +3081,7 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
         menu.addItem (menuSettings, "Settings...");
     }
     else if (topLevelMenuIndex == 1)
-    {
-        menu.addItem (menuCaptureTestCase, "Capture Test Case...");
-        menu.addSeparator();
-        {
-            juce::PopupMenu::Item item;
-            item.itemID = menuLightsOut;
-            item.text = "Lights Out";
-            item.isTicked = lightsOut.isEnabled();
-            item.shortcutKeyDescription = "Cmd+L";
-            menu.addItem (std::move (item));
-        }
-    }
+        addSessionItems();
     else if (topLevelMenuIndex == 2)
     {
         menu.addItem (menuAddPlugin, "Add Plugin...");
@@ -2671,12 +3112,15 @@ void MainWindow::menuItemSelected (int menuItemID, int topLevelMenuIndex)
 
                                          switch (menuItemID)
                                          {
-                                             case menuAbout:            mainContent->openAbout(); break;
-                                             case menuSettings:         mainContent->openSettings(); break;
-                                             case menuCaptureTestCase:  mainContent->openCaptureTestCase(); break;
-                                             case menuLightsOut:        window->toggleLightsOutFromMenu(); break;
-                                             case menuAddPlugin:        mainContent->openAddPlugin(); break;
-                                             case menuRescanPlugins:    mainContent->rescanPlugins(); break;
+                                             case menuAbout:               mainContent->openAbout(); break;
+                                             case menuSettings:            mainContent->openSettings(); break;
+                                             case menuCaptureTestCase:     mainContent->openCaptureTestCase(); break;
+                                             case menuLightsOut:           window->toggleLightsOutFromMenu(); break;
+                                             case menuHardwareAudioSetup:  window->openHardwareAudioSetup(); break;
+                                             case menuMidiSetup:           window->openMidiSetup(); break;
+                                             case menuUseHardware:         window->toggleHardwareModeFromMenu(); break;
+                                             case menuAddPlugin:           mainContent->openAddPlugin(); break;
+                                             case menuRescanPlugins:       mainContent->rescanPlugins(); break;
                                              default: break;
                                          }
                                      });
