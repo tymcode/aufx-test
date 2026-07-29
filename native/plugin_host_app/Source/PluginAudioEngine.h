@@ -99,7 +99,8 @@ public:
                                 double silenceThresholdDb,
                                 double maxTailSeconds,
                                 juce::String& error,
-                                const std::atomic<bool>* cancelRequested = nullptr);
+                                const std::atomic<bool>* cancelRequested = nullptr,
+                                double targetDurationSeconds = 0.0);
 
     /** Available hardware/virtual MIDI inputs (Audio MIDI Setup style names). */
     juce::Array<juce::MidiDeviceInfo> getMidiInputDevices() const;

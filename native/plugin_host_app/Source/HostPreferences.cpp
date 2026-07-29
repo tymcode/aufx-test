@@ -213,6 +213,13 @@ juce::String HostPreferences::getMidiDumpInIdentifier() const
     return {};
 }
 
+juce::String HostPreferences::getMidiSysexModule() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getValue (keyMidiSysexModule);
+    return {};
+}
+
 void HostPreferences::setMidiOutIdentifier (const juce::String& identifier)
 {
     if (auto* s = settings())
@@ -237,6 +244,18 @@ void HostPreferences::setMidiDumpInIdentifier (const juce::String& identifier)
     }
 }
 
+void HostPreferences::setMidiSysexModule (const juce::String& moduleName)
+{
+    if (auto* s = settings())
+    {
+        if (moduleName.isEmpty())
+            s->removeValue (keyMidiSysexModule);
+        else
+            s->setValue (keyMidiSysexModule, moduleName);
+        s->saveIfNeeded();
+    }
+}
+
 void HostPreferences::clearPrefs()
 {
     if (auto* s = settings())
@@ -256,6 +275,7 @@ void HostPreferences::clearPrefs()
         s->removeValue (keyHwLatencySamples);
         s->removeValue (keyMidiOutIdentifier);
         s->removeValue (keyMidiDumpInIdentifier);
+        s->removeValue (keyMidiSysexModule);
         s->saveIfNeeded();
     }
 }

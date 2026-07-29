@@ -1207,7 +1207,7 @@ public:
 
         const auto outId = HostPreferences::get().getMidiOutIdentifier();
         const auto info = findMidiEndpointInfo (outId, true);
-        const auto* module = SysexDeviceRegistry::get().findModule (info.manufacturer, info.model, info.name);
+        const auto* module = resolveSelectedSysexModule (info);
 
         juce::Array<juce::MidiMessage> messages;
         if (module != nullptr)
@@ -1234,7 +1234,7 @@ public:
         }
 
         const auto info = findMidiEndpointInfo (outId, true);
-        const auto* module = SysexDeviceRegistry::get().findModule (info.manufacturer, info.model, info.name);
+        const auto* module = resolveSelectedSysexModule (info);
         if (module == nullptr)
         {
             error = "No sysex module for " + info.name;
@@ -1287,6 +1287,20 @@ public:
         }
 
         return true;
+    }
+
+    const SysexDeviceModule* resolveSelectedSysexModule (const MidiEndpointInfo& info) const
+    {
+        const auto selectedName = HostPreferences::get().getMidiSysexModule().trim();
+        const auto& modules = SysexDeviceRegistry::get().getModules();
+        if (selectedName.isNotEmpty())
+        {
+            for (const auto& module : modules)
+                if (module != nullptr && module->getDisplayName() == selectedName)
+                    return module.get();
+        }
+
+        return SysexDeviceRegistry::get().findModule (info.manufacturer, info.model, info.name);
     }
 
     void openSettings()
@@ -2661,6 +2675,7 @@ private:
 
         juce::String error;
         const bool originalHardwareMode = engine.isHardwareMode();
+        double renderedDurationSeconds = 0.0;
 
         struct HardwareModeRestore
         {
@@ -2713,6 +2728,14 @@ private:
                 setStatus ("Capture rendered but audio restart failed: " + error, true);
                 return;
             }
+
+            juce::AudioFormatManager fm;
+            fm.registerBasicFormats();
+            if (auto reader = std::unique_ptr<juce::AudioFormatReader> (fm.createReaderFor (outputOut)))
+            {
+                if (reader->sampleRate > 1.0)
+                    renderedDurationSeconds = (double) reader->lengthInSamples / reader->sampleRate;
+            }
         }
 
         if (wantHardware)
@@ -2721,17 +2744,19 @@ private:
 
             std::atomic<bool> cancelRequested { false };
             juce::AlertWindow progress ("Capturing Hardware",
-                                        "Recording hardware return... press Cancel to stop.",
+                                        "Recording hardware return... press Cancel to stop and save.",
                                         juce::MessageBoxIconType::NoIcon,
                                         this);
             progress.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
             if (auto* cancelButton = progress.getButton ("Cancel"))
                 cancelButton->onClick = [&cancelRequested] { cancelRequested.store (true); };
             progress.setAlwaysOnTop (true);
-            progress.centreAroundComponent (this, 460, 190);
+            progress.setSize (340, 160);
+            progress.setCentreRelative (0.5f, 0.4f);
             progress.enterModalState (true, nullptr, false);
 
-            if (! engine.captureHardwareToFile (fixtureFile, hwOutputOut, 1.0, -60.0, 120.0, error, &cancelRequested))
+            if (! engine.captureHardwareToFile (fixtureFile, hwOutputOut, 1.0, -60.0, 120.0, error,
+                                                &cancelRequested, renderedDurationSeconds))
             {
                 progress.exitModalState (0);
                 setStatus ("Hardware capture failed: " + error, true);

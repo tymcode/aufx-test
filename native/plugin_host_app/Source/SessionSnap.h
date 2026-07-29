@@ -10,7 +10,9 @@ struct SessionSnapRequest
     juce::String snapshotName;
     juce::File inputFile;
     juce::File outputFile;
+    juce::File hardwareOutputFile; // optional latency-corrected hardware capture
     juce::File presetFile;
+    juce::File sysexFile; // optional hardware state dump
     juce::String pluginPath;
     juce::String notes { "Captured from AU Effects Explorer" };
 };

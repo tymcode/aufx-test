@@ -13,6 +13,10 @@ namespace
         const auto stem = outputFile.getFileNameWithoutExtension();
         for (const auto* role : { "gld", "sus", "bkn" })
         {
+            const auto hwSuffix = juce::String ("_output_hw_") + role;
+            if (stem.endsWith (hwSuffix))
+                return role;
+
             const auto suffix = juce::String ("_output_") + role;
             if (stem.endsWith (suffix))
                 return role;
@@ -25,6 +29,10 @@ namespace
         auto stem = outputFile.getFileNameWithoutExtension();
         for (const auto* role : { "gld", "sus", "bkn" })
         {
+            const auto hwSuffix = juce::String ("_output_hw_") + role;
+            if (stem.endsWith (hwSuffix))
+                return stem.dropLastCharacters (hwSuffix.length());
+
             const auto suffix = juce::String ("_output_") + role;
             if (stem.endsWith (suffix))
                 return stem.dropLastCharacters (suffix.length());
@@ -86,11 +94,16 @@ bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::Str
         error = "Snapshot name is empty";
         return false;
     }
-    if (! request.outputFile.existsAsFile())
+
+    const bool hasPluginOut = request.outputFile.existsAsFile();
+    const bool hasHwOut = request.hardwareOutputFile.existsAsFile();
+    if (! hasPluginOut && ! hasHwOut)
     {
-        error = "Output file missing: " + request.outputFile.getFullPathName();
+        error = "No output audio file to register";
         return false;
     }
+
+    const auto primaryOut = hasPluginOut ? request.outputFile : request.hardwareOutputFile;
 
     const auto sessionDir = request.sessionsRoot.getChildFile (HostConfig::slugify (request.sessionName));
     const auto artifactsDir = sessionDir.getChildFile ("artifacts");
@@ -112,8 +125,8 @@ bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::Str
     if (request.pluginPath.isNotEmpty() && root->getProperty ("plugin_path").toString().isEmpty())
         root->setProperty ("plugin_path", request.pluginPath);
 
-    const auto stem = baseStemFromOutput (request.outputFile);
-    const auto role = parseOutputRole (request.outputFile);
+    const auto stem = baseStemFromOutput (primaryOut);
+    const auto role = parseOutputRole (primaryOut);
     const auto snapId = snapshotIdFromStem (stem);
 
     // Stage input into artifacts when needed.
@@ -133,17 +146,30 @@ bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::Str
         inputRel = "artifacts/" + inputDest.getFileName();
     }
 
-    juce::String outputRel = "artifacts/" + request.outputFile.getFileName();
-    if (request.outputFile.getParentDirectory() != artifactsDir)
+    auto stageOutput = [&] (const juce::File& file, juce::String& rel) -> bool
     {
-        const auto dest = artifactsDir.getChildFile (request.outputFile.getFileName());
-        if (! request.outputFile.copyFileTo (dest))
+        if (! file.existsAsFile())
+            return true;
+
+        rel = "artifacts/" + file.getFileName();
+        if (file.getParentDirectory() != artifactsDir)
         {
-            error = "Failed to copy output into artifacts";
-            return false;
+            const auto dest = artifactsDir.getChildFile (file.getFileName());
+            if (! file.copyFileTo (dest))
+            {
+                error = "Failed to copy output into artifacts";
+                return false;
+            }
+            rel = "artifacts/" + dest.getFileName();
         }
-        outputRel = "artifacts/" + dest.getFileName();
-    }
+        return true;
+    };
+
+    juce::String outputRel, hwOutputRel;
+    if (hasPluginOut && ! stageOutput (request.outputFile, outputRel))
+        return false;
+    if (hasHwOut && ! stageOutput (request.hardwareOutputFile, hwOutputRel))
+        return false;
 
     juce::String presetRel;
     if (request.presetFile.existsAsFile())
@@ -173,14 +199,38 @@ bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::Str
         presetRel = "artifacts/" + dest.getFileName();
     }
 
+    juce::String sysexRel;
+    if (request.sysexFile.existsAsFile())
+    {
+        const auto dest = artifactsDir.getChildFile (stem + ".syx");
+        if (request.sysexFile.getFullPathName() != dest.getFullPathName())
+        {
+            if (! request.sysexFile.copyFileTo (dest)
+                && request.sysexFile.getParentDirectory() != artifactsDir)
+            {
+                error = "Failed to stage sysex into artifacts";
+                return false;
+            }
+            if (request.sysexFile.getParentDirectory() == artifactsDir
+                && request.sysexFile.getFileName() != dest.getFileName())
+                request.sysexFile.moveFileTo (dest);
+        }
+        sysexRel = "artifacts/" + dest.getFileName();
+    }
+
     auto* snap = new juce::DynamicObject();
     snap->setProperty ("name", request.snapshotName);
     snap->setProperty ("parameters", juce::var (new juce::DynamicObject()));
     if (inputRel.isNotEmpty())
         snap->setProperty ("input_audio", inputRel);
-    snap->setProperty ("output_audio", outputRel);
+    if (outputRel.isNotEmpty())
+        snap->setProperty ("output_audio", outputRel);
+    if (hwOutputRel.isNotEmpty())
+        snap->setProperty ("output_audio_hw", hwOutputRel);
     if (presetRel.isNotEmpty())
         snap->setProperty ("preset_file", presetRel);
+    if (sysexRel.isNotEmpty())
+        snap->setProperty ("sysex_file", sysexRel);
     snap->setProperty ("notes", request.notes);
     snap->setProperty ("tags", juce::var (juce::Array<juce::var>{}));
     snap->setProperty ("id", snapId.isNotEmpty() ? snapId : juce::Uuid().toString().substring (0, 8));

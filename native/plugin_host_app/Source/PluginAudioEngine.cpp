@@ -1777,7 +1777,8 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
                                                double silenceThresholdDb,
                                                double maxTailSeconds,
                                                juce::String& error,
-                                               const std::atomic<bool>* cancelRequested)
+                                               const std::atomic<bool>* cancelRequested,
+                                               double targetDurationSeconds)
 {
     if (! hardwareSettings.isConfigured())
     {
@@ -1843,10 +1844,17 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
 
     const float silenceThresh = juce::Decibels::decibelsToGain ((float) silenceThresholdDb);
     const int silenceHold = juce::jmax (1, (int) (deviceSampleRate * tailSilenceSeconds));
+    const int targetUsableSamples = targetDurationSeconds > 0.0
+                                        ? (int) std::llround (targetDurationSeconds * deviceSampleRate)
+                                        : 0;
+    const int targetSlackSamples = targetUsableSamples > 0
+                                        ? juce::jmax (deviceBlockSize * 2, (int) (deviceSampleRate * 0.25))
+                                        : 0;
     int silentSamples = 0;
     bool pastFixture = false;
     int lastRecorded = -1;
     int stagnantIterations = 0;
+    bool stopRequested = false;
 
     const auto deadline = juce::Time::getMillisecondCounterHiRes()
                           + (maxTailSeconds + (double) fixtureSamples / deviceSampleRate + 5.0) * 1000.0;
@@ -1856,8 +1864,8 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
         if (cancelRequested != nullptr && cancelRequested->load())
         {
             loopOp.store (LoopOp::idle);
-            error = "Capture cancelled";
-            return false;
+            stopRequested = true;
+            break;
         }
 
         juce::Thread::sleep (10);
@@ -1880,6 +1888,15 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
 
         if (loopPlayPosition >= fixtureSamples)
             pastFixture = true;
+
+        const int usableNow = juce::jmax (0, recorded - hardwareSettings.latencySamples);
+        if (pastFixture && targetUsableSamples > 0
+            && usableNow >= targetUsableSamples + targetSlackSamples)
+        {
+            loopOp.store (LoopOp::idle);
+            loopOpFinished.store (true);
+            break;
+        }
 
         if (pastFixture && recorded > hardwareSettings.latencySamples + fixtureSamples)
         {
@@ -1906,15 +1923,15 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
 
     loopOp.store (LoopOp::idle);
 
-    if (cancelRequested != nullptr && cancelRequested->load())
-    {
-        error = "Capture cancelled";
-        return false;
-    }
-
     const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
     const int latency = juce::jlimit (0, recorded, hardwareSettings.latencySamples);
     const int usable = recorded - latency;
+    if (stopRequested && usable <= 0)
+    {
+        error = "Capture cancelled before usable audio was recorded";
+        return false;
+    }
+
     if (usable <= 0)
     {
         error = "Hardware capture produced no usable audio (check latency / routing)";
