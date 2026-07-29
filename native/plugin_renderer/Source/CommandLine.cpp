@@ -17,7 +17,7 @@ bool CommandLineOptions::parse (const juce::StringArray& args, juce::String& err
         if (arg == "--plugin")
         {
             if (++i >= args.size()) { error = "Missing value for --plugin"; return false; }
-            pluginPath = juce::File (args[i]);
+            pluginRef = args[i];
         }
         else if (arg == "--input")
         {
@@ -94,10 +94,20 @@ bool CommandLineOptions::parse (const juce::StringArray& args, juce::String& err
 
 bool CommandLineOptions::validateForRender (juce::String& error) const
 {
-    if (! pluginPath.exists())
+    if (pluginRef.trim().isEmpty())
     {
-        error = "Plugin not found: " + pluginPath.getFullPathName();
+        error = "Missing --plugin";
         return false;
+    }
+
+    if (! pluginRef.startsWithIgnoreCase ("AudioUnit:"))
+    {
+        const juce::File pluginPath (pluginRef);
+        if (! pluginPath.exists())
+        {
+            error = "Plugin not found: " + pluginPath.getFullPathName();
+            return false;
+        }
     }
 
     if (! inputPath.existsAsFile())
@@ -141,10 +151,20 @@ bool CommandLineOptions::validateForRender (juce::String& error) const
 
 bool CommandLineOptions::validateForDump (juce::String& error) const
 {
-    if (! pluginPath.exists())
+    if (pluginRef.trim().isEmpty())
     {
-        error = "Plugin not found: " + pluginPath.getFullPathName();
+        error = "Missing --plugin";
         return false;
+    }
+
+    if (! pluginRef.startsWithIgnoreCase ("AudioUnit:"))
+    {
+        const juce::File pluginPath (pluginRef);
+        if (! pluginPath.exists())
+        {
+            error = "Plugin not found: " + pluginPath.getFullPathName();
+            return false;
+        }
     }
 
     if (presetPath.existsAsFile() == false && presetPath.getFullPathName().isNotEmpty())

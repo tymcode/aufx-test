@@ -47,17 +47,6 @@ namespace
 
         presentationOptionsActive = false;
     }
-
-    NSMenuItem* findLightsOutMenuItem (NSMenu* menu)
-    {
-        for (NSMenuItem* item in [menu itemArray])
-        {
-            if ([[item title] isEqualToString: @"Lights Out"])
-                return item;
-        }
-
-        return nil;
-    }
 }
 
 void lightsOutShowOverlays()
@@ -122,6 +111,23 @@ void lightsOutSetPresentationMode (bool enable)
 
 void lightsOutSyncMenuItem (bool isTicked)
 {
+    nativeSyncMenuItem ("Lights Out", "l", true, false, isTicked, true);
+}
+
+void nativeSyncMenuItem (const char* titleUtf8,
+                         const char* keyEquivalentUtf8,
+                         bool command,
+                         bool shift,
+                         bool isTicked,
+                         bool applyTick)
+{
+    NSString* const title = [NSString stringWithUTF8String: titleUtf8];
+    NSString* const key = [NSString stringWithUTF8String: keyEquivalentUtf8 != nullptr ? keyEquivalentUtf8 : ""];
+    const bool tick = isTicked;
+    const bool doTick = applyTick;
+    const bool useCommand = command;
+    const bool useShift = shift;
+
     dispatch_async (dispatch_get_main_queue(), ^{
         NSMenu* const mainMenu = [NSApp mainMenu];
         if (mainMenu == nil)
@@ -133,11 +139,24 @@ void lightsOutSyncMenuItem (bool isTicked)
             if (subMenu == nil)
                 continue;
 
-            if (NSMenuItem* item = findLightsOutMenuItem (subMenu))
+            for (NSMenuItem* item in [subMenu itemArray])
             {
-                [item setKeyEquivalent: @"l"];
-                [item setKeyEquivalentModifierMask: NSEventModifierFlagCommand];
-                [item setState: isTicked ? NSControlStateValueOn : NSControlStateValueOff];
+                if (! [[item title] isEqualToString: title])
+                    continue;
+
+                if ([key length] > 0)
+                {
+                    [item setKeyEquivalent: key];
+                    NSEventModifierFlags mask = 0;
+                    if (useCommand)
+                        mask |= NSEventModifierFlagCommand;
+                    if (useShift)
+                        mask |= NSEventModifierFlagShift;
+                    [item setKeyEquivalentModifierMask: mask];
+                }
+
+                if (doTick)
+                    [item setState: tick ? NSControlStateValueOn : NSControlStateValueOff];
                 return;
             }
         }

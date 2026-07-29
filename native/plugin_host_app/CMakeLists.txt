@@ -76,6 +76,11 @@ target_sources(plugin_host_app
         Source/AddPluginDialog.cpp
         Source/AboutDialog.cpp
         Source/LightsOutManager.cpp
+        Source/HardwareAudioSetupDialog.cpp
+        Source/MidiSetupDialog.cpp
+        Source/MidiEndpointInfo.cpp
+        Source/sysex/SysexDeviceRegistry.cpp
+        Source/sysex/QuadraverbSysex.cpp
         ${AUFX_GEN_DIR}/AppVersion.cpp
         ../plugin_renderer/Source/AUpresetLoader.cpp
         ../plugin_renderer/Source/ParameterHelpers.cpp)
@@ -139,12 +144,15 @@ if(APPLE)
     target_sources(plugin_host_app PRIVATE Source/HostPreferences_mac.mm)
     target_sources(plugin_host_app PRIVATE Source/LightsOutManager.mm)
     set_source_files_properties(Source/LightsOutManager.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    target_sources(plugin_host_app PRIVATE Source/MidiEndpointInfo_mac.mm)
+    set_source_files_properties(Source/MidiEndpointInfo_mac.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     target_sources(plugin_host_app PRIVATE Source/PluginScannerWorker_mac.mm)
     target_sources(plugin_host_app PRIVATE ../plugin_renderer/Source/AUpresetLoader_mac.mm)
     target_link_libraries(plugin_host_app PRIVATE
         "-framework AppKit"
         "-framework Foundation"
-        "-framework CoreFoundation")
+        "-framework CoreFoundation"
+        "-framework CoreMIDI")
 else()
     target_sources(plugin_host_app PRIVATE Source/AUpresetSaver.cpp)
     target_compile_definitions(plugin_host_app PRIVATE JUCE_PLUGIN_HOST_NO_MAC_PRESET=1)

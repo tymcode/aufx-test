@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <cmath>
 
 /**
  * Build a juce::String from a UTF-8 narrow literal.
@@ -21,6 +22,31 @@ inline juce::String utf8 (const char* text)
 inline juce::String utf8InfinityDb()
 {
     return utf8 ("-\xE2\x88\x9E" "dB");
+}
+
+/** Peak / level readout in dBFS; silence shows as -∞dB. */
+inline juce::String formatLevelDbfs (double db, double minusInfinityDb = -100.0)
+{
+    if (! std::isfinite (db) || db <= minusInfinityDb)
+        return utf8 ("-\xE2\x88\x9E" "dBFS");
+
+    return juce::String (db, 1) + "dBFS";
+}
+
+/** Relative loop-gain readout in dB; silence / mute shows as -∞dB. */
+inline juce::String formatLevelDb (double db, double minusInfinityDb = -100.0)
+{
+    if (! std::isfinite (db) || db <= minusInfinityDb)
+        return utf8InfinityDb();
+
+    juce::String text;
+
+    if (db > 0.0)
+        text = "+";
+
+    text += juce::String (db, 1);
+    text += "dB";
+    return text;
 }
 
 /** Send slider readout: -∞dB when muted, otherwise one decimal with + on boost. */

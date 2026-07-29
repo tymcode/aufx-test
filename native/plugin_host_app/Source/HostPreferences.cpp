@@ -155,6 +155,107 @@ void HostPreferences::setPluginScanTimeoutMs (int timeoutMs)
     }
 }
 
+HardwareLoopSettings HostPreferences::getHardwareLoopSettings() const
+{
+    HardwareLoopSettings hw;
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+    {
+        hw.deviceName = s->getValue (keyHwDeviceName);
+        hw.sendChannelL = s->getIntValue (keyHwSendL, 2);
+        hw.sendChannelR = s->getIntValue (keyHwSendR, 3);
+        hw.returnChannelL = s->getIntValue (keyHwReturnL, 0);
+        hw.returnChannelR = s->getIntValue (keyHwReturnR, 1);
+        hw.monitorChannelL = s->getIntValue (keyHwMonitorL, 0);
+        hw.monitorChannelR = s->getIntValue (keyHwMonitorR, 1);
+        hw.monitorOutputDeviceName = s->getValue (keyHwMonitorOutputDevice);
+        hw.bufferSize = s->getIntValue (keyHwBufferSize, 512);
+        hw.latencySamples = s->getIntValue (keyHwLatencySamples, 0);
+    }
+    return hw;
+}
+
+void HostPreferences::setHardwareLoopSettings (const HardwareLoopSettings& settings)
+{
+    if (auto* s = this->settings())
+    {
+        if (settings.deviceName.isEmpty())
+            s->removeValue (keyHwDeviceName);
+        else
+            s->setValue (keyHwDeviceName, settings.deviceName);
+
+        s->setValue (keyHwSendL, settings.sendChannelL);
+        s->setValue (keyHwSendR, settings.sendChannelR);
+        s->setValue (keyHwReturnL, settings.returnChannelL);
+        s->setValue (keyHwReturnR, settings.returnChannelR);
+        s->setValue (keyHwMonitorL, settings.monitorChannelL);
+        s->setValue (keyHwMonitorR, settings.monitorChannelR);
+        if (settings.monitorOutputDeviceName.isEmpty())
+            s->removeValue (keyHwMonitorOutputDevice);
+        else
+            s->setValue (keyHwMonitorOutputDevice, settings.monitorOutputDeviceName);
+        s->setValue (keyHwBufferSize, settings.bufferSize);
+        s->setValue (keyHwLatencySamples, settings.latencySamples);
+        s->saveIfNeeded();
+    }
+}
+
+juce::String HostPreferences::getMidiOutIdentifier() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getValue (keyMidiOutIdentifier);
+    return {};
+}
+
+juce::String HostPreferences::getMidiDumpInIdentifier() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getValue (keyMidiDumpInIdentifier);
+    return {};
+}
+
+juce::String HostPreferences::getMidiSysexModule() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getValue (keyMidiSysexModule);
+    return {};
+}
+
+void HostPreferences::setMidiOutIdentifier (const juce::String& identifier)
+{
+    if (auto* s = settings())
+    {
+        if (identifier.isEmpty())
+            s->removeValue (keyMidiOutIdentifier);
+        else
+            s->setValue (keyMidiOutIdentifier, identifier);
+        s->saveIfNeeded();
+    }
+}
+
+void HostPreferences::setMidiDumpInIdentifier (const juce::String& identifier)
+{
+    if (auto* s = settings())
+    {
+        if (identifier.isEmpty())
+            s->removeValue (keyMidiDumpInIdentifier);
+        else
+            s->setValue (keyMidiDumpInIdentifier, identifier);
+        s->saveIfNeeded();
+    }
+}
+
+void HostPreferences::setMidiSysexModule (const juce::String& moduleName)
+{
+    if (auto* s = settings())
+    {
+        if (moduleName.isEmpty())
+            s->removeValue (keyMidiSysexModule);
+        else
+            s->setValue (keyMidiSysexModule, moduleName);
+        s->saveIfNeeded();
+    }
+}
+
 void HostPreferences::clearPrefs()
 {
     if (auto* s = settings())
@@ -163,6 +264,18 @@ void HostPreferences::clearPrefs()
         s->removeValue (keyConfigPath);
         s->removeValue (keyAllowInstrumentAudioInput);
         s->removeValue (keyPluginScanTimeoutMs);
+        s->removeValue (keyHwDeviceName);
+        s->removeValue (keyHwSendL);
+        s->removeValue (keyHwSendR);
+        s->removeValue (keyHwReturnL);
+        s->removeValue (keyHwReturnR);
+        s->removeValue (keyHwMonitorL);
+        s->removeValue (keyHwMonitorR);
+        s->removeValue (keyHwBufferSize);
+        s->removeValue (keyHwLatencySamples);
+        s->removeValue (keyMidiOutIdentifier);
+        s->removeValue (keyMidiDumpInIdentifier);
+        s->removeValue (keyMidiSysexModule);
         s->saveIfNeeded();
     }
 }

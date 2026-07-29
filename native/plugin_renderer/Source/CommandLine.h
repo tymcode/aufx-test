@@ -5,7 +5,7 @@
 
 struct CommandLineOptions
 {
-    juce::File pluginPath;
+    juce::String pluginRef;
     juce::File inputPath;
     juce::File outputPath;
     juce::File presetPath;

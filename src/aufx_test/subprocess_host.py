@@ -18,6 +18,22 @@ class RendererError(RuntimeError):
     """Raised when the external plugin renderer fails."""
 
 
+def _normalise_plugin_ref(value: str | Path) -> str:
+    """Preserve plugin IDs (AudioUnit:...) while resolving filesystem paths."""
+    if isinstance(value, Path):
+        return str(value.expanduser().resolve())
+
+    text = str(value).strip()
+    if not text:
+        return text
+
+    # Renderer accepts plugin identifiers (e.g. AudioUnit:Effects/...).
+    if ":" in text and not text.startswith ("/"):
+        return text
+
+    return str(Path(text).expanduser().resolve())
+
+
 @dataclass
 class SubprocessPluginHost:
     """Drive a plugin through a headless CLI renderer.
@@ -53,12 +69,12 @@ class SubprocessPluginHost:
 
     def __post_init__(self) -> None:
         self.renderer_bin = Path(self.renderer_bin)
-        self.plugin_path = Path(self.plugin_path)
+        self.plugin_path = _normalise_plugin_ref(self.plugin_path)
         if not self.renderer_bin.exists():
             raise FileNotFoundError(f"Renderer binary not found: {self.renderer_bin}")
 
     def load_plugin(self, path: str | Path) -> None:
-        self.plugin_path = Path(path)
+        self.plugin_path = _normalise_plugin_ref(path)
 
     def load_preset(self, path: str | Path) -> None:
         """Load plugin state from an .aupreset file."""

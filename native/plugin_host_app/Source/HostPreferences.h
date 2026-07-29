@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "HostConfig.h"
+#include "HardwareLoopSettings.h"
 
 /** User/system preferences and launch-time path resolution for the standalone app. */
 class HostPreferences
@@ -13,6 +14,19 @@ public:
     static constexpr const char* keyConfigPath = "configPath";
     static constexpr const char* keyAllowInstrumentAudioInput = "allowInstrumentAudioInput";
     static constexpr const char* keyPluginScanTimeoutMs = "pluginScanTimeoutMs";
+    static constexpr const char* keyHwDeviceName = "hwLoopDeviceName";
+    static constexpr const char* keyHwSendL = "hwLoopSendL";
+    static constexpr const char* keyHwSendR = "hwLoopSendR";
+    static constexpr const char* keyHwReturnL = "hwLoopReturnL";
+    static constexpr const char* keyHwReturnR = "hwLoopReturnR";
+    static constexpr const char* keyHwMonitorL = "hwLoopMonitorL";
+    static constexpr const char* keyHwMonitorR = "hwLoopMonitorR";
+    static constexpr const char* keyHwMonitorOutputDevice = "hwLoopMonitorOutputDevice";
+    static constexpr const char* keyHwBufferSize = "hwLoopBufferSize";
+    static constexpr const char* keyHwLatencySamples = "hwLoopLatencySamples";
+    static constexpr const char* keyMidiOutIdentifier = "midiOutIdentifier";
+    static constexpr const char* keyMidiDumpInIdentifier = "midiDumpInIdentifier";
+    static constexpr const char* keyMidiSysexModule = "midiSysexModule";
     static constexpr int defaultPluginScanTimeoutMs = 15000;
     static constexpr int minPluginScanTimeoutMs = 5000;
     static constexpr int maxPluginScanTimeoutMs = 300000;
@@ -34,10 +48,18 @@ public:
     juce::String getConfigPathPref() const;
     bool getAllowInstrumentAudioInput() const;
     int getPluginScanTimeoutMs() const;
+    HardwareLoopSettings getHardwareLoopSettings() const;
+    juce::String getMidiOutIdentifier() const;
+    juce::String getMidiDumpInIdentifier() const;
+    juce::String getMidiSysexModule() const;
     void setExplorationDataRootPref (const juce::String& path);
     void setConfigPathPref (const juce::String& path);
     void setAllowInstrumentAudioInput (bool allow);
     void setPluginScanTimeoutMs (int timeoutMs);
+    void setHardwareLoopSettings (const HardwareLoopSettings& settings);
+    void setMidiOutIdentifier (const juce::String& identifier);
+    void setMidiDumpInIdentifier (const juce::String& identifier);
+    void setMidiSysexModule (const juce::String& moduleName);
     void clearPrefs();
 
     /** Read org-level defaults from /Library/Preferences (macOS). */
