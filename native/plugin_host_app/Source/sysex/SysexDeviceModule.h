@@ -2,7 +2,18 @@
 
 #include <JuceHeader.h>
 
-/** Pluggable MIDI sysex dump/restore for a hardware effects device. */
+/**
+ * Pluggable MIDI sysex dump/restore for a hardware effects device.
+ *
+ * One subclass per device family (currently only the Alesis Quadraverb).
+ * The host uses a module to (a) snapshot the box's program alongside audio
+ * captures, (b) restore a saved .syx to the box, and (c) optionally force a
+ * "dry thru" state for latency calibration on devices whose bypass is an
+ * analog relay rather than DSP-through.
+ *
+ * Modules are registered in SysexDeviceRegistry's constructor; to support a
+ * new device, subclass this and add one registerModule() line there.
+ */
 class SysexDeviceModule
 {
 public:

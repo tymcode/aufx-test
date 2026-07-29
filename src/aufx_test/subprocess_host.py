@@ -19,7 +19,16 @@ class RendererError(RuntimeError):
 
 
 def _normalise_plugin_ref(value: str | Path) -> str:
-    """Preserve plugin IDs (AudioUnit:...) while resolving filesystem paths."""
+    """Preserve plugin IDs (AudioUnit:...) while resolving filesystem paths.
+
+    Session files may record either a plugin bundle path or a JUCE plugin
+    identifier such as ``AudioUnit:Effects/aufx,QDV1,TDSP``. Blindly running
+    identifiers through ``Path.resolve()`` used to turn them into bogus
+    absolute paths (``/repo/AudioUnit:Effects/...``) that the renderer then
+    rejected with "Plugin not found". Heuristic: a colon in a non-absolute
+    string means "identifier, leave it alone" — safe on macOS because POSIX
+    paths here never contain colons.
+    """
     if isinstance(value, Path):
         return str(value.expanduser().resolve())
 

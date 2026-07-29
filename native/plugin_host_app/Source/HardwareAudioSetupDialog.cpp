@@ -1,3 +1,13 @@
+/**
+ * Hardware Audio Setup dialog: pick the loop interface, its send/return/
+ * monitor stereo pairs, an optional separate monitor output device (for
+ * Multi-Output-Device screen-recording setups), buffer size, and loop
+ * latency (manual or impulse-based auto-detect with live VU meters).
+ *
+ * Runs as a modal AlertWindow with a custom panel. While it is open the
+ * software effect is muted (see showHardwareAudioSetupDialog) so the user
+ * hears only the raw hardware loop they are configuring.
+ */
 #include "HardwareAudioSetupDialog.h"
 #include "HardwareVuMeters.h"
 #include "HostPreferences.h"
@@ -39,7 +49,13 @@ namespace
         return index * 2;
     }
 
-    /** Probe a device by name for its full I/O channel lists (not just active masks). */
+    /**
+     * Probe a device by name for its full I/O channel lists (not just active
+     * masks). Creating a throwaway juce::AudioIODevice is the only reliable
+     * way to see every channel: querying the *open* device reports only the
+     * channels currently enabled (an Apollo with just outs 1-2 active would
+     * hide ins 5-6 from the pair dropdowns).
+     */
     bool probeDeviceChannels (juce::AudioDeviceManager& dm,
                               const juce::String& deviceName,
                               juce::StringArray& inputNames,
@@ -191,6 +207,10 @@ namespace
         }
 
     private:
+        // Monitor output dropdown: fixed IDs 1 ("use the loop interface's
+        // monitor pair") and 2 ("follow the system default output") come
+        // first; actual device names start at ID 3. getSettings() and
+        // selectMonitorOutput() both depend on this ID scheme.
         void populateMonitorOutputDevices()
         {
             monitorOutputBox.clear (juce::dontSendNotification);
@@ -245,6 +265,9 @@ namespace
                     return;
                 }
 
+            // Saved device is not currently present (e.g. the Multi-Output
+            // Device only exists on the user's studio machine). Keep it
+            // selectable rather than silently dropping the preference.
             monitorOutputBox.addItem (s.monitorOutputDeviceName, monitorOutputBox.getNumItems() + 3);
             monitorOutputBox.setSelectedId (monitorOutputBox.getNumItems(), juce::dontSendNotification);
         }
@@ -457,6 +480,10 @@ bool showHardwareAudioSetupDialog (PluginAudioEngine& engine,
                                    const juce::File& fixturesDir,
                                    juce::Component* centreAround)
 {
+    // Mute the software plugin while the dialog is open: the Test button
+    // plays the fixture through the hardware loop, and hearing the plugin's
+    // processed version simultaneously made level/latency judgement
+    // impossible. RAII so every exit (Save, Cancel, error) unmutes.
     engine.setSoftwareEffectMuted (true);
     struct UnmuteOnExit
     {

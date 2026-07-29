@@ -1,3 +1,20 @@
+/**
+ * MainWindow.cpp — the entire main UI of AU Effects Explorer.
+ *
+ * Layout of this file (it is intentionally a single translation unit; the
+ * small custom widgets at the top are only used here and would be noise as
+ * separate headers):
+ *   - anonymous-namespace helpers (file collection, slug helpers),
+ *   - small bespoke controls (MidiActivityLed, StatusDisplay, transport /
+ *     loop / click buttons, plugin & MIDI picker fields, chrome sliders),
+ *   - MainWindow::MainContent — the big component owning all controls, the
+ *     plugin editor area / hardware VU panel, and the capture workflows,
+ *   - MainWindow itself — window chrome, native menu bar, Lights Out, and
+ *     global shortcuts.
+ *
+ * TODO: MainContent has grown past 2000 lines; the capture workflow and the
+ * preset/hardware-state management are the natural seams to split along.
+ */
 #include "MainWindow.h"
 #include "AboutDialog.h"
 #include "AddPluginDialog.h"
@@ -866,6 +883,13 @@ private:
     juce::String displayText { "(none)" };
 };
 
+/**
+ * Everything inside the window: the control strip (plugin picker, presets,
+ * transport, send/mix, MIDI), the centre panel that swaps between the
+ * plugin's own editor and the hardware VU meters, and the capture flows.
+ * Owns no audio state itself — it drives PluginAudioEngine and persists
+ * choices through HostPreferences.
+ */
 class MainWindow::MainContent : public juce::Component,
                                 public juce::FileDragAndDropTarget,
                                 private juce::Button::Listener,
@@ -1077,6 +1101,14 @@ public:
         showMidiSetupDialog (engine, this);
     }
 
+    /**
+     * Re-skin the main view for the active monitoring mode. Hardware mode
+     * repurposes the preset row for hardware state (.syx) files and swaps the
+     * plugin editor for send/return VU meters; software mode restores the
+     * normal preset workflow. Deliberately reuses the same controls rather
+     * than maintaining two parallel component sets — only labels, button
+     * text, and the centre panel change.
+     */
     void refreshHardwareModeUi()
     {
         const bool hw = engine.isHardwareMode();
@@ -1224,6 +1256,13 @@ public:
         setStatus ("Sent " + file.getFileName() + " to hardware");
     }
 
+    /**
+     * Snapshot the external box's current program alongside an audio capture:
+     * send the module's dump request, block (with a pumped message loop) for
+     * the matching sysex response, validate it, and write a raw .syx.
+     * Failure here is non-fatal to the audio capture — callers log and move
+     * on, since not every rig has the dump-return MIDI path cabled.
+     */
     bool captureHardwareSysex (const juce::File& sysexOut, juce::String& error)
     {
         const auto outId = HostPreferences::get().getMidiOutIdentifier();
@@ -1289,6 +1328,13 @@ public:
         return true;
     }
 
+    /**
+     * Pick the sysex module for the configured MIDI out. The user's explicit
+     * choice (MIDI Setup dropdown) always wins; auto-matching on CoreMIDI
+     * manufacturer/model is only a fallback because MIDI interfaces (e.g.
+     * iConnectMIDI4+) report *their own* identity on every port, not the
+     * identity of the synth/FX unit behind it.
+     */
     const SysexDeviceModule* resolveSelectedSysexModule (const MidiEndpointInfo& info) const
     {
         const auto selectedName = HostPreferences::get().getMidiSysexModule().trim();
@@ -2628,6 +2674,20 @@ private:
                              true);
     }
 
+    /**
+     * The "Capture Test Case" flow: produce reference artifacts (preset,
+     * input clip, rendered output, hardware output, sysex dump) and register
+     * them as a session snapshot for the aufx-test pytest tooling.
+     *
+     * sourceIndex: 0 = software render only, 1 = hardware only, 2 = both.
+     * "Both" runs the offline software render *first* so its duration can be
+     * used as the stop point for the hardware take (see the
+     * renderedDurationSeconds handoff below).
+     *
+     * This method deliberately mutates global-ish state (hardware mode, the
+     * audio device, Lights Out) and restores it via RAII + explicit restarts,
+     * because a failure at any step must leave the app playable.
+     */
     void captureTestCase (const juce::String& snapshotName, int roleIndex, int sourceIndex)
     {
         if (snapshotName.isEmpty())
@@ -2677,6 +2737,10 @@ private:
         const bool originalHardwareMode = engine.isHardwareMode();
         double renderedDurationSeconds = 0.0;
 
+        // RAII guard: the capture switches hardware mode around (software
+        // render wants it off, hardware take wants it on) and has many early
+        // returns; the destructor guarantees the user's original mode and the
+        // matching UI come back no matter which path exits.
         struct HardwareModeRestore
         {
             PluginAudioEngine& engineRef;
@@ -2689,6 +2753,9 @@ private:
             }
         } restoreMode { engine, *this, originalHardwareMode };
 
+        // Flip both the engine and the main view so the user watches the mode
+        // actually being captured (live meters in hardware mode, plugin editor
+        // in software mode) instead of a frozen unrelated UI.
         auto showCaptureMode = [this] (bool hardwareMode)
         {
             if (engine.isHardwareMode() != hardwareMode)
@@ -2711,6 +2778,11 @@ private:
 
         if (wantPlugin)
         {
+            // The offline render drives the live plugin instance directly, so
+            // the realtime device must be fully stopped first (two owners of
+            // processBlock otherwise). Every exit path below restarts it —
+            // an earlier version that didn't left the app deadlocked with a
+            // dead Cancel button when the restart failed silently.
             engine.stopAudioDevice();
 
             OfflineCaptureOptions renderOptions;
@@ -2729,6 +2801,9 @@ private:
                 return;
             }
 
+            // Measure the rendered file's duration so a following hardware
+            // take (in "Both" mode) can stop at the same length; hardware
+            // silence detection alone is unreliable over an analog loop.
             juce::AudioFormatManager fm;
             fm.registerBasicFormats();
             if (auto reader = std::unique_ptr<juce::AudioFormatReader> (fm.createReaderFor (outputOut)))
@@ -2742,6 +2817,14 @@ private:
         {
             showCaptureMode (true);
 
+            // Stack-allocated modal-ish progress window. It works because
+            // captureHardwareToFile pumps the message loop, so the button
+            // stays clickable even though we're "blocking" here. The Cancel
+            // handler only flips an atomic that the capture loop polls —
+            // Cancel means "stop and save", not "abort".
+            // NOTE: onClick is rebound after addButton because AlertWindow's
+            // own button callback would dismiss the modal state before the
+            // capture loop had a chance to finish writing the take.
             std::atomic<bool> cancelRequested { false };
             juce::AlertWindow progress ("Capturing Hardware",
                                         "Recording hardware return... press Cancel to stop and save.",
@@ -2751,6 +2834,9 @@ private:
             if (auto* cancelButton = progress.getButton ("Cancel"))
                 cancelButton->onClick = [&cancelRequested] { cancelRequested.store (true); };
             progress.setAlwaysOnTop (true);
+            // Explicit size before centring: AlertWindow's auto-layout sizes
+            // itself around the text and left-aligns the button row; fixing
+            // the size first keeps the Cancel button centred.
             progress.setSize (340, 160);
             progress.setCentreRelative (0.5f, 0.4f);
             progress.enterModalState (true, nullptr, false);
@@ -2797,6 +2883,9 @@ private:
         if (engine.isHardwareMode())
             populateHardwareStates();
 
+        // Post-capture conveniences requested for the review workflow: drop
+        // out of Lights Out and open the artifacts folder in Finder so the
+        // new files are immediately inspectable.
         if (auto* window = findParentComponentOfClass<MainWindow>())
             window->setLightsOutEnabled (false);
         captureDir.revealToUser();
@@ -2960,6 +3049,10 @@ void MainWindow::toggleLightsOut()
     syncNativeMenuShortcuts();
 }
 
+// Menu-triggered toggles are deferred ~150 ms so AppKit's menu-close
+// animation finishes before we start moving windows / changing presentation
+// options. Doing it synchronously left the menu bar in a half-dismissed
+// state when Lights Out hid it out from under AppKit.
 void MainWindow::toggleLightsOutFromMenu()
 {
     juce::Timer::callAfterDelay (150, [safe = juce::Component::SafePointer<MainWindow> (this)]
@@ -2980,6 +3073,8 @@ void MainWindow::toggleHardwareMode()
     syncNativeMenuShortcuts();
 }
 
+// Same menu-close deferral as toggleLightsOutFromMenu — rebuilding the
+// editor area mid menu-dismiss can drop the click's mouse-up into the new UI.
 void MainWindow::toggleHardwareModeFromMenu()
 {
     juce::Timer::callAfterDelay (150, [safe = juce::Component::SafePointer<MainWindow> (this)]
@@ -3018,6 +3113,11 @@ void MainWindow::setLightsOutEnabled (bool shouldEnable)
     syncNativeMenuShortcuts();
 }
 
+// HACK: JUCE's MenuBarModel does not reliably push tick-state or shortcut
+// changes into the *native* macOS menu bar after setMacMainMenu, so we patch
+// the NSMenuItems directly (see LightsOutManager.mm helpers). Deferred one
+// runloop turn because the native menu may still be rebuilding from
+// menuItemsChanged() when this is called.
 void MainWindow::syncNativeMenuShortcuts()
 {
 #if JUCE_MAC

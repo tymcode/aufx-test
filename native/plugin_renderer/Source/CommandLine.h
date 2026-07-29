@@ -3,8 +3,18 @@
 #include <JuceHeader.h>
 #include <vector>
 
+/**
+ * CLI options for plugin_renderer, the headless render tool the Python
+ * aufx-test package shells out to (see src/aufx_test/subprocess_host.py).
+ * Two modes: offline render (--input/--output/--preset) and parameter dump
+ * (--dump-parameters).
+ */
 struct CommandLineOptions
 {
+    // A juce::String, NOT a juce::File: --plugin accepts either a bundle path
+    // (/Library/.../Foo.component) or a JUCE plugin identifier such as
+    // "AudioUnit:Effects/aufx,QDV1,TDSP". Storing it as a File used to mangle
+    // identifiers into nonexistent absolute paths.
     juce::String pluginRef;
     juce::File inputPath;
     juce::File outputPath;

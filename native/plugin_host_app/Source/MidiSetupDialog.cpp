@@ -1,3 +1,12 @@
+/**
+ * MIDI Setup dialog: pick the MIDI out to the device under test, the MIDI in
+ * that carries its sysex dumps back, and which sysex module to use.
+ *
+ * The module is an explicit dropdown rather than auto-detected because
+ * CoreMIDI metadata identifies the MIDI *interface* (e.g. iConnectMIDI4+ on
+ * every port), not the instrument behind it — matching by manufacturer/model
+ * picked the wrong module or none at all in practice.
+ */
 #include "MidiSetupDialog.h"
 #include "HostPreferences.h"
 #include "MidiEndpointInfo.h"
@@ -28,6 +37,8 @@ namespace
             setSize (460, 160);
         }
 
+        // Item index 0 in both port boxes is the "(none)" entry, so the
+        // endpoint arrays are offset by one from the combo indices.
         juce::String getOutIdentifier() const
         {
             const int i = outBox.getSelectedItemIndex() - 1; // index 0 is "(none)"
@@ -85,6 +96,8 @@ namespace
             for (const auto& module : SysexDeviceRegistry::get().getModules())
                 moduleBox.addItem (module->getDisplayName(), moduleBox.getNumItems() + 1);
 
+            // Restore saved selections by identifier, not by list position —
+            // CoreMIDI enumeration order changes as devices come and go.
             const auto savedOut = HostPreferences::get().getMidiOutIdentifier();
             const auto savedIn = HostPreferences::get().getMidiDumpInIdentifier();
             const auto savedModule = HostPreferences::get().getMidiSysexModule();
@@ -154,6 +167,10 @@ bool showMidiSetupDialog (PluginAudioEngine& engine, juce::Component* centreArou
         return true;
     }
 
+    // The dump-in port is *added to* the engine's active MIDI inputs rather
+    // than replacing them, so a control surface selected in the main UI keeps
+    // working. Swap out the previously saved dump port to avoid accumulating
+    // stale entries as the user changes their mind.
     auto ids = engine.getSelectedMidiInputIdentifiers();
     if (previousDumpInId.isNotEmpty())
         ids.removeString (previousDumpInId);

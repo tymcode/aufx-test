@@ -4,6 +4,12 @@
 #include <memory>
 #include <vector>
 
+/**
+ * Singleton list of all built-in sysex device modules. findModule() is the
+ * CoreMIDI-metadata auto-match fallback; the primary selection path is the
+ * user's explicit choice in MIDI Setup (matched by display name), because
+ * MIDI interfaces usually mask the identity of the device behind them.
+ */
 class SysexDeviceRegistry
 {
 public:

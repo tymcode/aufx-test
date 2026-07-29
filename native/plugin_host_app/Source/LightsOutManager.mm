@@ -1,3 +1,12 @@
+/**
+ * macOS side of "Lights Out": black out every attached display (for critical
+ * listening / clean screen recordings) while keeping the host window on top.
+ *
+ * Implemented as raw borderless NSWindows rather than JUCE components
+ * because the overlays must cover *other* screens, float across Spaces, and
+ * never take key focus from the host — all direct NSWindow behaviors.
+ * Everything here runs on the main thread (AppKit requirement).
+ */
 #include "LightsOutManager_mac.h"
 #import <AppKit/AppKit.h>
 
@@ -92,6 +101,12 @@ void lightsOutSetPresentationMode (bool enable)
 {
     if (enable)
     {
+        // Hiding the menu bar/dock is deferred 150 ms: doing it while AppKit
+        // is still tracking the menu click that triggered Lights Out leaves
+        // the menu bar in a corrupt half-open state. The generation counter
+        // cancels the pending apply if the user toggles off again within the
+        // delay window — otherwise a rapid on/off would *end* with the menu
+        // bar hidden but Lights Out logically off.
         const uint64_t generation = ++presentationGeneration;
 
         dispatch_after (dispatch_time (DISPATCH_TIME_NOW, (int64_t) (0.15 * NSEC_PER_SEC)),
@@ -105,6 +120,8 @@ void lightsOutSetPresentationMode (bool enable)
         return;
     }
 
+    // Disable path bumps the generation (invalidating any pending apply) and
+    // restores synchronously — restoring is safe mid-menu-tracking.
     ++presentationGeneration;
     restorePresentationOptions();
 }
@@ -114,6 +131,16 @@ void lightsOutSyncMenuItem (bool isTicked)
     nativeSyncMenuItem ("Lights Out", "l", true, false, isTicked, true);
 }
 
+/**
+ * HACK: patch a native NSMenuItem (shortcut glyph + checkmark) by searching
+ * the main menu for its title. JUCE rebuilds the mac main menu from its
+ * MenuBarModel but does not reliably re-apply tick state or key equivalents
+ * on that rebuild, so MainWindow::syncNativeMenuShortcuts() calls this after
+ * every toggle. Title-based lookup is fragile by design-tradeoff: it avoids
+ * keeping NSMenuItem references across JUCE's menu rebuilds (which would
+ * dangle). If a menu item is renamed, its sync silently stops — keep titles
+ * here and in getMenuForIndex() in lockstep.
+ */
 void nativeSyncMenuItem (const char* titleUtf8,
                          const char* keyEquivalentUtf8,
                          bool command,

@@ -49,6 +49,9 @@ public:
     }
 
 private:
+    // Asymmetric ballistics: fast attack so transients register, slower
+    // release so the bar is readable — coefficients tuned by eye at the
+    // panel's 30 Hz refresh, not derived from any VU standard.
     static float smoothToward (float current, float target)
     {
         constexpr float attack = 0.55f;
@@ -113,6 +116,8 @@ public:
     }
 
 private:
+    // 30 Hz UI-thread poll of the engine's atomic peak values — no audio
+    // thread involvement, so a stalled UI can never glitch audio.
     void timerCallback() override
     {
         sendMeter.setLevels (engine.getSendPeakL(), engine.getSendPeakR());

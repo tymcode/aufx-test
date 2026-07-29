@@ -16,6 +16,12 @@ namespace
 
         juce::OwnedArray<juce::PluginDescription> descriptions;
 
+        // findAllTypesForFile accepts both bundle paths and format-specific
+        // identifiers ("AudioUnit:Effects/aufx,QDV1,TDSP"), which is exactly
+        // why pluginRef is a string — no path normalisation happens here.
+        // Unlike the interactive host, the discovery instantiate/teardown is
+        // fine in this process: it renders headless, so the Cocoa-UI-loss
+        // issue that makes the host avoid findAllTypesForFile doesn't apply.
         for (auto* format : formatManager.getFormats())
         {
             if (format == nullptr)
@@ -126,6 +132,11 @@ namespace
             appendBlock (outputBuffer, block);
         }
 
+        // Tail rendering: keep feeding silence so reverbs/delays ring out.
+        // Stop once the output stays under the silence threshold for the
+        // configured hold time, then trim that trailing silence so renders
+        // are deterministic in length; maxTail is the runaway guard for
+        // self-oscillating patches.
         int consecutiveSilentSamples = 0;
         int tailSamplesRendered = 0;
         bool tailSilenceReached = false;
