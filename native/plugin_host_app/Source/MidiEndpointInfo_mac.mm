@@ -40,6 +40,19 @@ namespace
         return strcmp (lhs, rhs) == 0;
     }
 
+    /**
+     * Find the endpoint with the given display name and pull manufacturer/
+     * model from the most specific CoreMIDI object that has them: endpoint
+     * first, then its entity, then the parent device. Endpoints frequently
+     * have neither property set (the driver puts them on the device object),
+     * and multi-port interfaces may expose nothing meaningful at all — in
+     * which case the strings stay empty and callers show "(unknown)".
+     *
+     * Matching is by name because that is all juce::MidiDeviceInfo exposes;
+     * duplicate endpoint names would return the first hit. Acceptable for a
+     * single-interface test rig. TODO: match on kMIDIPropertyUniqueID if
+     * multi-interface setups ever matter.
+     */
     bool lookupInList (bool sources, const char* endpointName,
                        char* manufacturerOut, size_t manufacturerSize,
                        char* modelOut, size_t modelSize)
@@ -113,6 +126,7 @@ int midiEndpointLookupMeta (const char* endpointName,
 
 #else
 
+// Non-Apple stub: no CoreMIDI, so metadata is simply unavailable.
 int midiEndpointLookupMeta (const char*, char* manufacturerOut, size_t manufacturerSize,
                             char* modelOut, size_t modelSize)
 {

@@ -4,6 +4,28 @@
 #include <atomic>
 #include "HardwareLoopSettings.h"
 
+/**
+ * The audio core of AU Effects Explorer. One instance owns:
+ *
+ *  - the hosted plugin (AU/VST3) and its lifecycle (load, preset save/restore,
+ *    editor creation with the suspend-during-UI-init workaround),
+ *  - the CoreAudio device (via juce::AudioDeviceManager) and the realtime
+ *    render callback that feeds the fixture clip through the plugin,
+ *  - the optional *hardware insert loop*: a send stereo pair (to an external
+ *    effects box), a return stereo pair (back from the box), a delay line for
+ *    latency compensation, and a crossfaded software/hardware monitor switch,
+ *  - an optional *second* output device ("monitor output") so playthrough can
+ *    be routed to a macOS Multi-Output Device (e.g. interface + BlackHole)
+ *    for screen recording — see the monitorDeviceManager notes below,
+ *  - MIDI in/out for control surfaces, host clock generation, and sysex
+ *    dump/restore of external hardware state.
+ *
+ * Threading model: the UI (message thread) calls the setters, which are all
+ * atomics or take processLock; audioDeviceIOCallbackWithContext runs on the
+ * CoreAudio realtime thread and only reads those atomics. Blocking operations
+ * (latency detect, hardware capture) run on the message thread and pump the
+ * dispatch loop while the audio callback records — see captureHardwareToFile.
+ */
 class PluginAudioEngine : public juce::AudioIODeviceCallback,
                           private juce::MidiInputCallback,
                           private juce::AudioPlayHead
@@ -92,6 +114,25 @@ public:
     /**
      * Record the return pair while playing fixtureFile through the send pair.
      * Trims configured latency from the head and extends through silence tail.
+     *
+     * BLOCKING KLUDGE: this runs on the message thread and pumps the dispatch
+     * loop in 10 ms slices while the realtime callback does the actual play/
+     * record (LoopOp::capture). A worker thread would be cleaner, but the
+     * capture UI is modal anyway and the message pump keeps the progress
+     * dialog and its Cancel button responsive with far less machinery.
+     * TODO: move to a juce::ThreadWithProgressWindow if this ever needs to be
+     * non-modal.
+     *
+     * End-of-capture detection, in priority order:
+     *  1. cancelRequested — treated as "stop and save what we have" (returns
+     *     false only if nothing usable was recorded yet),
+     *  2. targetDurationSeconds > 0 — stop shortly after that much audio is
+     *     usable. Used by "Capture Both": the offline software render tells us
+     *     how long the hardware take should be. Needed because analog return
+     *     paths have a noise floor that can defeat silence detection,
+     *  3. silence tail — classic "quiet for N seconds after the clip ended",
+     *  4. stall detection — if the record position stops advancing for ~30 s
+     *     the device is wedged; bail instead of spinning forever.
      */
     bool captureHardwareToFile (const juce::File& fixtureFile,
                                 const juce::File& outputFile,
@@ -147,6 +188,14 @@ public:
      */
     void setAllowInstrumentAudioInput (bool allow);
     bool getAllowInstrumentAudioInput() const { return allowInstrumentAudioInput.load(); }
+
+    /**
+     * Explicit suspend/resume for the hosted plugin (under processLock).
+     * Exists because createEditor() intentionally leaves DSP suspended while
+     * heavyweight (WebView/Cocoa) editors initialise; callers that rebuild an
+     * editor while audio is already running must resume afterwards or the
+     * plugin stays silent — see MainWindow::recreatePluginEditor().
+     */
     void setPluginProcessingSuspended (bool shouldSuspend);
 
     void audioDeviceAboutToStart (juce::AudioIODevice* device) override;
@@ -188,6 +237,19 @@ private:
     bool openConfiguredAudioDevice (juce::String& error);
     static PendingTransport classifyTransportMessage (const juce::MidiMessage& message);
 
+    // --- Separate monitor output device ------------------------------------
+    // Why a second AudioDeviceManager: the loop device (e.g. UA Apollo) is
+    // opened exclusively for send/return, so writing playthrough to its
+    // monitor pair bypasses macOS system audio entirely — screen recorders
+    // capturing via a Multi-Output Device (interface + BlackHole) hear
+    // nothing from this app. When HardwareLoopSettings names a separate
+    // monitor output, playthrough is pushed into a lock-free FIFO on the loop
+    // device's callback and pulled by this second device's callback.
+    // The two devices free-run on independent clocks; drift is tolerated
+    // because monitoring is non-critical (the FIFO under/overruns manifest as
+    // an occasional dropout, never as corruption of the captured audio).
+    // TODO: add a resampling bridge if long screen-recording sessions drift
+    // audibly.
     struct MonitorOutputHandler;
     std::unique_ptr<MonitorOutputHandler> monitorOutputHandler;
     juce::AudioDeviceManager monitorDeviceManager;
@@ -252,8 +314,13 @@ private:
 
     HardwareLoopSettings hardwareSettings;
     std::atomic<bool> hardwareMode { false };
+    // Equal-power crossfade position between software monitor (0) and
+    // hardware return (1); ~8 ms ramp, same feel as the bypass button.
     float hardwareFade { 0.0f };
     int hardwareFadeLengthSamples { 441 };
+    // Circular delay line holding the hardware return so it can be read back
+    // latencySamples late, time-aligning it with the software path.
+    // Only touched on the audio thread.
     juce::AudioBuffer<float> latencyBuffer;
     int latencyWritePos { 0 };
     int latencyCapacity { 0 };
@@ -265,7 +332,12 @@ private:
     std::atomic<float> sendPeakR { 0.0f };
     std::atomic<bool> softwareEffectMuted { false };
 
-    // Special playback/record modes used by latency detect and hardware capture.
+    // Special playback/record modes used by latency detect and hardware
+    // capture. While loopOp != idle the audio callback ignores the normal
+    // fixture/plugin path and instead streams loopPlayBuffer out of the send
+    // pair while recording the return pair into loopRecordBuffer. Buffers are
+    // pre-allocated to worst case on the message thread before the op starts,
+    // so the audio thread never allocates.
     enum class LoopOp { idle, calibrate, capture };
     std::atomic<LoopOp> loopOp { LoopOp::idle };
     juce::AudioBuffer<float> loopPlayBuffer;

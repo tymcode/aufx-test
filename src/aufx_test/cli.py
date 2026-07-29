@@ -88,10 +88,16 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     # Convenience mode:
     #   aufx-test compare --root <sessions_root> <session_name> <snapshot_id>
     # Compares the hardware capture against the software/rendered output from
-    # that snapshot (output_audio_hw vs output_audio).
+    # that snapshot (output_audio_hw vs output_audio). The positional args are
+    # repurposed as session/snapshot names rather than adding a separate
+    # subcommand so the muscle memory of "compare A B" carries over.
     if args.root is not None:
         session = _load_session(args.actual, args.root)
         snap = session.get_snapshot(args.expected)
+        # Read session.json directly: output_audio_hw is written by the native
+        # host (SessionSnap.cpp) and isn't part of the ExperimentSession
+        # snapshot dataclass. TODO: add hardware fields to the dataclass and
+        # drop this raw-JSON sidestep.
         payload = json.loads(session.session_file.read_text())
         snap_json = next((s for s in payload.get("snapshots", []) if s.get("id") == snap.id), None)
 
@@ -173,6 +179,15 @@ def _list_session_folders(root: Path) -> list[str]:
 
 
 def _load_session(name: str, root: Path) -> ExperimentSession:
+    """Resolve a session by folder name, slugified name, or explicit path.
+
+    Deliberately forgiving because sessions are created from two places (this
+    CLI and the native host app, which slugifies display names) and users type
+    whichever name they remember. Falls back to scanning every session.json
+    under root and matching on the stored display name. Note the default root
+    is ./sessions relative to the CWD — pass --root when working against the
+    host app's sessions dir (~/Library/AU Effects Explorer/sessions).
+    """
     candidates = [
         root / name,
         root / _slug(name),

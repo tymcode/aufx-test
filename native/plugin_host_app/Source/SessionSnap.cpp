@@ -1,3 +1,13 @@
+/**
+ * Native re-implementation of `aufx-test session snap`: stage capture
+ * artifacts into <session>/artifacts/ and append a snapshot entry to
+ * session.json. Kept byte-compatible with the Python session module in
+ * src/aufx_test/session.py — the pytest tooling reads what this writes, so
+ * any schema change must land in both places.
+ * TODO: extract the shared schema (field names, role suffixes) into one
+ * generated definition instead of maintaining the two implementations by
+ * convention.
+ */
 #include "SessionSnap.h"
 #include "HostConfig.h"
 
@@ -8,6 +18,10 @@ namespace
         return juce::Time::getCurrentTime().toISO8601 (true);
     }
 
+    // Artifact names encode a role suffix chosen at capture time:
+    //   <stem>_output_gld.wav      software render, "golden" reference
+    //   <stem>_output_hw_sus.wav   hardware capture, "suspect"
+    // gld/sus/bkn map to golden/suspect/broken; "hw" marks the hardware take.
     juce::String parseOutputRole (const juce::File& outputFile)
     {
         const auto stem = outputFile.getFileNameWithoutExtension();
@@ -42,6 +56,9 @@ namespace
         return stem;
     }
 
+    // The 8-char token appended at capture time (e.g. "drums_3f2a91cc")
+    // doubles as the snapshot id so filenames and session.json stay
+    // cross-referencable by eye.
     juce::String snapshotIdFromStem (const juce::String& stem)
     {
         if (stem.containsChar ('_'))
@@ -49,6 +66,8 @@ namespace
         return stem;
     }
 
+    // Only golden captures are expected to match the reference in regression
+    // runs; suspect/broken snapshots exist to *document* a mismatch.
     bool expectMatchForRole (const juce::String& role)
     {
         return role != "sus" && role != "bkn";

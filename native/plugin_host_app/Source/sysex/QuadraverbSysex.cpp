@@ -5,6 +5,15 @@ namespace
     // F0 00 00 0E 02 03 64 F7 — edit buffer dump request (original Quadraverb / Plus)
     constexpr uint8_t dumpRequestBytes[] = { 0xf0, 0x00, 0x00, 0x0e, 0x02, 0x03, 0x64, 0xf7 };
 
+    /**
+     * Build a single-parameter edit for the Quadraverb's sysex command 0x01
+     * ("MIDI Editing", service manual sect. 4). The 16-bit value is packed
+     * into three 7-bit bytes with an unusual left-justified scheme:
+     *   value1 = bits 13..7, value2 = bits 6..0 shifted left one (so the low
+     *   bit of every byte is padding), value3 = remaining padding.
+     * This mirrors the byte layout the unit itself emits; sending a plain
+     * 7-bit value in value2 without the shift is silently ignored.
+     */
     juce::MidiMessage buildParameterEdit (uint8_t functionGroup, uint8_t page, uint16_t value)
     {
         // QV/QV+ "MIDI Editing" packed value format for command 0x01.
@@ -34,6 +43,7 @@ bool QuadraverbSysex::matches (const juce::String& manufacturer,
 
 juce::MidiMessage QuadraverbSysex::buildDumpRequest() const
 {
+    // +1 / -2 strips the F0/F7 framing: createSysExMessage adds its own.
     return juce::MidiMessage::createSysExMessage (dumpRequestBytes + 1, (int) sizeof (dumpRequestBytes) - 2);
 }
 
@@ -69,12 +79,23 @@ bool QuadraverbSysex::validateDump (const juce::MidiMessage& message) const
 
 juce::Array<juce::MidiMessage> QuadraverbSysex::restoreDump (const juce::MidiMessage& dump) const
 {
+    // The Quadraverb accepts its own dump verbatim as a load-edit-buffer
+    // command; no unpacking or re-framing needed.
     juce::Array<juce::MidiMessage> messages;
     if (dump.isSysEx())
         messages.add (dump);
     return messages;
 }
 
+/**
+ * "Dry thru": route audio through the Quadraverb's converters and DSP while
+ * making it acoustically transparent. Needed because the front-panel Bypass
+ * on the QV/QV+ is an *analog* relay path that skips the converters entirely
+ * — useless for measuring the digital loop's latency and gain. Instead we
+ * zero all effect mix levels and run the direct signal at full level.
+ * These edits target the edit buffer only; the user's stored programs are
+ * untouched (capture flows dump the edit buffer first anyway).
+ */
 juce::Array<juce::MidiMessage> QuadraverbSysex::buildDryThruMessages() const
 {
     // Mix function group (8), config 0 mapping:

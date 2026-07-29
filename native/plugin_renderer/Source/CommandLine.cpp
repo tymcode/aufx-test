@@ -100,6 +100,8 @@ bool CommandLineOptions::validateForRender (juce::String& error) const
         return false;
     }
 
+    // "AudioUnit:..." identifiers are resolved by the AU format at load time;
+    // only plain paths can be existence-checked here.
     if (! pluginRef.startsWithIgnoreCase ("AudioUnit:"))
     {
         const juce::File pluginPath (pluginRef);

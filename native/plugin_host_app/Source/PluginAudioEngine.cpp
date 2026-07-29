@@ -7,6 +7,12 @@ namespace
     constexpr double bypassFadeSeconds = 0.008;
     constexpr int monitorRingCapacity = 32768;
 
+    /**
+     * Turn the persisted monitor-output preference into a concrete CoreAudio
+     * device name. The sentinel "<System Default Output>" is stored instead of
+     * a resolved name so the preference keeps following the OS default when
+     * the user changes it in Sound settings; we resolve it lazily here.
+     */
     juce::String resolveMonitorOutputDeviceName (juce::AudioDeviceManager& deviceManager,
                                                  const juce::String& configuredName)
     {
@@ -131,6 +137,13 @@ namespace
     }
 }
 
+/**
+ * Callback for the *second* output device (the separate monitor output).
+ * It only drains the monitor FIFO that the main loop-device callback fills.
+ * A nested struct rather than making the engine itself the callback for both
+ * devices — juce::AudioDeviceManager identifies callbacks by pointer, so the
+ * two devices need distinct callback objects.
+ */
 struct PluginAudioEngine::MonitorOutputHandler : juce::AudioIODeviceCallback
 {
     explicit MonitorOutputHandler (PluginAudioEngine& ownerIn) : owner (ownerIn) {}
@@ -366,6 +379,13 @@ void PluginAudioEngine::setSendLevelDb (float decibels)
         sendGain.store (juce::Decibels::decibelsToGain (decibels));
 }
 
+/**
+ * Open either the plain default stereo output (no hardware loop configured)
+ * or the configured loop interface with *all* of its channels enabled.
+ * Split out of startAudioDevice() so capture flows can re-open the device
+ * after an offline render and surface a real error message instead of
+ * silently hanging (an earlier version deadlocked the capture UI here).
+ */
 bool PluginAudioEngine::openConfiguredAudioDevice (juce::String& error)
 {
     if (! hardwareSettings.isConfigured())
@@ -542,6 +562,11 @@ void PluginAudioEngine::ensureLatencyBufferSize (int numChannels, int capacity)
     latencyCapacity = capacity;
 }
 
+/**
+ * Audio thread: copy the hardware return pair into the circular latency
+ * buffer and update the return meters in the same pass (one loop instead of
+ * two over the input). Mono-safe: a missing right channel mirrors the left.
+ */
 void PluginAudioEngine::pushReturnToLatencyBuffer (const float* const* inputChannelData,
                                                     int numInputChannels,
                                                     int numSamples)
@@ -581,6 +606,11 @@ void PluginAudioEngine::pushReturnToLatencyBuffer (const float* const* inputChan
             returnRms.store ((float) std::sqrt (sumSq / (double) meterSamples));
     }
 
+/**
+ * Audio thread: read the return signal latencySamples behind the write head,
+ * i.e. time-aligned with the software path so A/B'ing hardware vs plugin
+ * doesn't smear transients.
+ */
 void PluginAudioEngine::readDelayedReturn (juce::AudioBuffer<float>& dest, int numSamples)
 {
     dest.clear();
@@ -609,6 +639,11 @@ void PluginAudioEngine::clearOutputChannels (float* const* outputChannelData, in
             juce::FloatVectorOperations::clear (outputChannelData[ch], numSamples);
 }
 
+/**
+ * Route the final stereo monitor mix to wherever the user wants to hear it:
+ * either a channel pair on the loop device itself, or (for screen-recording
+ * setups) the FIFO feeding the separate monitor output device.
+ */
 void PluginAudioEngine::writeMonitorSamples (const juce::AudioBuffer<float>& stereoMonitor,
                                              int numSamples,
                                              float* const* outputChannelData,
@@ -756,12 +791,19 @@ void PluginAudioEngine::stopMonitorOutput()
     monitorRingBuffer.clear();
 }
 
+/**
+ * Equal-power (sin/cos) crossfade between the software plugin output and the
+ * latency-compensated hardware return, ramped over ~8 ms so toggling "Use
+ * Hardware" never clicks. Same shape as applyBypassCrossfade; kept as two
+ * functions because each carries its own fade state and buffer roles.
+ */
 void PluginAudioEngine::applyHardwareMonitorCrossfade (juce::AudioBuffer<float>& softwareBuffer,
                                                        const juce::AudioBuffer<float>& hardwareBuffer,
                                                        int numSamples)
 {
     const float target = hardwareMode.load() ? 1.0f : 0.0f;
 
+    // Fully on the software side and staying there: nothing to mix.
     if (hardwareFade <= 0.0f && target <= 0.0f)
         return;
 
@@ -1321,6 +1363,24 @@ void PluginAudioEngine::applyBypassCrossfade (juce::AudioBuffer<float>& wetBuffe
     bypassFade = fadeEnd;
 }
 
+/**
+ * The realtime render callback. Signal flow per block:
+ *
+ *   fixture clip --> send gain --+--> [send pair] --> external FX box
+ *                                |                        |
+ *                                +--> plugin ---+     [return pair]
+ *                                               |         |
+ *                                               |   latency delay line
+ *                                               v         v
+ *                                     hardware crossfade (sw <-> hw)
+ *                                               |
+ *                                     monitor pair / monitor FIFO
+ *
+ * Two special "loop ops" (latency calibration and hardware capture) hijack
+ * the whole callback: they stream a pre-rendered buffer straight to the send
+ * pair and record the raw return, skipping the plugin entirely, so captured
+ * audio is exactly what the hardware produced.
+ */
 void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
                                                           int numInputChannels,
                                                           float* const* outputChannelData,
@@ -1399,6 +1459,10 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
         sendPeakL.store (peakL);
         sendPeakR.store (peakR);
 
+        // Auto-finish logic. Capture ops are normally ended by the message
+        // thread (silence tail / target duration in captureHardwareToFile);
+        // this is the audio-side backstop: play finished plus 2 s of extra
+        // return, or the record buffer filled.
         const bool playDone = loopPlayPosition >= loopPlayBuffer.getNumSamples();
         const bool recordFull = loopRecordPosition >= loopRecordCapacity;
         if (playDone && (op == LoopOp::calibrate || recordFull
@@ -1422,9 +1486,15 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
         return;
     }
 
+    // Normal path. Process at the wider of device/plugin channel counts so
+    // multi-bus plugins get all their channels; only the first stereo pair is
+    // monitored.
     int processChannels = juce::jmax (1, loopConfigured ? 2 : numOutputChannels);
 
     {
+        // processLock on the audio thread is deliberate: it is only contested
+        // during plugin load/unload and state restore, which already stop or
+        // suspend audio. It guards against processBlock racing plugin.reset().
         const juce::ScopedLock lock (processLock);
 
         if (plugin != nullptr)
@@ -1627,6 +1697,12 @@ bool PluginAudioEngine::sendMidiMessages (const juce::Array<juce::MidiMessage>& 
     return true;
 }
 
+/**
+ * Blocking wait (message thread) for a sysex dump that satisfies the caller's
+ * predicate — used for "dump current program" round-trips with external
+ * hardware. Pumps the dispatch loop while waiting so MIDI callbacks and the
+ * UI stay alive; same pattern as autoDetectLatency / captureHardwareToFile.
+ */
 bool PluginAudioEngine::waitForSysexDump (std::function<bool (const juce::MidiMessage&)> isAcceptable,
                                           juce::MidiMessage& outMessage,
                                           int timeoutMs,
@@ -1718,7 +1794,10 @@ bool PluginAudioEngine::autoDetectLatency (const juce::File& impulseFile,
         return false;
     }
 
-    // Cross-correlate mono impulse against return L (simple time-domain).
+    // Cross-correlate mono impulse against the mono-summed return, brute-force
+    // time domain. O(impulse × lag) is fine here: the impulse is ~2 s and this
+    // runs once per calibration click, not per block.
+    // TODO: switch to FFT-based correlation if calibration ever feels slow.
     juce::AudioBuffer<float> impulseMono (1, impulseSamples);
     for (int i = 0; i < impulseSamples; ++i)
     {
@@ -1806,6 +1885,11 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
                   0,
                   sourceSamples);
 
+    // Resample the fixture to the *device* rate with linear interpolation.
+    // The loop-op playback path streams loopPlayBuffer 1:1 at device rate, so
+    // skipping this played 44.1k fixtures at 48k speed (an early bug heard as
+    // "very slow playback"). Linear interpolation is adequate: the hardware
+    // D/A -> analog FX -> A/D round trip dominates any interpolation error.
     const double sourceRate = reader->sampleRate > 1.0 ? reader->sampleRate : deviceSampleRate;
     const int fixtureSamples = juce::jmax (1, (int) std::llround ((double) sourceSamples * deviceSampleRate / sourceRate));
     loopPlayBuffer.setSize (2, fixtureSamples, false, true, false);
@@ -1844,6 +1928,11 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
 
     const float silenceThresh = juce::Decibels::decibelsToGain ((float) silenceThresholdDb);
     const int silenceHold = juce::jmax (1, (int) (deviceSampleRate * tailSilenceSeconds));
+    // When the caller knows how long the take should be (the "Capture Both"
+    // flow passes the software render's length), stop on duration instead of
+    // relying on silence detection — analog return noise floors can sit above
+    // the silence threshold forever. A quarter-second of slack keeps the
+    // hardware file at least as long as the software one.
     const int targetUsableSamples = targetDurationSeconds > 0.0
                                         ? (int) std::llround (targetDurationSeconds * deviceSampleRate)
                                         : 0;
@@ -1861,6 +1950,9 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
 
     while (juce::Time::getMillisecondCounterHiRes() < deadline)
     {
+        // Cancel means "stop recording, keep what we have" — the user hit
+        // Cancel to end the take, not to throw it away. We only fail below if
+        // nothing usable was recorded yet.
         if (cancelRequested != nullptr && cancelRequested->load())
         {
             loopOp.store (LoopOp::idle);
@@ -1879,6 +1971,11 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
 
         lastRecorded = recorded;
 
+        // Stall detection: if the audio callback stops advancing the record
+        // position (device unplugged, CoreAudio wedged after a device
+        // restart), bail with a diagnosable error instead of spinning until
+        // the deadline. The threshold is generous (~30 s) because a slow
+        // device restart can legitimately pause the callback for a while.
         if (stagnantIterations > 1500) // about 30s with sleep+dispatch cadence
         {
             loopOp.store (LoopOp::idle);
@@ -1923,6 +2020,9 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
 
     loopOp.store (LoopOp::idle);
 
+    // Trim the measured loop latency off the head so the file starts where
+    // the fixture actually started — this keeps hardware captures sample-
+    // aligned with offline software renders for A/B comparison.
     const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
     const int latency = juce::jlimit (0, recorded, hardwareSettings.latencySamples);
     const int usable = recorded - latency;
