@@ -1,4 +1,5 @@
 #include "AddPluginDialog.h"
+#include "HostDialog.h"
 
 AddPluginPanel::AddPluginPanel (const juce::KnownPluginList& list)
 {
@@ -172,15 +173,12 @@ bool showAddPluginDialog (HostConfig& config,
     AddPluginPanel panel (knownList);
     panel.setSize (560, 360);
 
-    juce::AlertWindow window ("Add Plugin",
-                              "Select one or more Audio Units to add to the plugin list.",
-                              juce::MessageBoxIconType::NoIcon,
-                              centreAround);
-    window.addCustomComponent (&panel);
-    window.addButton ("Add", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    window.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-
-    if (window.runModalLoop() != 1)
+    if (HostDialog::runCustomPanelModal (
+            "Add Plugin",
+            "Select one or more Audio Units to add to the plugin list.",
+            panel,
+            centreAround,
+            "Add") != 1)
         return false;
 
     const auto selected = panel.getSelectedPlugins();

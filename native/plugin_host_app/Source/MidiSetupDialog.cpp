@@ -8,6 +8,7 @@
  * picked the wrong module or none at all in practice.
  */
 #include "MidiSetupDialog.h"
+#include "HostDialog.h"
 #include "HostPreferences.h"
 #include "MidiEndpointInfo.h"
 #include "sysex/SysexDeviceRegistry.h"
@@ -140,15 +141,11 @@ bool showMidiSetupDialog (PluginAudioEngine& engine, juce::Component* centreArou
     MidiSetupPanel panel (engine);
     const auto previousDumpInId = HostPreferences::get().getMidiDumpInIdentifier();
 
-    juce::AlertWindow window ("MIDI Setup",
-                              "Choose the MIDI ports for the device under test (sysex dump / restore).",
-                              juce::MessageBoxIconType::NoIcon,
-                              centreAround);
-    window.addCustomComponent (&panel);
-    window.addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    window.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-
-    if (window.runModalLoop() != 1)
+    if (HostDialog::runCustomPanelModal (
+            "MIDI Setup",
+            "Choose the MIDI ports for the device under test (sysex dump / restore).",
+            panel,
+            centreAround) != 1)
         return false;
 
     const auto outId = panel.getOutIdentifier();

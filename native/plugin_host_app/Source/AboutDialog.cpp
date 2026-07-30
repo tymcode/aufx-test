@@ -1,6 +1,7 @@
 #include "AboutDialog.h"
 #include "AppVersion.h"
 #include "BinaryData.h"
+#include "HostDialog.h"
 #include "Utf8.h"
 
 namespace
@@ -76,12 +77,10 @@ namespace
 void showAboutDialog (juce::Component* centreAround)
 {
     AboutPanel panel;
-
-    juce::AlertWindow window ("About AU Effects Explorer",
-                              {},
-                              juce::MessageBoxIconType::NoIcon,
-                              centreAround);
-    window.addCustomComponent (&panel);
-    window.addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    window.runModalLoop();
+    HostDialog::runCustomPanelModal ("About AU Effects Explorer",
+                                     {},
+                                     panel,
+                                     centreAround,
+                                     "OK",
+                                     false);
 }

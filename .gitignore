@@ -20,7 +20,9 @@ tmp/
 test-results/
 sessions/
 native/build/
+native/plugin_host_app/build/
 native/**/plugin_renderer_artefacts/
+native/**/plugin_host_app_artefacts/
 *.png
 !docs/**/*.png
 

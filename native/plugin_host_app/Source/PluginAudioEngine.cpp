@@ -1,39 +1,11 @@
 #include "PluginAudioEngine.h"
 #include "AUpresetLoader.h"
 #include "AUpresetSaver.h"
+#include "HostAudioHelpers.h"
 
 namespace
 {
     constexpr double bypassFadeSeconds = 0.008;
-    constexpr int monitorRingCapacity = 32768;
-
-    /**
-     * Turn the persisted monitor-output preference into a concrete CoreAudio
-     * device name. The sentinel "<System Default Output>" is stored instead of
-     * a resolved name so the preference keeps following the OS default when
-     * the user changes it in Sound settings; we resolve it lazily here.
-     */
-    juce::String resolveMonitorOutputDeviceName (juce::AudioDeviceManager& deviceManager,
-                                                 const juce::String& configuredName)
-    {
-        if (configuredName.isNotEmpty()
-            && configuredName != HardwareLoopSettings::systemDefaultMonitorOutputName)
-            return configuredName;
-
-        for (auto* type : deviceManager.getAvailableDeviceTypes())
-        {
-            if (type == nullptr)
-                continue;
-
-            type->scanForDevices();
-            const auto names = type->getDeviceNames (false);
-            const int defaultIndex = type->getDefaultDeviceIndex (false);
-            if (defaultIndex >= 0 && defaultIndex < names.size())
-                return names[defaultIndex];
-        }
-
-        return configuredName;
-    }
 
     juce::String formatNameForPluginFile (const juce::File& pluginFile)
     {
@@ -137,45 +109,18 @@ namespace
     }
 }
 
-/**
- * Callback for the *second* output device (the separate monitor output).
- * It only drains the monitor FIFO that the main loop-device callback fills.
- * A nested struct rather than making the engine itself the callback for both
- * devices — juce::AudioDeviceManager identifies callbacks by pointer, so the
- * two devices need distinct callback objects.
- */
-struct PluginAudioEngine::MonitorOutputHandler : juce::AudioIODeviceCallback
-{
-    explicit MonitorOutputHandler (PluginAudioEngine& ownerIn) : owner (ownerIn) {}
-
-    void audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
-                                           int numInputChannels,
-                                           float* const* outputChannelData,
-                                           int numOutputChannels,
-                                           int numSamples,
-                                           const juce::AudioIODeviceCallbackContext& context) override
-    {
-        juce::ignoreUnused (inputChannelData, numInputChannels, context);
-        owner.pullMonitorOutput (outputChannelData, numOutputChannels, numSamples);
-    }
-
-    void audioDeviceAboutToStart (juce::AudioIODevice*) override {}
-    void audioDeviceStopped() override {}
-
-    PluginAudioEngine& owner;
-};
-
 PluginAudioEngine::PluginAudioEngine()
+    : hostClock (formatManager, deviceSampleRate),
+      midiServices (deviceManager, hostClock),
+      hardwareLoop (formatManager, processLock, sendGain, deviceSampleRate, deviceBlockSize)
 {
     formatManager.registerBasicFormats();
-    monitorRingBuffer.setSize (2, monitorRingCapacity, false, true, true);
-    monitorOutputHandler = std::make_unique<MonitorOutputHandler> (*this);
 }
 
 PluginAudioEngine::~PluginAudioEngine()
 {
     stopFixture();
-    clearMidiInput();
+    midiServices.clearMidiInput();
     stopAudioDevice();
 }
 
@@ -325,14 +270,14 @@ juce::AudioProcessorEditor* PluginAudioEngine::createEditor()
     return plugin->createEditorAndMakeActive();
 }
 
-bool PluginAudioEngine::loadFixture (const juce::File& fixtureFile, juce::String& error)
+bool PluginAudioEngine::loadFixture (const juce::File& audioFile, juce::String& error)
 {
     stopFixture();
 
-    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (fixtureFile));
+    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (audioFile));
     if (reader == nullptr)
     {
-        error = "Could not read fixture WAV: " + fixtureFile.getFullPathName();
+        error = "Could not read source clip: " + audioFile.getFullPathName();
         return false;
     }
 
@@ -340,7 +285,7 @@ bool PluginAudioEngine::loadFixture (const juce::File& fixtureFile, juce::String
     reader->read (fixtureBuffer.getArrayOfWritePointers(), (int) reader->numChannels, 0, (int) reader->lengthInSamples);
     fixtureSampleRate = reader->sampleRate;
     fixtureReadPosition = 0.0;
-    currentFixtureFile = fixtureFile;
+    currentFixtureFile = audioFile;
     return true;
 }
 
@@ -388,6 +333,8 @@ void PluginAudioEngine::setSendLevelDb (float decibels)
  */
 bool PluginAudioEngine::openConfiguredAudioDevice (juce::String& error)
 {
+    const auto& hardwareSettings = hardwareLoop.getHardwareLoopSettingsRef();
+
     if (! hardwareSettings.isConfigured())
     {
         const juce::String result = deviceManager.initialiseWithDefaultDevices (0, 2);
@@ -500,8 +447,9 @@ bool PluginAudioEngine::startAudioDevice (juce::String& error)
         deviceBlockSize = device->getCurrentBufferSizeSamples();
     }
 
-    ensureLatencyBufferSize (2, juce::jmax (hardwareSettings.latencySamples + deviceBlockSize * 4,
-                                            deviceBlockSize * 8));
+    const auto& hardwareSettings = hardwareLoop.getHardwareLoopSettingsRef();
+    hardwareLoop.ensureLatencyBufferSize (2, juce::jmax (hardwareSettings.latencySamples + deviceBlockSize * 4,
+                                                         deviceBlockSize * 8));
 
     if (plugin != nullptr)
     {
@@ -511,125 +459,59 @@ bool PluginAudioEngine::startAudioDevice (juce::String& error)
 
     if (hardwareSettings.usesSeparateMonitorOutput())
     {
-        if (! startMonitorOutput (error))
+        if (! monitorOutput.startMonitorOutput (hardwareSettings, deviceSampleRate, deviceBlockSize, error))
             return false;
     }
 
     deviceManager.addAudioCallback (this);
-    applyMidiInputSelection();
+    midiServices.applyMidiInputSelection();
 
-    if (hostClockEnabled.load())
-        pendingTransport.store (PendingTransport::start);
+    if (hostClock.isHostClockEnabled())
+        hostClock.requestTransport (HostClockMetronome::PendingTransport::start);
 
     return true;
 }
 
 void PluginAudioEngine::setHardwareLoopSettings (const HardwareLoopSettings& settings)
 {
-    const juce::ScopedLock lock (processLock);
-    hardwareSettings = settings;
-    ensureLatencyBufferSize (2, juce::jmax (settings.latencySamples + deviceBlockSize * 4,
-                                            deviceBlockSize * 8));
+    hardwareLoop.setHardwareLoopSettings (settings);
 }
 
 HardwareLoopSettings PluginAudioEngine::getHardwareLoopSettings() const
 {
-    return hardwareSettings;
+    return hardwareLoop.getHardwareLoopSettings();
 }
 
 bool PluginAudioEngine::hasHardwareLoopConfigured() const
 {
-    return hardwareSettings.isConfigured();
+    return hardwareLoop.hasHardwareLoopConfigured();
 }
 
 void PluginAudioEngine::setHardwareMode (bool shouldUseHardware)
 {
-    if (shouldUseHardware && ! hardwareSettings.isConfigured())
-        return;
-
-    hardwareMode.store (shouldUseHardware);
+    hardwareLoop.setHardwareMode (shouldUseHardware);
 }
 
-void PluginAudioEngine::ensureLatencyBufferSize (int numChannels, int capacity)
+bool PluginAudioEngine::autoDetectLatency (const juce::File& impulseFile,
+                                           int& outLatencySamples,
+                                           float& outLoopGainDb,
+                                           juce::String& error)
 {
-    capacity = juce::jmax (capacity, 1);
-    if (latencyCapacity >= capacity && latencyBuffer.getNumChannels() >= numChannels)
-        return;
-
-    latencyBuffer.setSize (numChannels, capacity, false, true, false);
-    latencyBuffer.clear();
-    latencyWritePos = 0;
-    latencyCapacity = capacity;
+    return hardwareLoop.autoDetectLatency (impulseFile, outLatencySamples, outLoopGainDb, error);
 }
 
-/**
- * Audio thread: copy the hardware return pair into the circular latency
- * buffer and update the return meters in the same pass (one loop instead of
- * two over the input). Mono-safe: a missing right channel mirrors the left.
- */
-void PluginAudioEngine::pushReturnToLatencyBuffer (const float* const* inputChannelData,
-                                                    int numInputChannels,
-                                                    int numSamples)
+bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
+                                               const juce::File& outputFile,
+                                               double tailSilenceSeconds,
+                                               double silenceThresholdDb,
+                                               double maxTailSeconds,
+                                               juce::String& error,
+                                               const std::atomic<bool>* cancelRequested,
+                                               double targetDurationSeconds)
 {
-    if (latencyCapacity <= 0 || inputChannelData == nullptr)
-        return;
-
-    const int retL = hardwareSettings.returnChannelL;
-    const int retR = hardwareSettings.returnChannelR;
-    const float* inL = (retL >= 0 && retL < numInputChannels) ? inputChannelData[retL] : nullptr;
-    const float* inR = (retR >= 0 && retR < numInputChannels) ? inputChannelData[retR] : nullptr;
-
-        float peakL = 0.0f;
-        float peakR = 0.0f;
-        double sumSq = 0.0;
-        int meterSamples = 0;
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            const float l = inL != nullptr ? inL[i] : 0.0f;
-            const float r = inR != nullptr ? inR[i] : l;
-            latencyBuffer.setSample (0, latencyWritePos, l);
-            if (latencyBuffer.getNumChannels() > 1)
-                latencyBuffer.setSample (1, latencyWritePos, r);
-
-            peakL = juce::jmax (peakL, std::abs (l));
-            peakR = juce::jmax (peakR, std::abs (r));
-            sumSq += (double) l * (double) l + (double) r * (double) r;
-            meterSamples += 2;
-
-            latencyWritePos = (latencyWritePos + 1) % latencyCapacity;
-        }
-
-        returnPeakL.store (peakL);
-        returnPeakR.store (peakR);
-        if (meterSamples > 0)
-            returnRms.store ((float) std::sqrt (sumSq / (double) meterSamples));
-    }
-
-/**
- * Audio thread: read the return signal latencySamples behind the write head,
- * i.e. time-aligned with the software path so A/B'ing hardware vs plugin
- * doesn't smear transients.
- */
-void PluginAudioEngine::readDelayedReturn (juce::AudioBuffer<float>& dest, int numSamples)
-{
-    dest.clear();
-    if (latencyCapacity <= 0)
-        return;
-
-    const int delay = juce::jlimit (0, latencyCapacity - 1, hardwareSettings.latencySamples);
-    int readPos = latencyWritePos - delay - numSamples;
-    while (readPos < 0)
-        readPos += latencyCapacity;
-
-    const int channels = juce::jmin (2, dest.getNumChannels());
-    for (int i = 0; i < numSamples; ++i)
-    {
-        for (int ch = 0; ch < channels; ++ch)
-            dest.setSample (ch, i, latencyBuffer.getSample (ch % latencyBuffer.getNumChannels(), readPos));
-
-        readPos = (readPos + 1) % latencyCapacity;
-    }
+    return hardwareLoop.captureHardwareToFile (fixtureFile, outputFile,
+                                               tailSilenceSeconds, silenceThresholdDb, maxTailSeconds,
+                                               error, cancelRequested, targetDurationSeconds);
 }
 
 void PluginAudioEngine::clearOutputChannels (float* const* outputChannelData, int numOutputChannels, int numSamples)
@@ -639,214 +521,13 @@ void PluginAudioEngine::clearOutputChannels (float* const* outputChannelData, in
             juce::FloatVectorOperations::clear (outputChannelData[ch], numSamples);
 }
 
-/**
- * Route the final stereo monitor mix to wherever the user wants to hear it:
- * either a channel pair on the loop device itself, or (for screen-recording
- * setups) the FIFO feeding the separate monitor output device.
- */
-void PluginAudioEngine::writeMonitorSamples (const juce::AudioBuffer<float>& stereoMonitor,
-                                             int numSamples,
-                                             float* const* outputChannelData,
-                                             int numOutputChannels)
-{
-    if (hardwareSettings.usesSeparateMonitorOutput())
-    {
-        pushMonitorOutput (stereoMonitor.getReadPointer (0),
-                           stereoMonitor.getReadPointer (1),
-                           numSamples);
-        return;
-    }
-
-    const int monL = hardwareSettings.monitorChannelL;
-    const int monR = hardwareSettings.monitorChannelR;
-
-    if (monL >= 0 && monL < numOutputChannels && outputChannelData[monL] != nullptr)
-        juce::FloatVectorOperations::copy (outputChannelData[monL],
-                                           stereoMonitor.getReadPointer (0), numSamples);
-    if (monR >= 0 && monR < numOutputChannels && outputChannelData[monR] != nullptr)
-        juce::FloatVectorOperations::copy (outputChannelData[monR],
-                                           stereoMonitor.getReadPointer (1), numSamples);
-}
-
-void PluginAudioEngine::pushMonitorOutput (const float* left, const float* right, int numSamples)
-{
-    if (! monitorOutputActive.load() || left == nullptr || right == nullptr || numSamples <= 0)
-        return;
-
-    int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
-    monitorFifo.prepareToWrite (numSamples, start1, size1, start2, size2);
-
-    const int written = size1 + size2;
-    if (written <= 0)
-        return;
-
-    auto writeBlock = [&] (int ringStart, int count, const float*& srcL, const float*& srcR)
-    {
-        monitorRingBuffer.copyFrom (0, ringStart, srcL, count);
-        monitorRingBuffer.copyFrom (1, ringStart, srcR, count);
-        srcL += count;
-        srcR += count;
-    };
-
-    writeBlock (start1, size1, left, right);
-    writeBlock (start2, size2, left, right);
-    monitorFifo.finishedWrite (written);
-}
-
-void PluginAudioEngine::pullMonitorOutput (float* const* outputChannelData,
-                                           int numOutputChannels,
-                                           int numSamples)
-{
-    for (int ch = 0; ch < numOutputChannels; ++ch)
-        if (outputChannelData[ch] != nullptr)
-            juce::FloatVectorOperations::clear (outputChannelData[ch], numSamples);
-
-    int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
-    monitorFifo.prepareToRead (numSamples, start1, size1, start2, size2);
-
-    const int available = size1 + size2;
-    if (available <= 0)
-        return;
-
-    int outPos = 0;
-    auto readBlock = [&] (int ringStart, int count)
-    {
-        if (outputChannelData[0] != nullptr)
-            juce::FloatVectorOperations::copy (outputChannelData[0] + outPos,
-                                               monitorRingBuffer.getReadPointer (0, ringStart),
-                                               count);
-        if (numOutputChannels > 1 && outputChannelData[1] != nullptr)
-            juce::FloatVectorOperations::copy (outputChannelData[1] + outPos,
-                                               monitorRingBuffer.getReadPointer (1, ringStart),
-                                               count);
-        else if (outputChannelData[0] != nullptr)
-            juce::FloatVectorOperations::copy (outputChannelData[0] + outPos,
-                                               monitorRingBuffer.getReadPointer (1, ringStart),
-                                               count);
-
-        outPos += count;
-    };
-
-    readBlock (start1, size1);
-    readBlock (start2, size2);
-    monitorFifo.finishedRead (available);
-}
-
-bool PluginAudioEngine::startMonitorOutput (juce::String& error)
-{
-    stopMonitorOutput();
-
-    if (! hardwareSettings.usesSeparateMonitorOutput())
-        return true;
-
-    if (monitorDeviceManager.getAvailableDeviceTypes().isEmpty())
-    {
-        const juce::String initError = monitorDeviceManager.initialise (0, 2, nullptr, true);
-        if (initError.isNotEmpty())
-        {
-            error = "Monitor output: " + initError;
-            return false;
-        }
-    }
-
-    const auto deviceName = resolveMonitorOutputDeviceName (monitorDeviceManager,
-                                                            hardwareSettings.monitorOutputDeviceName);
-    if (deviceName.isEmpty())
-    {
-        error = "Monitor output: no output device available";
-        return false;
-    }
-
-    juce::AudioDeviceManager::AudioDeviceSetup setup;
-    setup.outputDeviceName = deviceName;
-    setup.inputDeviceName.clear();
-    setup.sampleRate = deviceSampleRate > 0.0 ? deviceSampleRate : 0.0;
-    setup.bufferSize = deviceBlockSize > 0 ? deviceBlockSize : hardwareSettings.bufferSize;
-    setup.useDefaultInputChannels = false;
-    setup.useDefaultOutputChannels = true;
-
-    const juce::String setupError = monitorDeviceManager.setAudioDeviceSetup (setup, true);
-    if (setupError.isNotEmpty())
-    {
-        error = "Monitor output (\"" + deviceName + "\"): " + setupError;
-        return false;
-    }
-
-    monitorFifo.reset();
-    monitorRingBuffer.clear();
-    monitorDeviceManager.addAudioCallback (monitorOutputHandler.get());
-    monitorOutputActive.store (true);
-    return true;
-}
-
-void PluginAudioEngine::stopMonitorOutput()
-{
-    monitorOutputActive.store (false);
-
-    if (monitorOutputHandler != nullptr)
-        monitorDeviceManager.removeAudioCallback (monitorOutputHandler.get());
-
-    monitorDeviceManager.closeAudioDevice();
-    monitorFifo.reset();
-    monitorRingBuffer.clear();
-}
-
-/**
- * Equal-power (sin/cos) crossfade between the software plugin output and the
- * latency-compensated hardware return, ramped over ~8 ms so toggling "Use
- * Hardware" never clicks. Same shape as applyBypassCrossfade; kept as two
- * functions because each carries its own fade state and buffer roles.
- */
-void PluginAudioEngine::applyHardwareMonitorCrossfade (juce::AudioBuffer<float>& softwareBuffer,
-                                                       const juce::AudioBuffer<float>& hardwareBuffer,
-                                                       int numSamples)
-{
-    const float target = hardwareMode.load() ? 1.0f : 0.0f;
-
-    // Fully on the software side and staying there: nothing to mix.
-    if (hardwareFade <= 0.0f && target <= 0.0f)
-        return;
-
-    const float fadeStart = hardwareFade;
-    float fadeEnd = fadeStart;
-
-    if (std::abs (fadeStart - target) > 1.0e-6f)
-    {
-        const float step = (float) numSamples / (float) hardwareFadeLengthSamples;
-        fadeEnd = target > fadeStart ? juce::jmin (target, fadeStart + step)
-                                     : juce::jmax (target, fadeStart - step);
-    }
-
-    const float fadeStep = (fadeEnd - fadeStart) / (float) juce::jmax (1, numSamples);
-    constexpr float halfPi = juce::MathConstants<float>::halfPi;
-    const int channels = juce::jmin (softwareBuffer.getNumChannels(), hardwareBuffer.getNumChannels());
-
-    for (int ch = 0; ch < channels; ++ch)
-    {
-        auto* soft = softwareBuffer.getWritePointer (ch);
-        const auto* hard = hardwareBuffer.getReadPointer (ch);
-        float fade = fadeStart;
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            const float hwGain = std::sin (fade * halfPi);
-            const float swGain = std::cos (fade * halfPi);
-            soft[i] = soft[i] * swGain + hard[i] * hwGain;
-            fade += fadeStep;
-        }
-    }
-
-    hardwareFade = fadeEnd;
-}
-
 void PluginAudioEngine::stopAudioDevice()
 {
     stopFixture();
-    clearMidiInput();
-    hostClockPlaying.store (false);
-    resetHostClockTiming();
+    midiServices.clearMidiInput();
+    hostClock.stopHostClockPlayback();
     deviceManager.removeAudioCallback (this);
-    stopMonitorOutput();
+    monitorOutput.stopMonitorOutput();
     deviceManager.closeAudioDevice();
 
     if (plugin != nullptr)
@@ -855,167 +536,67 @@ void PluginAudioEngine::stopAudioDevice()
 
 juce::Array<juce::MidiDeviceInfo> PluginAudioEngine::getMidiInputDevices() const
 {
-    return juce::MidiInput::getAvailableDevices();
+    return midiServices.getMidiInputDevices();
 }
 
 juce::Array<juce::MidiDeviceInfo> PluginAudioEngine::getMidiOutputDevices() const
 {
-    return juce::MidiOutput::getAvailableDevices();
+    return midiServices.getMidiOutputDevices();
+}
+
+juce::StringArray PluginAudioEngine::getSelectedMidiInputIdentifiers() const
+{
+    return midiServices.getSelectedMidiInputIdentifiers();
 }
 
 juce::StringArray PluginAudioEngine::getSelectedMidiInputNames() const
 {
-    juce::StringArray names;
-    const auto available = juce::MidiInput::getAvailableDevices();
-
-    for (const auto& id : selectedMidiIdentifiers)
-        for (const auto& device : available)
-            if (device.identifier == id)
-                names.add (device.name);
-
-    return names;
-}
-
-void PluginAudioEngine::clearMidiInput()
-{
-    for (const auto& id : selectedMidiIdentifiers)
-    {
-        if (id.isEmpty())
-            continue;
-
-        deviceManager.removeMidiInputDeviceCallback (id, this);
-        deviceManager.setMidiInputDeviceEnabled (id, false);
-    }
-
-    const juce::ScopedLock lock (midiLock);
-    pendingMidi.clear();
-}
-
-void PluginAudioEngine::applyMidiInputSelection()
-{
-    for (const auto& id : selectedMidiIdentifiers)
-    {
-        if (id.isEmpty())
-            continue;
-
-        deviceManager.setMidiInputDeviceEnabled (id, true);
-        deviceManager.addMidiInputDeviceCallback (id, this);
-    }
+    return midiServices.getSelectedMidiInputNames();
 }
 
 void PluginAudioEngine::setMidiInputDevices (const juce::StringArray& identifiers)
 {
-    clearMidiInput();
-    selectedMidiIdentifiers.clear();
-
-    for (const auto& id : identifiers)
-        if (id.isNotEmpty() && ! selectedMidiIdentifiers.contains (id))
-            selectedMidiIdentifiers.add (id);
-
-    applyMidiInputSelection();
+    midiServices.setMidiInputDevices (identifiers);
 }
 
 bool PluginAudioEngine::consumeMidiActivity()
 {
-    return midiActivity.exchange (false);
+    return midiServices.consumeMidiActivity();
 }
 
 bool PluginAudioEngine::consumeTransportPlayRequest()
 {
-    return transportPlayRequest.exchange (false);
+    return midiServices.consumeTransportPlayRequest();
 }
 
 bool PluginAudioEngine::consumeTransportStopRequest()
 {
-    return transportStopRequest.exchange (false);
+    return midiServices.consumeTransportStopRequest();
 }
 
 void PluginAudioEngine::setHostClockEnabled (bool enabled)
 {
-    const bool wasEnabled = hostClockEnabled.exchange (enabled);
-
-    if (enabled && ! wasEnabled)
-        pendingTransport.store (PendingTransport::start);
-    else if (! enabled && wasEnabled)
-        pendingTransport.store (PendingTransport::stop);
+    hostClock.setHostClockEnabled (enabled);
 }
 
 void PluginAudioEngine::setHostClockBpm (double bpm)
 {
-    hostClockBpm.store (juce::jlimit (20.0, 999.0, bpm));
+    hostClock.setHostClockBpm (bpm);
 }
 
 bool PluginAudioEngine::consumeHostClockQuarterPulse()
 {
-    return quarterNotePulse.exchange (false);
+    return hostClock.consumeHostClockQuarterPulse();
 }
 
 bool PluginAudioEngine::loadMetronomeClick (const juce::File& impulseFile, juce::String& error)
 {
-    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (impulseFile));
-    if (reader == nullptr)
-    {
-        error = "Could not read metronome click: " + impulseFile.getFullPathName();
-        return false;
-    }
-
-    juce::AudioBuffer<float> full ((int) reader->numChannels, (int) reader->lengthInSamples);
-    if (! reader->read (&full, 0, (int) reader->lengthInSamples, 0, true, true))
-    {
-        error = "Failed to decode metronome click: " + impulseFile.getFullPathName();
-        return false;
-    }
-
-    // fixtures/impulse.wav is a 2s IR with silence then a unit spike — use the peak
-    // (the actual impulse) rather than sample 0, which is silent.
-    int peakIndex = 0;
-    float peakAbs = 0.0f;
-    for (int ch = 0; ch < full.getNumChannels(); ++ch)
-    {
-        const float* data = full.getReadPointer (ch);
-        for (int i = 0; i < full.getNumSamples(); ++i)
-        {
-            const float a = std::abs (data[i]);
-            if (a > peakAbs)
-            {
-                peakAbs = a;
-                peakIndex = i;
-            }
-        }
-    }
-
-    if (peakAbs < 1.0e-6f)
-    {
-        error = "Metronome click file has no impulse energy: " + impulseFile.getFullPathName();
-        return false;
-    }
-
-    const int clickLength = juce::jmin (256, full.getNumSamples() - peakIndex);
-    metronomeClickBuffer.setSize (1, clickLength);
-    metronomeClickBuffer.clear();
-
-    for (int i = 0; i < clickLength; ++i)
-    {
-        float sample = 0.0f;
-        for (int ch = 0; ch < full.getNumChannels(); ++ch)
-            sample += full.getSample (ch, peakIndex + i);
-        sample /= (float) full.getNumChannels();
-        metronomeClickBuffer.setSample (0, i, sample);
-    }
-
-    metronomeClickPosition = -1;
-    pendingClickOffset = -1;
-    return true;
+    return hostClock.loadMetronomeClick (impulseFile, error);
 }
 
 void PluginAudioEngine::setMetronomeClickEnabled (bool enabled)
 {
-    metronomeClickEnabled.store (enabled);
-    if (! enabled)
-    {
-        metronomeClickPosition = -1;
-        pendingClickOffset = -1;
-    }
+    hostClock.setMetronomeClickEnabled (enabled);
 }
 
 void PluginAudioEngine::setAllowInstrumentAudioInput (bool allow)
@@ -1044,211 +625,37 @@ void PluginAudioEngine::setPluginProcessingSuspended (bool shouldSuspend)
         plugin->suspendProcessing (shouldSuspend);
 }
 
-void PluginAudioEngine::resetHostClockTiming()
-{
-    clockSampleCounter = 0.0;
-    clockTicksSinceQuarter = 0;
-    playHeadSamples.store (0);
-}
-
 juce::Optional<juce::AudioPlayHead::PositionInfo> PluginAudioEngine::getPosition() const
 {
-    juce::AudioPlayHead::PositionInfo info;
-
-    const double bpm = hostClockBpm.load();
-    const bool transportPlaying = hostClockEnabled.load() && hostClockPlaying.load();
-    const juce::int64 samples = playHeadSamples.load();
-    const double sampleRate = deviceSampleRate > 0.0 ? deviceSampleRate : 44100.0;
-    const double seconds = (double) samples / sampleRate;
-    const double ppq = seconds * bpm / 60.0;
-
-    info.setBpm (bpm);
-    info.setTimeSignature (juce::AudioPlayHead::TimeSignature { 4, 4 });
-    info.setTimeInSamples (samples);
-    info.setTimeInSeconds (seconds);
-    info.setPpqPosition (ppq);
-    info.setPpqPositionOfLastBarStart (std::floor (ppq / 4.0) * 4.0);
-    info.setIsPlaying (transportPlaying);
-    info.setIsRecording (false);
-    info.setIsLooping (false);
-
-    return info;
+    return hostClock.getPosition();
 }
 
-void PluginAudioEngine::applyPendingHostClockTransport (juce::MidiBuffer& midi)
+bool PluginAudioEngine::setMidiOutputDevice (const juce::String& identifier, juce::String& error)
 {
-    const auto transport = pendingTransport.exchange (PendingTransport::none);
-    switch (transport)
-    {
-        case PendingTransport::none:
-            break;
-        case PendingTransport::start:
-            hostClockPlaying.store (true);
-            resetHostClockTiming();
-            midi.addEvent (juce::MidiMessage::midiStart(), 0);
-            break;
-        case PendingTransport::stop:
-            hostClockPlaying.store (false);
-            metronomeClickPosition = -1;
-            pendingClickOffset = -1;
-            midi.addEvent (juce::MidiMessage::midiStop(), 0);
-            break;
-        case PendingTransport::continue_:
-            hostClockPlaying.store (true);
-            midi.addEvent (juce::MidiMessage::midiContinue(), 0);
-            break;
-    }
+    return midiServices.setMidiOutputDevice (identifier, error);
 }
 
-void PluginAudioEngine::generateHostClockMidi (juce::MidiBuffer& midi, int numSamples)
+juce::String PluginAudioEngine::getMidiOutputIdentifier() const
 {
-    const double bpm = hostClockBpm.load();
-    if (bpm <= 0.0)
-        return;
-
-    const double samplesPerTick = deviceSampleRate * 60.0 / (bpm * 24.0);
-    if (samplesPerTick <= 0.0)
-        return;
-
-    for (int sample = 0; sample < numSamples; ++sample)
-    {
-        clockSampleCounter += 1.0;
-
-        while (clockSampleCounter >= samplesPerTick)
-        {
-            clockSampleCounter -= samplesPerTick;
-            midi.addEvent (juce::MidiMessage::midiClock(), sample);
-
-            if (++clockTicksSinceQuarter >= 24)
-            {
-                clockTicksSinceQuarter = 0;
-                quarterNotePulse.store (true);
-
-                if (metronomeClickEnabled.load() && metronomeClickBuffer.getNumSamples() > 0)
-                    pendingClickOffset = sample;
-            }
-        }
-    }
+    return midiServices.getMidiOutputIdentifier();
 }
 
-void PluginAudioEngine::mixMetronomeClick (juce::AudioBuffer<float>& buffer, int numSamples)
+bool PluginAudioEngine::sendMidiMessage (const juce::MidiMessage& message)
 {
-    if (metronomeClickBuffer.getNumSamples() <= 0)
-        return;
-
-    int startInBlock = 0;
-    if (pendingClickOffset >= 0)
-    {
-        metronomeClickPosition = 0;
-        startInBlock = pendingClickOffset;
-        pendingClickOffset = -1;
-    }
-
-    if (metronomeClickPosition < 0 || startInBlock >= numSamples)
-        return;
-
-    const int clickLength = metronomeClickBuffer.getNumSamples();
-
-    for (int i = startInBlock; i < numSamples; ++i)
-    {
-        if (metronomeClickPosition >= clickLength)
-        {
-            metronomeClickPosition = -1;
-            break;
-        }
-
-        const float click = metronomeClickBuffer.getSample (0, metronomeClickPosition++);
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-            buffer.addSample (ch, i, click);
-    }
-
-    if (metronomeClickPosition >= clickLength)
-        metronomeClickPosition = -1;
+    return midiServices.sendMidiMessage (message);
 }
 
-void PluginAudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& message)
+bool PluginAudioEngine::sendMidiMessages (const juce::Array<juce::MidiMessage>& messages)
 {
-    if (message.isSysEx() && collectSysex.load())
-    {
-        const juce::ScopedLock lock (sysexLock);
-        pendingSysex.add (message);
-    }
-
-    bool forward = true;
-
-    // Transport from MIDI realtime (Start/Stop/Continue), MMC, or Mackie/HUI notes.
-    // Oxygen Pro DAW mode (Mackie / Mackie/HUI) sends notes 93/94 on the HUI port
-    // (e.g. iConnectMIDI "HST" ports), not MIDI Start/Stop.
-    const auto transport = classifyTransportMessage (message);
-    if (transport != PendingTransport::none)
-    {
-        if (hostClockEnabled.load())
-        {
-            pendingTransport.store (transport);
-            forward = false;
-        }
-
-        // Always drive source-clip play/stop so DAW buttons do something audible
-        // even when Host Clock is off.
-        if (transport == PendingTransport::start || transport == PendingTransport::continue_)
-            transportPlayRequest.store (true);
-        else if (transport == PendingTransport::stop)
-            transportStopRequest.store (true);
-    }
-    else if (hostClockEnabled.load() && hostClockPlaying.load() && message.isMidiClock())
-    {
-        forward = false;
-    }
-
-    if (forward)
-    {
-        const juce::ScopedLock lock (midiLock);
-        pendingMidi.addEvent (message, 0);
-    }
-
-    midiActivity.store (true);
+    return midiServices.sendMidiMessages (messages);
 }
 
-PluginAudioEngine::PendingTransport PluginAudioEngine::classifyTransportMessage (const juce::MidiMessage& message)
+bool PluginAudioEngine::waitForSysexDump (std::function<bool (const juce::MidiMessage&)> isAcceptable,
+                                          juce::MidiMessage& outMessage,
+                                          int timeoutMs,
+                                          juce::String& error)
 {
-    if (message.isMidiStart())
-        return PendingTransport::start;
-    if (message.isMidiContinue())
-        return PendingTransport::continue_;
-    if (message.isMidiStop())
-        return PendingTransport::stop;
-
-    // Mackie Control / Logic Control transport (ch. 1 notes).
-    // Stop = 93, Play = 94. Accept any channel — some surfaces remap.
-    if (message.isNoteOn (false) && message.getVelocity() > 0)
-    {
-        switch (message.getNoteNumber())
-        {
-            case 94: return PendingTransport::start;
-            case 93: return PendingTransport::stop;
-            default: break;
-        }
-    }
-
-    // MMC: F0 7F <dev> 06 <cmd> F7 — Play=02, Deferred Play=03, Continue=04, Stop=01
-    if (message.isSysEx())
-    {
-        const auto* data = message.getSysExData();
-        const int n = message.getSysExDataSize();
-        if (n >= 4 && (uint8_t) data[0] == 0x7f && (uint8_t) data[2] == 0x06)
-        {
-            switch ((uint8_t) data[3])
-            {
-                case 0x01: return PendingTransport::stop;
-                case 0x02: return PendingTransport::start;
-                case 0x03: return PendingTransport::start;
-                case 0x04: return PendingTransport::continue_;
-                default: break;
-            }
-        }
-    }
-
-    return PendingTransport::none;
+    return midiServices.waitForSysexDump (std::move (isAcceptable), outMessage, timeoutMs, error);
 }
 
 void PluginAudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
@@ -1256,11 +663,8 @@ void PluginAudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     deviceSampleRate = device->getCurrentSampleRate();
     deviceBlockSize = device->getCurrentBufferSizeSamples();
     bypassFadeLengthSamples = juce::jmax (1, (int) std::lround (deviceSampleRate * bypassFadeSeconds));
-    hardwareFadeLengthSamples = bypassFadeLengthSamples;
     bypassFade = bypassed.load() ? 1.0f : 0.0f;
-    hardwareFade = hardwareMode.load() ? 1.0f : 0.0f;
-    ensureLatencyBufferSize (2, juce::jmax (hardwareSettings.latencySamples + deviceBlockSize * 4,
-                                            deviceBlockSize * 8));
+    hardwareLoop.prepareForAudioDevice (bypassFadeLengthSamples);
 
     const juce::ScopedLock lock (processLock);
     if (plugin != nullptr)
@@ -1324,43 +728,13 @@ void PluginAudioEngine::applyBypassCrossfade (juce::AudioBuffer<float>& wetBuffe
                                               const juce::AudioBuffer<float>& dryBuffer,
                                               int numSamples)
 {
-    const float target = bypassed.load() ? 1.0f : 0.0f;
-
-    if (bypassFade <= 0.0f && target <= 0.0f)
-        return;
-
-    const float fadeStart = bypassFade;
-    float fadeEnd = fadeStart;
-
-    if (std::abs (fadeStart - target) > 1.0e-6f)
-    {
-        const float step = (float) numSamples / (float) bypassFadeLengthSamples;
-
-        if (target > fadeStart)
-            fadeEnd = juce::jmin (target, fadeStart + step);
-        else
-            fadeEnd = juce::jmax (target, fadeStart - step);
-    }
-
-    const float fadeStep = (fadeEnd - fadeStart) / (float) juce::jmax (1, numSamples);
-    constexpr float halfPi = juce::MathConstants<float>::halfPi;
-
-    for (int ch = 0; ch < wetBuffer.getNumChannels(); ++ch)
-    {
-        auto* wet = wetBuffer.getWritePointer (ch);
-        const auto* dry = dryBuffer.getReadPointer (ch);
-        float fade = fadeStart;
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            const float dryGain = std::sin (fade * halfPi);
-            const float wetGain = std::cos (fade * halfPi);
-            wet[i] = dry[i] * dryGain + wet[i] * wetGain;
-            fade += fadeStep;
-        }
-    }
-
-    bypassFade = fadeEnd;
+    HostAudioHelpers::applyEqualPowerCrossfade (wetBuffer,
+                                                 dryBuffer,
+                                                 bypassFade,
+                                                 bypassed.load() ? 1.0f : 0.0f,
+                                                 bypassFadeLengthSamples,
+                                                 numSamples,
+                                                 true);
 }
 
 /**
@@ -1392,99 +766,16 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
 
     clearOutputChannels (outputChannelData, numOutputChannels, numSamples);
 
+    const auto& hardwareSettings = hardwareLoop.getHardwareLoopSettingsRef();
     const bool loopConfigured = hardwareSettings.isConfigured();
     if (loopConfigured)
-        pushReturnToLatencyBuffer (inputChannelData, numInputChannels, numSamples);
+        hardwareLoop.pushReturnToLatencyBuffer (inputChannelData, numInputChannels, numSamples);
 
     // Latency / capture special ops: drive send from loopPlayBuffer, record return.
-    const auto op = loopOp.load();
-    if (op != LoopOp::idle && loopConfigured)
-    {
-        const int sendL = hardwareSettings.sendChannelL;
-        const int sendR = hardwareSettings.sendChannelR;
-
-        double sendSumSq = 0.0;
-        int sendCount = 0;
-        float peakL = 0.0f;
-        float peakR = 0.0f;
-        juce::AudioBuffer<float> loopMonitor (2, numSamples);
-        loopMonitor.clear();
-
-        for (int i = 0; i < numSamples; ++i)
-        {
-            float l = 0.0f, r = 0.0f;
-            if (loopPlayPosition < loopPlayBuffer.getNumSamples())
-            {
-                l = loopPlayBuffer.getSample (0, loopPlayPosition);
-                r = loopPlayBuffer.getNumChannels() > 1
-                        ? loopPlayBuffer.getSample (1, loopPlayPosition)
-                        : l;
-                ++loopPlayPosition;
-            }
-
-            if (sendL >= 0 && sendL < numOutputChannels && outputChannelData[sendL] != nullptr)
-                outputChannelData[sendL][i] = l;
-            if (sendR >= 0 && sendR < numOutputChannels && outputChannelData[sendR] != nullptr)
-                outputChannelData[sendR][i] = r;
-
-            loopMonitor.setSample (0, i, l);
-            loopMonitor.setSample (1, i, r);
-
-            peakL = juce::jmax (peakL, std::abs (l));
-            peakR = juce::jmax (peakR, std::abs (r));
-            sendSumSq += (double) l * (double) l + (double) r * (double) r;
-            sendCount += 2;
-
-            if (loopRecordPosition < loopRecordCapacity)
-            {
-                const int retL = hardwareSettings.returnChannelL;
-                const int retR = hardwareSettings.returnChannelR;
-                const float rl = (retL >= 0 && retL < numInputChannels && inputChannelData != nullptr
-                                  && inputChannelData[retL] != nullptr)
-                                     ? inputChannelData[retL][i] : 0.0f;
-                const float rr = (retR >= 0 && retR < numInputChannels && inputChannelData != nullptr
-                                  && inputChannelData[retR] != nullptr)
-                                     ? inputChannelData[retR][i] : rl;
-                loopRecordBuffer.setSample (0, loopRecordPosition, rl);
-                if (loopRecordBuffer.getNumChannels() > 1)
-                    loopRecordBuffer.setSample (1, loopRecordPosition, rr);
-                ++loopRecordPosition;
-            }
-        }
-
-        writeMonitorSamples (loopMonitor, numSamples, outputChannelData, numOutputChannels);
-
-        if (sendCount > 0)
-            sendRms.store ((float) std::sqrt (sendSumSq / (double) sendCount));
-        sendPeakL.store (peakL);
-        sendPeakR.store (peakR);
-
-        // Auto-finish logic. Capture ops are normally ended by the message
-        // thread (silence tail / target duration in captureHardwareToFile);
-        // this is the audio-side backstop: play finished plus 2 s of extra
-        // return, or the record buffer filled.
-        const bool playDone = loopPlayPosition >= loopPlayBuffer.getNumSamples();
-        const bool recordFull = loopRecordPosition >= loopRecordCapacity;
-        if (playDone && (op == LoopOp::calibrate || recordFull
-                         || loopRecordPosition >= loopPlayBuffer.getNumSamples()
-                                                    + (int) (deviceSampleRate * 2.0)))
-        {
-            // For calibrate, keep recording a bit after the impulse ends.
-            if (op == LoopOp::calibrate && ! recordFull
-                && loopRecordPosition < loopPlayBuffer.getNumSamples()
-                                            + (int) (deviceSampleRate * 1.5))
-            {
-                // keep going
-            }
-            else
-            {
-                loopOp.store (LoopOp::idle);
-                loopOpFinished.store (true);
-            }
-        }
-
+    if (hardwareLoop.processLoopOpInCallback (inputChannelData, numInputChannels,
+                                              outputChannelData, numOutputChannels,
+                                              numSamples, monitorOutput))
         return;
-    }
 
     // Normal path. Process at the wider of device/plugin channel counts so
     // multi-bus plugins get all their channels; only the first stereo pair is
@@ -1510,7 +801,7 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
 
         if (! restoringState.load() && plugin != nullptr && ! plugin->isSuspended())
         {
-            const bool mutePlugin = softwareEffectMuted.load();
+            const bool mutePlugin = hardwareLoop.isSoftwareEffectMuted();
 
             if (playing
                 && (! plugin->getPluginDescription().isInstrument
@@ -1530,18 +821,15 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
             }
 
             juce::MidiBuffer midi;
-            {
-                const juce::ScopedLock midiScopedLock (midiLock);
-                midi.swapWith (pendingMidi);
-            }
+            midiServices.swapPendingMidi (midi);
 
-            const bool clockEnabled = hostClockEnabled.load();
+            const bool clockEnabled = hostClock.isHostClockEnabled();
             if (clockEnabled)
             {
-                applyPendingHostClockTransport (midi);
+                hostClock.applyPendingHostClockTransport (midi);
 
-                if (hostClockPlaying.load())
-                    generateHostClockMidi (midi, numSamples);
+                if (hostClock.isHostClockPlaying())
+                    hostClock.generateHostClockMidi (midi, numSamples);
             }
 
             if (mutePlugin)
@@ -1576,11 +864,11 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                 applyBypassCrossfade (buffer, dryBuffer, numSamples);
             }
 
-            if (clockEnabled && hostClockPlaying.load())
-                playHeadSamples.fetch_add (numSamples);
+            if (clockEnabled && hostClock.isHostClockPlaying())
+                hostClock.advancePlayHead (numSamples);
 
             if (! mutePlugin)
-                mixMetronomeClick (buffer, numSamples);
+                hostClock.mixMetronomeClick (buffer, numSamples);
         }
         else if (! restoringState.load())
         {
@@ -1594,7 +882,7 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                         sendBuffer.copyFrom (ch, 0, buffer, src, 0, numSamples);
                 }
             }
-            mixMetronomeClick (buffer, numSamples);
+            hostClock.mixMetronomeClick (buffer, numSamples);
         }
 
         {
@@ -1609,9 +897,8 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                 peakR = juce::jmax (peakR, std::abs (r));
                 sumSq += (double) l * (double) l + (double) r * (double) r;
             }
-            sendPeakL.store (peakL);
-            sendPeakR.store (peakR);
-            sendRms.store ((float) std::sqrt (sumSq / (double) juce::jmax (1, numSamples * 2)));
+            hardwareLoop.storeSendMeters (peakL, peakR,
+                                          (float) std::sqrt (sumSq / (double) juce::jmax (1, numSamples * 2)));
         }
 
         juce::AudioBuffer<float> monitorBuffer (2, numSamples);
@@ -1627,8 +914,8 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
         if (loopConfigured)
         {
             juce::AudioBuffer<float> hardwareMonitor (2, numSamples);
-            readDelayedReturn (hardwareMonitor, numSamples);
-            applyHardwareMonitorCrossfade (monitorBuffer, hardwareMonitor, numSamples);
+            hardwareLoop.readDelayedReturn (hardwareMonitor, numSamples);
+            hardwareLoop.applyMonitorCrossfade (monitorBuffer, hardwareMonitor, numSamples);
 
             const int sendL = hardwareSettings.sendChannelL;
             const int sendR = hardwareSettings.sendChannelR;
@@ -1640,7 +927,8 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                 juce::FloatVectorOperations::copy (outputChannelData[sendR],
                                                    sendBuffer.getReadPointer (1), numSamples);
 
-            writeMonitorSamples (monitorBuffer, numSamples, outputChannelData, numOutputChannels);
+            hardwareLoop.writeMonitorSamples (monitorBuffer, numSamples,
+                                              outputChannelData, numOutputChannels, monitorOutput);
         }
         else
         {
@@ -1656,417 +944,4 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
             }
         }
     }
-}
-
-bool PluginAudioEngine::setMidiOutputDevice (const juce::String& identifier, juce::String& error)
-{
-    midiOutput.reset();
-    midiOutputIdentifier.clear();
-
-    if (identifier.isEmpty())
-        return true;
-
-    midiOutput = juce::MidiOutput::openDevice (identifier);
-    if (midiOutput == nullptr)
-    {
-        error = "Failed to open MIDI output device";
-        return false;
-    }
-
-    midiOutputIdentifier = identifier;
-    return true;
-}
-
-bool PluginAudioEngine::sendMidiMessage (const juce::MidiMessage& message)
-{
-    if (midiOutput == nullptr)
-        return false;
-
-    midiOutput->sendMessageNow (message);
-    return true;
-}
-
-bool PluginAudioEngine::sendMidiMessages (const juce::Array<juce::MidiMessage>& messages)
-{
-    if (midiOutput == nullptr)
-        return false;
-
-    for (const auto& message : messages)
-        midiOutput->sendMessageNow (message);
-
-    return true;
-}
-
-/**
- * Blocking wait (message thread) for a sysex dump that satisfies the caller's
- * predicate — used for "dump current program" round-trips with external
- * hardware. Pumps the dispatch loop while waiting so MIDI callbacks and the
- * UI stay alive; same pattern as autoDetectLatency / captureHardwareToFile.
- */
-bool PluginAudioEngine::waitForSysexDump (std::function<bool (const juce::MidiMessage&)> isAcceptable,
-                                          juce::MidiMessage& outMessage,
-                                          int timeoutMs,
-                                          juce::String& error)
-{
-    {
-        const juce::ScopedLock lock (sysexLock);
-        pendingSysex.clear();
-    }
-
-    collectSysex.store (true);
-    const auto deadline = juce::Time::getMillisecondCounterHiRes() + (double) timeoutMs;
-
-    while (juce::Time::getMillisecondCounterHiRes() < deadline)
-    {
-        {
-            const juce::ScopedLock lock (sysexLock);
-            for (int i = 0; i < pendingSysex.size(); ++i)
-            {
-                if (isAcceptable (pendingSysex.getReference (i)))
-                {
-                    outMessage = pendingSysex.getReference (i);
-                    pendingSysex.clear();
-                    collectSysex.store (false);
-                    return true;
-                }
-            }
-        }
-
-        juce::Thread::sleep (10);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
-    }
-
-    collectSysex.store (false);
-    error = "Timed out waiting for sysex dump";
-    return false;
-}
-
-bool PluginAudioEngine::autoDetectLatency (const juce::File& impulseFile,
-                                           int& outLatencySamples,
-                                           float& outLoopGainDb,
-                                           juce::String& error)
-{
-    if (! hardwareSettings.isConfigured())
-    {
-        error = "Configure a hardware audio device first";
-        return false;
-    }
-
-    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (impulseFile));
-    if (reader == nullptr)
-    {
-        error = "Failed to read impulse file: " + impulseFile.getFullPathName();
-        return false;
-    }
-
-    const int impulseSamples = (int) reader->lengthInSamples;
-    loopPlayBuffer.setSize (2, impulseSamples, false, true, false);
-    reader->read (&loopPlayBuffer, 0, impulseSamples, 0, true, true);
-
-    const int recordSamples = impulseSamples + (int) (deviceSampleRate * 2.0) + deviceBlockSize * 4;
-    loopRecordBuffer.setSize (2, recordSamples, false, true, false);
-    loopRecordBuffer.clear();
-    loopPlayPosition = 0;
-    loopRecordPosition = 0;
-    loopRecordCapacity = recordSamples;
-    loopOpFinished.store (false);
-    loopOp.store (LoopOp::calibrate);
-
-    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 8000.0;
-    while (! loopOpFinished.load() && juce::Time::getMillisecondCounterHiRes() < deadline)
-    {
-        juce::Thread::sleep (10);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
-    }
-
-    loopOp.store (LoopOp::idle);
-
-    if (! loopOpFinished.load())
-    {
-        error = "Latency detection timed out";
-        return false;
-    }
-
-    const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
-    if (recorded < impulseSamples)
-    {
-        error = "Not enough return audio recorded";
-        return false;
-    }
-
-    // Cross-correlate mono impulse against the mono-summed return, brute-force
-    // time domain. O(impulse × lag) is fine here: the impulse is ~2 s and this
-    // runs once per calibration click, not per block.
-    // TODO: switch to FFT-based correlation if calibration ever feels slow.
-    juce::AudioBuffer<float> impulseMono (1, impulseSamples);
-    for (int i = 0; i < impulseSamples; ++i)
-    {
-        const float l = loopPlayBuffer.getSample (0, i);
-        const float r = loopPlayBuffer.getNumChannels() > 1 ? loopPlayBuffer.getSample (1, i) : l;
-        impulseMono.setSample (0, i, 0.5f * (l + r));
-    }
-
-    double bestCorr = -1.0e300;
-    int bestLag = 0;
-    const int maxLag = recorded - impulseSamples;
-
-    for (int lag = 0; lag <= maxLag; ++lag)
-    {
-        double corr = 0.0;
-        for (int i = 0; i < impulseSamples; ++i)
-        {
-            const float ret = 0.5f * (loopRecordBuffer.getSample (0, lag + i)
-                                      + loopRecordBuffer.getSample (1, lag + i));
-            corr += (double) impulseMono.getSample (0, i) * (double) ret;
-        }
-
-        if (corr > bestCorr)
-        {
-            bestCorr = corr;
-            bestLag = lag;
-        }
-    }
-
-    // Peak amplitude ratio near the detected lag.
-    float impulsePeak = 0.0f, returnPeakLocal = 0.0f;
-    for (int i = 0; i < impulseSamples; ++i)
-    {
-        impulsePeak = juce::jmax (impulsePeak, std::abs (impulseMono.getSample (0, i)));
-        if (bestLag + i < recorded)
-        {
-            const float ret = 0.5f * (loopRecordBuffer.getSample (0, bestLag + i)
-                                      + loopRecordBuffer.getSample (1, bestLag + i));
-            returnPeakLocal = juce::jmax (returnPeakLocal, std::abs (ret));
-        }
-    }
-
-    outLatencySamples = bestLag;
-    outLoopGainDb = (impulsePeak > 1.0e-8f)
-                        ? juce::Decibels::gainToDecibels (returnPeakLocal / impulsePeak)
-                        : -120.0f;
-
-    hardwareSettings.latencySamples = bestLag;
-    ensureLatencyBufferSize (2, juce::jmax (bestLag + deviceBlockSize * 4, deviceBlockSize * 8));
-    return true;
-}
-
-bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
-                                               const juce::File& outputFile,
-                                               double tailSilenceSeconds,
-                                               double silenceThresholdDb,
-                                               double maxTailSeconds,
-                                               juce::String& error,
-                                               const std::atomic<bool>* cancelRequested,
-                                               double targetDurationSeconds)
-{
-    if (! hardwareSettings.isConfigured())
-    {
-        error = "Configure a hardware audio device first";
-        return false;
-    }
-
-    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (fixtureFile));
-    if (reader == nullptr)
-    {
-        error = "Failed to read fixture: " + fixtureFile.getFullPathName();
-        return false;
-    }
-
-    const int sourceSamples = (int) reader->lengthInSamples;
-    if (sourceSamples <= 0)
-    {
-        error = "Fixture has no audio samples: " + fixtureFile.getFullPathName();
-        return false;
-    }
-
-    juce::AudioBuffer<float> sourceBuffer (juce::jmax (1, (int) reader->numChannels), sourceSamples);
-    reader->read (sourceBuffer.getArrayOfWritePointers(),
-                  sourceBuffer.getNumChannels(),
-                  0,
-                  sourceSamples);
-
-    // Resample the fixture to the *device* rate with linear interpolation.
-    // The loop-op playback path streams loopPlayBuffer 1:1 at device rate, so
-    // skipping this played 44.1k fixtures at 48k speed (an early bug heard as
-    // "very slow playback"). Linear interpolation is adequate: the hardware
-    // D/A -> analog FX -> A/D round trip dominates any interpolation error.
-    const double sourceRate = reader->sampleRate > 1.0 ? reader->sampleRate : deviceSampleRate;
-    const int fixtureSamples = juce::jmax (1, (int) std::llround ((double) sourceSamples * deviceSampleRate / sourceRate));
-    loopPlayBuffer.setSize (2, fixtureSamples, false, true, false);
-
-    for (int i = 0; i < fixtureSamples; ++i)
-    {
-        const double srcPos = (double) i * sourceRate / deviceSampleRate;
-        const int src0 = juce::jlimit (0, sourceSamples - 1, (int) std::floor (srcPos));
-        const int src1 = juce::jmin (sourceSamples - 1, src0 + 1);
-        const float frac = (float) juce::jlimit (0.0, 1.0, srcPos - (double) src0);
-
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            const int srcCh = juce::jmin (ch, sourceBuffer.getNumChannels() - 1);
-            const float a = sourceBuffer.getSample (srcCh, src0);
-            const float b = sourceBuffer.getSample (srcCh, src1);
-            loopPlayBuffer.setSample (ch, i, a + (b - a) * frac);
-        }
-    }
-
-    const float send = sendGain.load();
-    if (send != 1.0f)
-        loopPlayBuffer.applyGain (send);
-
-    const int maxRecord = fixtureSamples
-                          + (int) (deviceSampleRate * maxTailSeconds)
-                          + hardwareSettings.latencySamples
-                          + deviceBlockSize * 4;
-    loopRecordBuffer.setSize (2, maxRecord, false, true, false);
-    loopRecordBuffer.clear();
-    loopPlayPosition = 0;
-    loopRecordPosition = 0;
-    loopRecordCapacity = maxRecord;
-    loopOpFinished.store (false);
-    loopOp.store (LoopOp::capture);
-
-    const float silenceThresh = juce::Decibels::decibelsToGain ((float) silenceThresholdDb);
-    const int silenceHold = juce::jmax (1, (int) (deviceSampleRate * tailSilenceSeconds));
-    // When the caller knows how long the take should be (the "Capture Both"
-    // flow passes the software render's length), stop on duration instead of
-    // relying on silence detection — analog return noise floors can sit above
-    // the silence threshold forever. A quarter-second of slack keeps the
-    // hardware file at least as long as the software one.
-    const int targetUsableSamples = targetDurationSeconds > 0.0
-                                        ? (int) std::llround (targetDurationSeconds * deviceSampleRate)
-                                        : 0;
-    const int targetSlackSamples = targetUsableSamples > 0
-                                        ? juce::jmax (deviceBlockSize * 2, (int) (deviceSampleRate * 0.25))
-                                        : 0;
-    int silentSamples = 0;
-    bool pastFixture = false;
-    int lastRecorded = -1;
-    int stagnantIterations = 0;
-    bool stopRequested = false;
-
-    const auto deadline = juce::Time::getMillisecondCounterHiRes()
-                          + (maxTailSeconds + (double) fixtureSamples / deviceSampleRate + 5.0) * 1000.0;
-
-    while (juce::Time::getMillisecondCounterHiRes() < deadline)
-    {
-        // Cancel means "stop recording, keep what we have" — the user hit
-        // Cancel to end the take, not to throw it away. We only fail below if
-        // nothing usable was recorded yet.
-        if (cancelRequested != nullptr && cancelRequested->load())
-        {
-            loopOp.store (LoopOp::idle);
-            stopRequested = true;
-            break;
-        }
-
-        juce::Thread::sleep (10);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
-
-        const int recorded = loopRecordPosition;
-        if (recorded == lastRecorded)
-            ++stagnantIterations;
-        else
-            stagnantIterations = 0;
-
-        lastRecorded = recorded;
-
-        // Stall detection: if the audio callback stops advancing the record
-        // position (device unplugged, CoreAudio wedged after a device
-        // restart), bail with a diagnosable error instead of spinning until
-        // the deadline. The threshold is generous (~30 s) because a slow
-        // device restart can legitimately pause the callback for a while.
-        if (stagnantIterations > 1500) // about 30s with sleep+dispatch cadence
-        {
-            loopOp.store (LoopOp::idle);
-            error = "Hardware capture stalled (audio device not advancing)";
-            return false;
-        }
-
-        if (loopPlayPosition >= fixtureSamples)
-            pastFixture = true;
-
-        const int usableNow = juce::jmax (0, recorded - hardwareSettings.latencySamples);
-        if (pastFixture && targetUsableSamples > 0
-            && usableNow >= targetUsableSamples + targetSlackSamples)
-        {
-            loopOp.store (LoopOp::idle);
-            loopOpFinished.store (true);
-            break;
-        }
-
-        if (pastFixture && recorded > hardwareSettings.latencySamples + fixtureSamples)
-        {
-            const int checkFrom = juce::jmax (0, recorded - deviceBlockSize);
-            float peak = 0.0f;
-            for (int i = checkFrom; i < recorded; ++i)
-                peak = juce::jmax (peak,
-                                   std::abs (loopRecordBuffer.getSample (0, i)),
-                                   std::abs (loopRecordBuffer.getSample (1, i)));
-
-            if (peak < silenceThresh)
-                silentSamples += deviceBlockSize;
-            else
-                silentSamples = 0;
-
-            if (silentSamples >= silenceHold || recorded >= maxRecord)
-            {
-                loopOp.store (LoopOp::idle);
-                loopOpFinished.store (true);
-                break;
-            }
-        }
-    }
-
-    loopOp.store (LoopOp::idle);
-
-    // Trim the measured loop latency off the head so the file starts where
-    // the fixture actually started — this keeps hardware captures sample-
-    // aligned with offline software renders for A/B comparison.
-    const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
-    const int latency = juce::jlimit (0, recorded, hardwareSettings.latencySamples);
-    const int usable = recorded - latency;
-    if (stopRequested && usable <= 0)
-    {
-        error = "Capture cancelled before usable audio was recorded";
-        return false;
-    }
-
-    if (usable <= 0)
-    {
-        error = "Hardware capture produced no usable audio (check latency / routing)";
-        return false;
-    }
-
-    juce::AudioBuffer<float> trimmed (2, usable);
-    for (int ch = 0; ch < 2; ++ch)
-        trimmed.copyFrom (ch, 0, loopRecordBuffer, ch, latency, usable);
-
-    outputFile.deleteFile();
-    outputFile.getParentDirectory().createDirectory();
-
-    juce::WavAudioFormat wav;
-    std::unique_ptr<juce::FileOutputStream> stream (outputFile.createOutputStream());
-    if (stream == nullptr)
-    {
-        error = "Failed to create output file: " + outputFile.getFullPathName();
-        return false;
-    }
-
-    std::unique_ptr<juce::AudioFormatWriter> writer (
-        wav.createWriterFor (stream.get(), deviceSampleRate, 2, 24, {}, 0));
-    if (writer == nullptr)
-    {
-        error = "Failed to create WAV writer";
-        return false;
-    }
-
-    stream.release();
-    if (! writer->writeFromAudioSampleBuffer (trimmed, 0, usable))
-    {
-        error = "Failed to write hardware capture WAV";
-        return false;
-    }
-
-    return true;
 }

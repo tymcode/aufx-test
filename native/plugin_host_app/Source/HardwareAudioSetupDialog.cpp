@@ -10,6 +10,7 @@
  */
 #include "HardwareAudioSetupDialog.h"
 #include "HardwareVuMeters.h"
+#include "HostDialog.h"
 #include "HostPreferences.h"
 #include "Utf8.h"
 
@@ -493,17 +494,13 @@ bool showHardwareAudioSetupDialog (PluginAudioEngine& engine,
 
     HardwareAudioSetupPanel panel (engine, fixturesDir);
 
-    juce::AlertWindow window ("Hardware Audio Setup",
-                              "Select the CoreAudio interface and stereo pairs for the hardware insert loop.\n"
-                              "For screen recording, route Monitor output to your Multi-Output Device "
-                              "(or System Default Output).",
-                              juce::MessageBoxIconType::NoIcon,
-                              centreAround);
-    window.addCustomComponent (&panel);
-    window.addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    window.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-
-    if (window.runModalLoop() != 1)
+    if (HostDialog::runCustomPanelModal (
+            "Hardware Audio Setup",
+            "Select the CoreAudio interface and stereo pairs for the hardware insert loop.\n"
+            "For screen recording, route Monitor output to your Multi-Output Device "
+            "(or System Default Output).",
+            panel,
+            centreAround) != 1)
         return false;
 
     const auto settings = panel.getSettings();

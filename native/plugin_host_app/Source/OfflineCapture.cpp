@@ -1,23 +1,41 @@
 #include "OfflineCapture.h"
+#include "AudioBufferUtils.h"
 
 namespace
 {
-    float blockPeak (const juce::AudioBuffer<float>& buffer)
+    /** Linear-resample `source` (at sourceRate) into `destRate` stereo (or N-ch) buffer. */
+    juce::AudioBuffer<float> resampleToRate (const juce::AudioBuffer<float>& source,
+                                             double sourceRate,
+                                             double destRate,
+                                             int destChannels)
     {
-        float peak = 0.0f;
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-            peak = juce::jmax (peak, buffer.getMagnitude (ch, 0, buffer.getNumSamples()));
+        const int sourceSamples = source.getNumSamples();
+        const int sourceChannels = juce::jmax (1, source.getNumChannels());
+        destChannels = juce::jmax (1, destChannels);
 
-        return peak;
-    }
+        if (sourceSamples <= 0 || sourceRate <= 1.0 || destRate <= 1.0)
+            return juce::AudioBuffer<float> (destChannels, 0);
 
-    void appendBlock (juce::AudioBuffer<float>& dst, const juce::AudioBuffer<float>& src)
-    {
-        const int oldSize = dst.getNumSamples();
-        dst.setSize (dst.getNumChannels(), oldSize + src.getNumSamples(), true, false, true);
+        const int destSamples = juce::jmax (1, (int) std::llround ((double) sourceSamples * destRate / sourceRate));
+        juce::AudioBuffer<float> dest (destChannels, destSamples);
 
-        for (int ch = 0; ch < dst.getNumChannels(); ++ch)
-            dst.copyFrom (ch, oldSize, src, ch, 0, src.getNumSamples());
+        for (int i = 0; i < destSamples; ++i)
+        {
+            const double srcPos = (double) i * sourceRate / destRate;
+            const int src0 = juce::jlimit (0, sourceSamples - 1, (int) std::floor (srcPos));
+            const int src1 = juce::jmin (sourceSamples - 1, src0 + 1);
+            const float frac = (float) juce::jlimit (0.0, 1.0, srcPos - (double) src0);
+
+            for (int ch = 0; ch < destChannels; ++ch)
+            {
+                const int srcCh = juce::jmin (ch, sourceChannels - 1);
+                const float a = source.getSample (srcCh, src0);
+                const float b = source.getSample (srcCh, src1);
+                dest.setSample (ch, i, a + (b - a) * frac);
+            }
+        }
+
+        return dest;
     }
 }
 
@@ -37,35 +55,79 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
         return false;
     }
 
-    const auto numChannels = juce::jmax (1, (int) reader->numChannels);
-    const auto numSamples = (int) reader->lengthInSamples;
-    const auto effectiveRate = options.sampleRate > 0.0 ? options.sampleRate : reader->sampleRate;
-    const auto blockSize = options.blockSize;
+    const int sourceSamples = (int) reader->lengthInSamples;
+    if (sourceSamples <= 0)
+    {
+        error = "Input has no audio samples: " + inputFile.getFullPathName();
+        return false;
+    }
+
+    const double sourceRate = reader->sampleRate > 1.0 ? reader->sampleRate : 44100.0;
+    const double effectiveRate = options.sampleRate > 0.0 ? options.sampleRate : sourceRate;
+    const int blockSize = juce::jmax (32, options.blockSize);
     const float silenceThreshold = juce::Decibels::decibelsToGain ((float) options.silenceThresholdDb);
     const int tailSilenceSamples = (int) std::ceil (options.tailSilenceSeconds * effectiveRate);
     const int maxTailSamples = (int) std::ceil (options.maxTailSeconds * effectiveRate);
 
+    // Match the realtime host: process at the wider of plugin IO / stereo so
+    // multi-bus AUs get allocated channel pointers (null channels in
+    // renderGetInput are a common AU crash when the buffer is too narrow).
+    const int processChannels = juce::jmax (2,
+                                            plugin.getTotalNumInputChannels(),
+                                            plugin.getTotalNumOutputChannels(),
+                                            (int) reader->numChannels);
+
+    juce::AudioBuffer<float> sourceBuffer (juce::jmax (1, (int) reader->numChannels), sourceSamples);
+    reader->read (sourceBuffer.getArrayOfWritePointers(),
+                  sourceBuffer.getNumChannels(),
+                  0,
+                  sourceSamples);
+
+    auto inputBuffer = resampleToRate (sourceBuffer, sourceRate, effectiveRate, processChannels);
+    const int numSamples = inputBuffer.getNumSamples();
+    if (numSamples <= 0)
+    {
+        error = "Resampled input is empty";
+        return false;
+    }
+
+    // Offline on a live plugin instance that also serves the device callback:
+    // never releaseResources here (the engine owns that), always mark
+    // non-realtime, and keep a fixed block size — variable last-block sizes
+    // and a second releaseResources() have crashed AUs (e.g. QDV1) on the
+    // next capture.
+    const bool wasNonRealtime = plugin.isNonRealtime();
+    const bool wasSuspended = plugin.isSuspended();
+    plugin.setNonRealtime (true);
+    plugin.suspendProcessing (false);
     plugin.prepareToPlay (effectiveRate, blockSize);
 
-    juce::AudioBuffer<float> inputBuffer ((int) reader->numChannels, numSamples);
-    reader->read (inputBuffer.getArrayOfWritePointers(), (int) reader->numChannels, 0, numSamples);
-
-    if (inputBuffer.getNumChannels() < numChannels)
-        inputBuffer.setSize (numChannels, numSamples, true, true, true);
-
-    juce::AudioBuffer<float> outputBuffer (numChannels, 0);
+    juce::AudioBuffer<float> outputBuffer (processChannels, 0);
     juce::MidiBuffer midi;
+    juce::AudioBuffer<float> block (processChannels, blockSize);
 
     for (int offset = 0; offset < numSamples; offset += blockSize)
     {
-        const auto currentBlock = juce::jmin (blockSize, numSamples - offset);
-        juce::AudioBuffer<float> block (numChannels, currentBlock);
+        const int currentBlock = juce::jmin (blockSize, numSamples - offset);
+        block.clear();
 
-        for (int ch = 0; ch < numChannels; ++ch)
+        for (int ch = 0; ch < processChannels; ++ch)
             block.copyFrom (ch, 0, inputBuffer, ch, offset, currentBlock);
 
+        midi.clear();
         plugin.processBlock (block, midi);
-        appendBlock (outputBuffer, block);
+
+        if (currentBlock == blockSize)
+        {
+            AudioBufferUtils::appendBlock (outputBuffer, block);
+        }
+        else
+        {
+            juce::AudioBuffer<float> clipped (processChannels, currentBlock);
+            for (int ch = 0; ch < processChannels; ++ch)
+                clipped.copyFrom (ch, 0, block, ch, 0, currentBlock);
+            AudioBufferUtils::appendBlock (outputBuffer, clipped);
+        }
     }
 
     int consecutiveSilentSamples = 0;
@@ -74,14 +136,14 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
 
     while (tailSamplesRendered < maxTailSamples)
     {
-        juce::AudioBuffer<float> block (numChannels, blockSize);
         block.clear();
+        midi.clear();
         plugin.processBlock (block, midi);
-        appendBlock (outputBuffer, block);
+        AudioBufferUtils::appendBlock (outputBuffer, block);
 
         tailSamplesRendered += blockSize;
 
-        if (blockPeak (block) < silenceThreshold)
+        if (AudioBufferUtils::blockPeak (block) < silenceThreshold)
             consecutiveSilentSamples += blockSize;
         else
             consecutiveSilentSamples = 0;
@@ -96,16 +158,21 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
     if (tailSilenceReached && consecutiveSilentSamples > 0)
     {
         const int newLength = juce::jmax (0, outputBuffer.getNumSamples() - consecutiveSilentSamples);
-        outputBuffer.setSize (numChannels, newLength, true, true, true);
+        outputBuffer.setSize (processChannels, newLength, true, true, true);
     }
 
-    plugin.releaseResources();
+    plugin.suspendProcessing (wasSuspended);
+    plugin.setNonRealtime (wasNonRealtime);
 
     if (outputBuffer.getNumSamples() == 0)
     {
         error = "Render produced no output samples";
         return false;
     }
+
+    // Hardware captures are stereo; write the first two process channels so
+    // A/B files share channel layout and sample rate.
+    const int writeChannels = juce::jmin (2, outputBuffer.getNumChannels());
 
     outputFile.getParentDirectory().createDirectory();
     std::unique_ptr<juce::OutputStream> stream (outputFile.createOutputStream());
@@ -121,7 +188,7 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
         wavFormat.createWriterFor (stream,
                                    Opts{}
                                        .withSampleRate (effectiveRate)
-                                       .withNumChannels (numChannels)
+                                       .withNumChannels (writeChannels)
                                        .withBitsPerSample (24)));
 
     if (writer == nullptr)
@@ -131,7 +198,7 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
     }
 
     writer->writeFromFloatArrays (outputBuffer.getArrayOfReadPointers(),
-                                  numChannels,
+                                  writeChannels,
                                   outputBuffer.getNumSamples());
     return true;
 }

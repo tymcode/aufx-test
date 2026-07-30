@@ -1,4 +1,5 @@
 #include "SettingsDialog.h"
+#include "HostDialog.h"
 #include "HostPreferences.h"
 #include "AuPluginScanner.h"
 
@@ -266,16 +267,12 @@ bool showSettingsDialog (HostConfig& config,
     SettingsPanel panel (config, knownPlugins);
     panel.setSize (560, 450);
 
-    juce::AlertWindow window ("Settings",
-                              "Changing the exploration folder moves its data (including the AU plugin cache) to the new location. "
-                              "Folder/config override changes apply after relaunch.",
-                              juce::MessageBoxIconType::NoIcon,
-                              centreAround);
-    window.addCustomComponent (&panel);
-    window.addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    window.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-
-    if (window.runModalLoop() != 1)
+    if (HostDialog::runCustomPanelModal (
+            "Settings",
+            "Changing the exploration folder moves its data (including the AU plugin cache) to the new location. "
+            "Folder/config override changes apply after relaunch.",
+            panel,
+            centreAround) != 1)
         return false;
 
     auto& prefs = HostPreferences::get();

@@ -1,5 +1,6 @@
 #include "AUpresetLoader.h"
 
+#if defined(JUCE_PLUGIN_RENDERER_NO_MAC_PRESET)
 namespace
 {
     juce::MemoryBlock decodeBase64DataElement (const juce::String& encoded)
@@ -65,7 +66,6 @@ namespace
     }
 }
 
-#if defined(JUCE_PLUGIN_RENDERER_NO_MAC_PRESET)
 bool AUpresetLoader::loadStateBytes (const juce::File& presetFile,
                                      juce::MemoryBlock& outState,
                                      juce::String& error)
