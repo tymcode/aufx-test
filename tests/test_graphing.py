@@ -37,6 +37,17 @@ def test_plot_comparison(sine_mono, output_dir):
     assert (output_dir / "cmp.png").exists()
 
 
+def test_plot_comparison_with_spectrogram_background(sine_mono, output_dir):
+    shifted = sine_mono.with_data(sine_mono.data * 0.85)
+    plot_comparison(
+        sine_mono,
+        shifted,
+        save_path=output_dir / "cmp_spec_bg.png",
+        spectrogram_background=shifted,
+    )
+    assert (output_dir / "cmp_spec_bg.png").exists()
+
+
 def test_plot_difference_metrics(sine_mono, output_dir):
     result = compare_waveforms(sine_mono, sine_mono)
     plot_difference_metrics(result, save_path=output_dir / "metrics.png", show=False)

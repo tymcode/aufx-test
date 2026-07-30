@@ -58,24 +58,61 @@ def plot_comparison(
     reference: Waveform | None = None,
     *,
     channel: int = 0,
+    spectrogram_background: Waveform | None = None,
+    spectrogram_channel: int = 0,
+    spectrogram_alpha: float = 0.5,
     title: str = "Before / After / Reference",
     save_path: str | Path | None = None,
     show: bool = False,
 ) -> plt.Figure:
-    """Plot before, after, and optional reference waveforms."""
+    """Plot before/after/reference waveforms, optionally over a wet spectrogram."""
     labels = ["before", "after"]
     waves: list[Waveform] = [before, after]
+    colors = ["#e6edf3", "#58a6ff", "#ff7b72"] if spectrogram_background else [None, None, None]
     if reference is not None:
         waves.append(reference)
         labels.append("reference")
-    return plot_waveforms(
-        *waves,
-        labels=labels,
-        channel=channel,
-        title=title,
-        save_path=save_path,
-        show=show,
-    )
+
+    fig, ax = plt.subplots(figsize=(12, 4))
+    wave_ax = ax
+    if spectrogram_background is not None:
+        bg = spectrogram_background.channel_data(spectrogram_channel)
+        nfft = 1024 if spectrogram_background.num_samples >= 1024 else 256
+        nfft = max(64, nfft)
+        noverlap = int(nfft * 0.75)
+        ax.specgram(
+            bg,
+            NFFT=nfft,
+            Fs=spectrogram_background.sample_rate,
+            noverlap=noverlap,
+            cmap="magma",
+            alpha=max(0.0, min(1.0, spectrogram_alpha)),
+        )
+        ax.set_ylabel("Frequency (Hz)")
+        # Overlay waveform on its own amplitude axis so it remains visible.
+        wave_ax = ax.twinx()
+        wave_ax.set_ylabel("Amplitude")
+        wave_ax.patch.set_alpha(0.0)
+        wave_ax.set_zorder(ax.get_zorder() + 1)
+        ax.grid(False)
+
+    for i, (wav, label) in enumerate(zip(waves, labels, strict=True)):
+        t = np.arange(wav.num_samples) / wav.sample_rate
+        line_kwargs: dict[str, Any] = {"label": label, "alpha": 0.9}
+        if spectrogram_background:
+            line_kwargs["color"] = colors[i]
+            line_kwargs["linewidth"] = 1.5
+        wave_ax.plot(t, wav.channel_data(channel), **line_kwargs)
+
+    ax.set_xlabel("Time (s)")
+    if spectrogram_background is None:
+        ax.set_ylabel("Amplitude")
+    ax.set_title(title)
+    wave_ax.legend(loc="upper right")
+    wave_ax.grid(True, alpha=0.25)
+    fig.tight_layout()
+    _save_or_show(fig, save_path, show)
+    return fig
 
 
 def plot_difference_metrics(

@@ -133,7 +133,12 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         ]
         if source_wave is not None:
             sw_result = compare_waveforms(expected, source_wave, thresholds=thresholds)
-            plot_comparison(source_wave, expected, save_path=report_dry_sw_waveform)
+            plot_comparison(
+                source_wave,
+                expected,
+                save_path=report_dry_sw_waveform,
+                spectrogram_background=expected,
+            )
             plot_difference_metrics(sw_result, save_path=report_dry_sw_metrics, show=False)
             comparison_views.append(
                 {
@@ -146,7 +151,12 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             )
 
             hw_result = compare_waveforms(actual, source_wave, thresholds=thresholds)
-            plot_comparison(source_wave, actual, save_path=report_dry_hw_waveform)
+            plot_comparison(
+                source_wave,
+                actual,
+                save_path=report_dry_hw_waveform,
+                spectrogram_background=actual,
+            )
             plot_difference_metrics(hw_result, save_path=report_dry_hw_metrics, show=False)
             comparison_views.append(
                 {
