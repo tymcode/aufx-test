@@ -1,0 +1,31 @@
+---
+description: Always wrap non-ASCII JUCE string literals with utf8()
+globs: native/plugin_host_app/**/*.{cpp,h,hpp,mm}
+alwaysApply: false
+---
+
+# JUCE UTF-8 string literals
+
+`juce::String(const char*)` only accepts ASCII. Multi-byte UTF-8 in a narrow
+literal (ellipsis `…`, em dash `—`, arrows `→`, `©`, `∞`, smart quotes, etc.)
+becomes mojibake.
+
+## Required
+
+- Include `Utf8.h` and wrap every non-ASCII narrow string literal with `utf8("…")`.
+- Prefer readable UTF-8 characters in the literal; the helper is `utf8()` in
+  `native/plugin_host_app/Source/Utf8.h`.
+- When editing UI copy, tooltips, alerts, status text, or error strings, audit
+  nearby literals in the same change — do not leave other unwrapped non-ASCII
+  strings in that file.
+
+```cpp
+// BAD
+setStatus("No plugins — use More plugins…");
+
+// GOOD
+#include "Utf8.h"
+setStatus(utf8("No plugins — use More plugins…"));
+```
+
+ASCII-only literals may stay as plain `"..."`. Comments do not need `utf8()`.

@@ -35,6 +35,7 @@ public:
                  juce::ComboBox& fixtureBox);
 
     void capture (const juce::String& snapshotName, int roleIndex, int sourceIndex,
+                  bool calibrateNoiseFloor,
                   const juce::File& fixtureFile,
                   juce::Component* progressParent);
 

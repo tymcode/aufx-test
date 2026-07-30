@@ -251,24 +251,20 @@ bool HardwareLoopOps::processLoopOpInCallback (const float* const* inputChannelD
     sendPeakL.store (peakL);
     sendPeakR.store (peakR);
 
-    // Auto-finish logic. Capture ops are normally ended by the message
-    // thread (silence tail / target duration in captureHardwareToFile);
-    // this is the audio-side backstop: play finished plus 2 s of extra
-    // return, or the record buffer filled.
-    const bool playDone = loopPlayPosition >= loopPlayBuffer.getNumSamples();
-    const bool recordFull = loopRecordPosition >= loopRecordCapacity;
-    if (playDone && (op == LoopOp::calibrate || recordFull
-                     || loopRecordPosition >= loopPlayBuffer.getNumSamples()
-                                                + (int) (deviceSampleRate * 2.0)))
+    // Audio-side end conditions only. For capture, the message thread owns
+    // silence / target-duration / Stop — do NOT stop after play+2s here or
+    // reverb tails get truncated and the message thread later false-stalls.
+    if (loopRecordPosition >= loopRecordCapacity)
     {
-        // For calibrate, keep recording a bit after the impulse ends.
-        if (op == LoopOp::calibrate && ! recordFull
-            && loopRecordPosition < loopPlayBuffer.getNumSamples()
-                                        + (int) (deviceSampleRate * 1.5))
-        {
-            // keep going
-        }
-        else
+        loopOp.store (LoopOp::idle);
+        loopOpFinished.store (true);
+    }
+    else if (op == LoopOp::calibrate)
+    {
+        const bool playDone = loopPlayPosition >= loopPlayBuffer.getNumSamples();
+        if (playDone
+            && loopRecordPosition >= loopPlayBuffer.getNumSamples()
+                                       + (int) (deviceSampleRate * 1.5))
         {
             loopOp.store (LoopOp::idle);
             loopOpFinished.store (true);
@@ -406,13 +402,102 @@ bool HardwareLoopOps::autoDetectLatency (const juce::File& impulseFile,
     return true;
 }
 
+bool HardwareLoopOps::measureReturnNoiseFloor (double listenSeconds,
+                                               float& outPeakDb,
+                                               float& outRmsDb,
+                                               juce::String& error)
+{
+    outPeakDb = -120.0f;
+    outRmsDb = -120.0f;
+
+    if (! hardwareSettings.isConfigured())
+    {
+        error = "Configure a hardware audio device first";
+        return false;
+    }
+
+    if (deviceSampleRate <= 1.0)
+    {
+        error = "Audio device is not running";
+        return false;
+    }
+
+    const double listen = juce::jlimit (0.25, 5.0, listenSeconds);
+    // Discard latency plus a short settle so send muting / ADC DC settle
+    // does not inflate the measured floor.
+    const int settleSamples = hardwareSettings.latencySamples
+                              + juce::jmax (deviceBlockSize * 4, (int) (deviceSampleRate * 0.15));
+    const int listenSampleCount = juce::jmax (deviceBlockSize, (int) std::llround (listen * deviceSampleRate));
+    const int playSamples = settleSamples + listenSampleCount + deviceBlockSize * 4;
+    const int recordSamples = playSamples + settleSamples + deviceBlockSize * 4;
+
+    loopPlayBuffer.setSize (2, playSamples, false, true, false);
+    loopPlayBuffer.clear(); // silence into the send pair
+    loopRecordBuffer.setSize (2, recordSamples, false, true, false);
+    loopRecordBuffer.clear();
+    loopPlayPosition = 0;
+    loopRecordPosition = 0;
+    loopRecordCapacity = recordSamples;
+    loopOpFinished.store (false);
+    loopOp.store (LoopOp::capture);
+
+    const int neededRecorded = settleSamples + listenSampleCount;
+    const auto deadline = juce::Time::getMillisecondCounterHiRes()
+                          + (listen + 3.0) * 1000.0;
+
+    while (juce::Time::getMillisecondCounterHiRes() < deadline)
+    {
+        HostAudioHelpers::pumpMessageThreadMs (10);
+        if (loopRecordPosition >= neededRecorded || loopOpFinished.load())
+            break;
+    }
+
+    loopOp.store (LoopOp::idle);
+
+    const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
+    if (recorded < neededRecorded)
+    {
+        error = "Noise-floor measurement timed out";
+        return false;
+    }
+
+    const int start = settleSamples;
+    const int end = juce::jmin (recorded, start + listenSampleCount);
+    if (end <= start)
+    {
+        error = "Noise-floor measurement produced no usable samples";
+        return false;
+    }
+
+    float peak = 0.0f;
+    double sumSq = 0.0;
+    int count = 0;
+    for (int i = start; i < end; ++i)
+    {
+        for (int ch = 0; ch < juce::jmin (2, loopRecordBuffer.getNumChannels()); ++ch)
+        {
+            const float s = std::abs (loopRecordBuffer.getSample (ch, i));
+            peak = juce::jmax (peak, s);
+            sumSq += (double) s * (double) s;
+            ++count;
+        }
+    }
+
+    outPeakDb = juce::Decibels::gainToDecibels (peak, -120.0f);
+    outRmsDb = count > 0
+                   ? juce::Decibels::gainToDecibels ((float) std::sqrt (sumSq / (double) count), -120.0f)
+                   : -120.0f;
+    return true;
+}
+
 bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
                                              const juce::File& outputFile,
                                              double tailSilenceSeconds,
                                              double silenceThresholdDb,
                                              double maxTailSeconds,
                                              juce::String& error,
-                                             const std::atomic<bool>* cancelRequested,
+                                             const std::atomic<bool>* stopRequestedFlag,
+                                             const std::atomic<bool>* abortRequestedFlag,
                                              double targetDurationSeconds)
 {
     if (! hardwareSettings.isConfigured())
@@ -496,27 +581,38 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
                                         ? juce::jmax (deviceBlockSize * 2, (int) (deviceSampleRate * 0.25))
                                         : 0;
     int silentSamples = 0;
+    int silenceCursor = 0; // next record index not yet credited toward silence hold
     bool pastFixture = false;
     int lastRecorded = -1;
     int stagnantIterations = 0;
-    bool stopRequested = false;
+    bool stopAndSave = false;
 
     const auto deadline = juce::Time::getMillisecondCounterHiRes()
                           + (maxTailSeconds + (double) fixtureSamples / deviceSampleRate + 5.0) * 1000.0;
 
     while (juce::Time::getMillisecondCounterHiRes() < deadline)
     {
-        // Cancel means "stop recording, keep what we have" — the user hit
-        // Cancel to end the take, not to throw it away. We only fail below if
-        // nothing usable was recorded yet.
-        if (cancelRequested != nullptr && cancelRequested->load())
+        if (abortRequestedFlag != nullptr && abortRequestedFlag->load())
         {
             loopOp.store (LoopOp::idle);
-            stopRequested = true;
+            error = "Capture cancelled";
+            return false;
+        }
+
+        // Stop means "end the take, keep what we have". We only fail below if
+        // nothing usable was recorded yet.
+        if (stopRequestedFlag != nullptr && stopRequestedFlag->load())
+        {
+            loopOp.store (LoopOp::idle);
+            stopAndSave = true;
             break;
         }
 
         HostAudioHelpers::pumpMessageThreadMs (10);
+
+        // Audio thread filled the record buffer — keep what we have.
+        if (loopOpFinished.load())
+            break;
 
         const int recorded = loopRecordPosition;
         if (recorded == lastRecorded)
@@ -529,11 +625,16 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
         // Stall detection: if the audio callback stops advancing the record
         // position (device unplugged, CoreAudio wedged after a device
         // restart), bail with a diagnosable error instead of spinning until
-        // the deadline. The threshold is generous (~30 s) because a slow
-        // device restart can legitimately pause the callback for a while.
-        if (stagnantIterations > 1500) // about 30s with sleep+dispatch cadence
+        // the deadline. ~15 s at the 10 ms pump cadence.
+        if (stagnantIterations > 1500)
         {
             loopOp.store (LoopOp::idle);
+            // If we already have usable audio, save it rather than aborting
+            // the whole capture (empty artifact folders are worse than a
+            // slightly short take after a mid-record device glitch).
+            if (recorded > hardwareSettings.latencySamples)
+                break;
+
             error = "Hardware capture stalled (audio device not advancing)";
             return false;
         }
@@ -550,19 +651,31 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
             break;
         }
 
+        // Silence gate after the dry fixture has returned. Credit newly
+        // recorded samples while the recent peak stays below the calibrated
+        // gate so the hold time tracks audio, not message-thread tick rate.
         if (pastFixture && recorded > hardwareSettings.latencySamples + fixtureSamples)
         {
-            const int checkFrom = juce::jmax (0, recorded - deviceBlockSize);
-            float peak = 0.0f;
-            for (int i = checkFrom; i < recorded; ++i)
-                peak = juce::jmax (peak,
-                                   std::abs (loopRecordBuffer.getSample (0, i)),
-                                   std::abs (loopRecordBuffer.getSample (1, i)));
+            if (silenceCursor < hardwareSettings.latencySamples + fixtureSamples)
+                silenceCursor = hardwareSettings.latencySamples + fixtureSamples;
 
-            if (peak < silenceThresh)
-                silentSamples += deviceBlockSize;
-            else
-                silentSamples = 0;
+            if (recorded > silenceCursor)
+            {
+                const int checkFrom = juce::jmax (silenceCursor, recorded - juce::jmax (deviceBlockSize * 2, 1));
+                float peak = 0.0f;
+                for (int i = checkFrom; i < recorded; ++i)
+                    peak = juce::jmax (peak,
+                                       std::abs (loopRecordBuffer.getSample (0, i)),
+                                       std::abs (loopRecordBuffer.getSample (1, i)));
+
+                const int advanced = recorded - silenceCursor;
+                silenceCursor = recorded;
+
+                if (peak < silenceThresh)
+                    silentSamples += advanced;
+                else
+                    silentSamples = 0;
+            }
 
             if (silentSamples >= silenceHold || recorded >= maxRecord)
             {
@@ -581,9 +694,9 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
     const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
     const int latency = juce::jlimit (0, recorded, hardwareSettings.latencySamples);
     const int usable = recorded - latency;
-    if (stopRequested && usable <= 0)
+    if (stopAndSave && usable <= 0)
     {
-        error = "Capture cancelled before usable audio was recorded";
+        error = "Capture stopped before usable audio was recorded";
         return false;
     }
 

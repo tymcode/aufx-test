@@ -16,8 +16,27 @@ from .graphing import plot_comparison, plot_difference_metrics
 from .host_app import launch_host_app
 from .params import parse_param_args
 from .reporting import band_analysis, write_compare_html_report
-from .session import ExperimentSession, slugify
+from .session import ExperimentSession, StateSnapshot, slugify
 from .testgen import export_setups_json, export_test_module
+
+
+def _snapshot_source_wave(
+    session: ExperimentSession,
+    snap: StateSnapshot,
+) -> tuple[Waveform | None, str | None]:
+    """Load dry input audio and a display name for the source clip, if present."""
+    source_wave: Waveform | None = None
+    source_clip: str | None = snap.source_clip_name
+    if snap.input_audio:
+        source_path = session.resolve_path(snap.input_audio)
+        if source_path.exists():
+            source_wave = Waveform.from_file(source_path)
+            if not source_clip:
+                source_name = source_path.stem
+                if source_name.endswith("_input"):
+                    source_name = source_name[: -len("_input")]
+                source_clip = source_name
+    return source_wave, source_clip
 
 
 def _cmd_compare(args: argparse.Namespace) -> int:
@@ -38,63 +57,128 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     auto_report_dir: Path | None = None
     context: dict[str, str] = {}
     source_wave: Waveform | None = None
+    # "hardware_vs_software" gates pass/fail. Dry/wet modes are informational only.
+    compare_mode = "hardware_vs_software"
+    sw_wave: Waveform | None = None
+    hw_wave: Waveform | None = None
 
     # Convenience mode:
     #   aufx-test compare --root <sessions_root> <session_name> <snapshot_id>
-    # Compares the hardware capture against the software/rendered output from
-    # that snapshot (output_audio_hw vs output_audio). The positional args are
-    # repurposed as session/snapshot names rather than adding a separate
-    # subcommand so the muscle memory of "compare A B" carries over.
+    # With both outputs: hardware vs software (pass/fail).
+    # With only software or only hardware + input: dry vs wet report (no gate).
     if args.root is not None:
         session = _load_session(args.actual, args.root)
         snap = session.get_snapshot(args.expected)
-        if not snap.output_audio:
-            raise ValueError(f"Snapshot {snap.id!r} has no output_audio")
-        if not snap.output_audio_hw:
-            raise ValueError(
-                f"Snapshot {snap.id!r} has no output_audio_hw; capture with source='Both' first."
-            )
-
-        actual_path = session.resolve_path(snap.output_audio_hw)
-        expected_path = session.resolve_path(snap.output_audio)
-        if write_report == "auto":
-            auto_report_dir = session.resolve_path(snap.output_audio).parent
+        has_sw = bool(snap.output_audio)
+        has_hw = bool(snap.output_audio_hw)
+        source_wave, source_clip = _snapshot_source_wave(session, snap)
         context = {
             "session_name": session.name,
             "snapshot_name": snap.name,
             "snapshot_id": snap.id,
         }
-        if snap.input_audio:
-            source_path = session.resolve_path(snap.input_audio)
-            if source_path.exists():
-                source_wave = Waveform.from_file(source_path)
-                source_name = source_path.stem
-                if source_name.endswith("_input"):
-                    source_name = source_name[: -len("_input")]
-                context["source_clip"] = source_name
+        if source_clip:
+            context["source_clip"] = source_clip
 
-        if not args.json:
-            print(f"Comparing snapshot {snap.id} ({snap.name})")
-            print(f"  actual   (hardware): {actual_path}")
-            print(f"  expected (software): {expected_path}")
+        if has_sw and has_hw:
+            compare_mode = "hardware_vs_software"
+            actual_path = session.resolve_path(snap.output_audio_hw)
+            expected_path = session.resolve_path(snap.output_audio)
+            if write_report == "auto":
+                auto_report_dir = Path(expected_path).parent
+            if not args.json:
+                print(f"Comparing snapshot {snap.id} ({snap.name})")
+                print(f"  actual   (hardware): {actual_path}")
+                print(f"  expected (software): {expected_path}")
+        elif has_sw and source_wave is not None:
+            compare_mode = "dry_vs_software"
+            wet_path = session.resolve_path(snap.output_audio)
+            actual_path = wet_path
+            expected_path = session.resolve_path(snap.input_audio) if snap.input_audio else wet_path
+            if write_report == "auto":
+                auto_report_dir = Path(wet_path).parent
+            if not args.json:
+                print(f"Dry vs software report for snapshot {snap.id} ({snap.name})")
+                print(f"  dry: {expected_path}")
+                print(f"  wet: {wet_path}")
+        elif has_hw and source_wave is not None:
+            compare_mode = "dry_vs_hardware"
+            wet_path = session.resolve_path(snap.output_audio_hw)
+            actual_path = wet_path
+            expected_path = session.resolve_path(snap.input_audio) if snap.input_audio else wet_path
+            if write_report == "auto":
+                auto_report_dir = Path(wet_path).parent
+            if not args.json:
+                print(f"Dry vs hardware report for snapshot {snap.id} ({snap.name})")
+                print(f"  dry: {expected_path}")
+                print(f"  wet: {wet_path}")
+        elif has_sw or has_hw:
+            missing = "input_audio (dry source clip)"
+            raise ValueError(
+                f"Snapshot {snap.id!r} has only one wet capture and no {missing}; "
+                "capture with a source clip to report dry vs wet, or capture Both for HW vs SW."
+            )
+        else:
+            raise ValueError(
+                f"Snapshot {snap.id!r} has neither output_audio nor output_audio_hw"
+            )
+
+    if args.root is None:
+        compare_mode = "file_pair"
+        gated = True
+    else:
+        gated = compare_mode == "hardware_vs_software"
 
     actual = Waveform.from_file(actual_path)
     expected = Waveform.from_file(expected_path)
-    result = compare_waveforms(actual, expected, thresholds=thresholds)
-    band_summary = band_analysis(actual, expected, config=config)
+    if compare_mode == "hardware_vs_software":
+        hw_wave = actual
+        sw_wave = expected
+    elif compare_mode == "dry_vs_software":
+        sw_wave = actual
+        source_wave = expected if source_wave is None else source_wave
+    elif compare_mode == "dry_vs_hardware":
+        hw_wave = actual
+        source_wave = expected if source_wave is None else source_wave
 
-    payload = {
-        "passed": result.passed,
+    if gated:
+        result = compare_waveforms(actual, expected, thresholds=thresholds)
+    else:
+        # Informational dry/wet: score wet vs dry without quality gates.
+        wet = sw_wave if compare_mode == "dry_vs_software" else hw_wave
+        assert wet is not None and source_wave is not None
+        result = compare_waveforms(wet, source_wave)
+    band_summary = band_analysis(
+        actual if gated else (sw_wave or hw_wave or actual),
+        expected if gated else source_wave or expected,
+        config=config,
+    )
+
+    payload: dict[str, object] = {
+        "mode": compare_mode,
+        "gated": gated,
         **result.metrics.as_dict(),
-        "thresholds": thresholds.__dict__,
         "band_analysis": band_summary,
     }
+    if gated:
+        payload["passed"] = result.passed
+        payload["thresholds"] = thresholds.__dict__
+    else:
+        payload["passed"] = None
     if context:
         payload["context"] = context
     if args.json:
         print(json.dumps(payload, indent=2))
     else:
-        print(result.summary())
+        if gated:
+            print(result.summary())
+        else:
+            print(f"Informational {compare_mode.replace('_', ' ')} metrics (not gated):")
+            m = result.metrics
+            print(
+                f"  correlation={m.correlation:.4f}  snr_db={m.snr_db:.2f}  "
+                f"rms_error={m.rms_error:.6f}  spectral_distance={m.spectral_distance:.6f}"
+            )
         print(f"band analysis ({band_summary['num_of_bands']} bands from compare.config):")
         for row in band_summary["bands"]:
             print(
@@ -120,53 +204,165 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         report_dry_hw_metrics = report_dir / "compare_dry_vs_hardware_metrics.png"
 
         report_json.write_text(json.dumps(payload, indent=2) + "\n")
-        plot_comparison(expected, actual, save_path=report_waveform)
-        plot_difference_metrics(result, save_path=report_metrics, show=False)
-        comparison_views: list[dict[str, object]] = [
-            {
-                "key": "hardware_vs_software",
-                "label": "Hardware vs Software (default)",
-                "waveform_plot": report_waveform,
-                "metrics_plot": report_metrics,
-                "metrics": result.metrics.as_dict(),
-            }
-        ]
-        if source_wave is not None:
-            sw_result = compare_waveforms(expected, source_wave, thresholds=thresholds)
+        report_wave_size = (20, 6)
+        report_metrics_size = (14, 4)
+        report_dpi = 200
+        comparison_views: list[dict[str, object]] = []
+        plot_thresholds = thresholds if gated else None
+
+        if compare_mode in ("hardware_vs_software", "file_pair"):
+            labels = ["SW", "HW"] if compare_mode == "hardware_vs_software" else ["expected", "actual"]
+            title = (
+                "Hardware vs Software"
+                if compare_mode == "hardware_vs_software"
+                else "Actual vs Expected"
+            )
+            plot_comparison(
+                expected,
+                actual,
+                labels=labels,
+                title=title,
+                spectrogram_background=actual if compare_mode == "hardware_vs_software" else None,
+                figsize=report_wave_size,
+                dpi=report_dpi,
+                save_path=report_waveform,
+            )
+            plot_difference_metrics(
+                result,
+                thresholds=plot_thresholds,
+                figsize=report_metrics_size,
+                dpi=report_dpi,
+                save_path=report_metrics,
+                show=False,
+            )
+            comparison_views.append(
+                {
+                    "key": compare_mode,
+                    "label": (
+                        "Hardware vs Software (default)"
+                        if compare_mode == "hardware_vs_software"
+                        else "Actual vs Expected"
+                    ),
+                    "waveform_plot": report_waveform,
+                    "metrics_plot": report_metrics,
+                    "metrics": result.metrics.as_dict(),
+                }
+            )
+            if source_wave is not None and compare_mode == "hardware_vs_software":
+                sw_result = compare_waveforms(expected, source_wave, thresholds=thresholds)
+                plot_comparison(
+                    source_wave,
+                    expected,
+                    labels=["Dry", "Wet"],
+                    title="Dry vs Software Wet",
+                    save_path=report_dry_sw_waveform,
+                    spectrogram_background=expected,
+                    figsize=report_wave_size,
+                    dpi=report_dpi,
+                )
+                plot_difference_metrics(
+                    sw_result,
+                    thresholds=thresholds,
+                    figsize=report_metrics_size,
+                    dpi=report_dpi,
+                    save_path=report_dry_sw_metrics,
+                    show=False,
+                )
+                comparison_views.append(
+                    {
+                        "key": "dry_vs_software",
+                        "label": "Dry vs Software Wet",
+                        "waveform_plot": report_dry_sw_waveform,
+                        "metrics_plot": report_dry_sw_metrics,
+                        "metrics": sw_result.metrics.as_dict(),
+                    }
+                )
+
+                hw_result = compare_waveforms(actual, source_wave, thresholds=thresholds)
+                plot_comparison(
+                    source_wave,
+                    actual,
+                    labels=["Dry", "Wet"],
+                    title="Dry vs Hardware Wet",
+                    save_path=report_dry_hw_waveform,
+                    spectrogram_background=actual,
+                    figsize=report_wave_size,
+                    dpi=report_dpi,
+                )
+                plot_difference_metrics(
+                    hw_result,
+                    thresholds=thresholds,
+                    figsize=report_metrics_size,
+                    dpi=report_dpi,
+                    save_path=report_dry_hw_metrics,
+                    show=False,
+                )
+                comparison_views.append(
+                    {
+                        "key": "dry_vs_hardware",
+                        "label": "Dry vs Hardware Wet",
+                        "waveform_plot": report_dry_hw_waveform,
+                        "metrics_plot": report_dry_hw_metrics,
+                        "metrics": hw_result.metrics.as_dict(),
+                    }
+                )
+        elif compare_mode == "dry_vs_software":
+            assert sw_wave is not None and source_wave is not None
             plot_comparison(
                 source_wave,
-                expected,
-                save_path=report_dry_sw_waveform,
-                spectrogram_background=expected,
+                sw_wave,
+                labels=["Dry", "Wet"],
+                title="Dry vs Software Wet",
+                save_path=report_waveform,
+                spectrogram_background=sw_wave,
+                figsize=report_wave_size,
+                dpi=report_dpi,
             )
-            plot_difference_metrics(sw_result, save_path=report_dry_sw_metrics, show=False)
+            plot_difference_metrics(
+                result,
+                figsize=report_metrics_size,
+                dpi=report_dpi,
+                save_path=report_metrics,
+                show=False,
+            )
             comparison_views.append(
                 {
                     "key": "dry_vs_software",
                     "label": "Dry vs Software Wet",
-                    "waveform_plot": report_dry_sw_waveform,
-                    "metrics_plot": report_dry_sw_metrics,
-                    "metrics": sw_result.metrics.as_dict(),
+                    "waveform_plot": report_waveform,
+                    "metrics_plot": report_metrics,
+                    "metrics": result.metrics.as_dict(),
                 }
             )
-
-            hw_result = compare_waveforms(actual, source_wave, thresholds=thresholds)
+        else:  # dry_vs_hardware
+            assert hw_wave is not None and source_wave is not None
             plot_comparison(
                 source_wave,
-                actual,
-                save_path=report_dry_hw_waveform,
-                spectrogram_background=actual,
+                hw_wave,
+                labels=["Dry", "Wet"],
+                title="Dry vs Hardware Wet",
+                save_path=report_waveform,
+                spectrogram_background=hw_wave,
+                figsize=report_wave_size,
+                dpi=report_dpi,
             )
-            plot_difference_metrics(hw_result, save_path=report_dry_hw_metrics, show=False)
+            plot_difference_metrics(
+                result,
+                figsize=report_metrics_size,
+                dpi=report_dpi,
+                save_path=report_metrics,
+                show=False,
+            )
             comparison_views.append(
                 {
                     "key": "dry_vs_hardware",
                     "label": "Dry vs Hardware Wet",
-                    "waveform_plot": report_dry_hw_waveform,
-                    "metrics_plot": report_dry_hw_metrics,
-                    "metrics": hw_result.metrics.as_dict(),
+                    "waveform_plot": report_waveform,
+                    "metrics_plot": report_metrics,
+                    "metrics": result.metrics.as_dict(),
                 }
             )
+
         write_compare_html_report(
             report_html,
             payload=payload,
@@ -176,14 +372,42 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             print(f"Report written to {report_dir}")
 
     if args.plot:
-        plot_comparison(expected, actual, save_path=args.plot)
+        if gated:
+            plot_comparison(expected, actual, save_path=args.plot)
+        elif compare_mode == "dry_vs_software":
+            assert sw_wave is not None and source_wave is not None
+            plot_comparison(
+                source_wave,
+                sw_wave,
+                labels=["Dry", "Wet"],
+                title="Dry vs Software Wet",
+                spectrogram_background=sw_wave,
+                save_path=args.plot,
+            )
+        else:
+            assert hw_wave is not None and source_wave is not None
+            plot_comparison(
+                source_wave,
+                hw_wave,
+                labels=["Dry", "Wet"],
+                title="Dry vs Hardware Wet",
+                spectrogram_background=hw_wave,
+                save_path=args.plot,
+            )
         if not args.json:
             print(f"Plot saved to {args.plot}")
     elif args.metrics_plot:
-        plot_difference_metrics(result, save_path=args.metrics_plot, show=False)
+        plot_difference_metrics(
+            result,
+            thresholds=thresholds if gated else None,
+            save_path=args.metrics_plot,
+            show=False,
+        )
         if not args.json:
             print(f"Metrics plot saved to {args.metrics_plot}")
 
+    if not gated:
+        return 0
     return 0 if result.passed else 1
 
 
@@ -404,8 +628,10 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "Sessions root for snapshot compare mode. When set, positional args "
-            "are interpreted as <session_name> <snapshot_id>, and the command "
-            "compares output_audio_hw (actual) vs output_audio (expected)."
+            "are interpreted as <session_name> <snapshot_id>. With both wet "
+            "captures, compares output_audio_hw vs output_audio (pass/fail). "
+            "With only software or only hardware plus input_audio, writes an "
+            "informational dry-vs-wet report (no pass/fail)."
         ),
     )
     compare.add_argument(

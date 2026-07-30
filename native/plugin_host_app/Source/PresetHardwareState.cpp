@@ -3,6 +3,7 @@
 #include "HostLog.h"
 #include "HostPreferences.h"
 #include "SessionArtifactSchema.h"
+#include "Utf8.h"
 #include "sysex/SysexDeviceRegistry.h"
 
 const SysexDeviceModule* resolveSelectedSysexModule (const MidiEndpointInfo& info)
@@ -165,7 +166,7 @@ bool PresetHardwareState::sendHardwareStateFile (const juce::File& sysexFile, ju
 
     if (! engine.sendMidiMessages (messages))
     {
-        error = "MIDI output not configured — open MIDI Setup";
+        error = utf8 ("MIDI output not configured — open MIDI Setup");
         return false;
     }
 

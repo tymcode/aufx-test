@@ -3,9 +3,11 @@
 #include "HostLog.h"
 #include "HostPreferences.h"
 #include "MidiEndpointInfo.h"
+#include "NoiseFloorCalibration.h"
 #include "OfflineCapture.h"
 #include "PresetHardwareState.h"
 #include "SessionArtifactSchema.h"
+#include "Utf8.h"
 #include "sysex/SysexDeviceModule.h"
 
 CapturePipeline::CapturePipeline (PluginAudioEngine& audioEngine,
@@ -103,6 +105,7 @@ bool CapturePipeline::renderSoftware (const juce::File& fixtureFile,
 bool CapturePipeline::recordHardware (const juce::File& fixtureFile,
                                       const juce::File& hardwareOut,
                                       double targetDurationSeconds,
+                                      double silenceThresholdDb,
                                       juce::Component* progressParent,
                                       juce::String& error)
 {
@@ -114,28 +117,130 @@ bool CapturePipeline::recordHardware (const juce::File& fixtureFile,
 
     engine.stopFixture();
 
-    std::atomic<bool> cancelRequested { false };
+    std::atomic<bool> stopRequested { false };
+    std::atomic<bool> abortRequested { false };
     const juce::String progressText = targetDurationSeconds > 0.0
-        ? ("Recording hardware return (~"
+        ? (utf8 ("Recording hardware return (~")
            + juce::String (targetDurationSeconds, 1)
-           + "s, then auto-stops). Cancel saves early.")
-        : "Recording hardware return… waits for silence after the clip. Cancel saves early.";
+           + utf8 ("s, then auto-stops). Stop saves early; Cancel aborts."))
+        : (utf8 ("Recording hardware return. Auto stops after silence (gate ")
+           + juce::String (silenceThresholdDb, 1)
+           + utf8 (" dBFS)."));
+
+    struct HardwareCaptureProgressPanel final : public juce::Component,
+                                                private juce::Timer
+    {
+        HardwareCaptureProgressPanel (const juce::String& messageText,
+                                      std::atomic<bool>& stopFlag,
+                                      std::atomic<bool>& abortFlag)
+            : stopRequested (stopFlag),
+              abortRequested (abortFlag)
+        {
+            message.setText (messageText, juce::dontSendNotification);
+            message.setJustificationType (juce::Justification::centred);
+            message.setMinimumHorizontalScale (1.0f);
+            addAndMakeVisible (message);
+
+            stopwatch.setJustificationType (juce::Justification::centred);
+            stopwatch.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+            stopwatch.setText ("0:00.0", juce::dontSendNotification);
+            addAndMakeVisible (stopwatch);
+
+            stopButton.setButtonText ("Stop");
+            cancelButton.setButtonText ("Cancel");
+            stopButton.addShortcut (juce::KeyPress (juce::KeyPress::returnKey));
+            cancelButton.addShortcut (juce::KeyPress (juce::KeyPress::escapeKey));
+            stopButton.onClick = [this] { stopRequested.store (true); };
+            cancelButton.onClick = [this] { abortRequested.store (true); };
+            addAndMakeVisible (stopButton);
+            addAndMakeVisible (cancelButton);
+
+            setSize (440, 150);
+            startedAtMs = juce::Time::getMillisecondCounterHiRes();
+            startTimerHz (10);
+        }
+
+        ~HardwareCaptureProgressPanel() override { stopTimer(); }
+
+        void stop() { stopTimer(); }
+
+        void resized() override
+        {
+            auto area = getLocalBounds();
+            message.setBounds (area.removeFromTop (56));
+            stopwatch.setBounds (area.removeFromTop (36));
+            area.removeFromTop (10);
+
+            constexpr int buttonWidth = 110;
+            constexpr int buttonHeight = 32;
+            constexpr int gap = 16;
+            auto buttonRow = area.removeFromTop (buttonHeight);
+            const int totalWidth = buttonWidth * 2 + gap;
+            auto centred = buttonRow.withSizeKeepingCentre (totalWidth, buttonHeight);
+            stopButton.setBounds (centred.removeFromLeft (buttonWidth));
+            centred.removeFromLeft (gap);
+            cancelButton.setBounds (centred.removeFromLeft (buttonWidth));
+        }
+
+        void timerCallback() override
+        {
+            const double elapsed = juce::jmax (0.0,
+                (juce::Time::getMillisecondCounterHiRes() - startedAtMs) * 0.001);
+            const int totalTenths = (int) std::llround (elapsed * 10.0);
+            const int minutes = totalTenths / 600;
+            const int seconds = (totalTenths / 10) % 60;
+            const int tenths = totalTenths % 10;
+            stopwatch.setText (juce::String (minutes) + ":"
+                                   + juce::String (seconds).paddedLeft ('0', 2)
+                                   + "." + juce::String (tenths),
+                               juce::dontSendNotification);
+        }
+
+        bool keyPressed (const juce::KeyPress& key) override
+        {
+            if (key == juce::KeyPress::escapeKey)
+            {
+                abortRequested.store (true);
+                return true;
+            }
+            if (key == juce::KeyPress::returnKey)
+            {
+                stopRequested.store (true);
+                return true;
+            }
+            return false;
+        }
+
+        juce::Label message;
+        juce::Label stopwatch;
+        juce::TextButton stopButton;
+        juce::TextButton cancelButton;
+        std::atomic<bool>& stopRequested;
+        std::atomic<bool>& abortRequested;
+        double startedAtMs { 0.0 };
+    };
 
     juce::AlertWindow progress ("Capturing Hardware",
-                                progressText,
+                                {},
                                 juce::MessageBoxIconType::NoIcon,
                                 progressParent);
-    progress.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    if (auto* cancelButton = progress.getButton ("Cancel"))
-        cancelButton->onClick = [&cancelRequested] { cancelRequested.store (true); };
+    HardwareCaptureProgressPanel panel (progressText, stopRequested, abortRequested);
+    progress.addCustomComponent (&panel);
+    // Escape / Return still work via button shortcuts and the panel key handler.
     progress.setAlwaysOnTop (true);
-    progress.setSize (420, 160);
-    progress.setCentreRelative (0.5f, 0.4f);
+    progress.setWantsKeyboardFocus (true);
+    panel.setWantsKeyboardFocus (true);
     progress.enterModalState (true, nullptr, false);
+    if (progressParent != nullptr)
+        progress.centreAroundComponent (progressParent, progress.getWidth(), progress.getHeight());
+    else
+        progress.setCentreRelative (0.5f, 0.4f);
+    panel.grabKeyboardFocus();
 
-    const bool ok = engine.captureHardwareToFile (fixtureFile, hardwareOut, 1.0, -60.0, 120.0, error,
-                                                  &cancelRequested, targetDurationSeconds);
-    progress.setMessage ("Finishing…");
+    const bool ok = engine.captureHardwareToFile (fixtureFile, hardwareOut, 1.0, silenceThresholdDb, 120.0, error,
+                                                  &stopRequested, &abortRequested, targetDurationSeconds);
+    panel.stop();
+    panel.message.setText (utf8 ("Finishing…"), juce::dontSendNotification);
     progress.exitModalState (0);
     progress.setVisible (false);
     return ok;
@@ -237,7 +342,10 @@ bool CapturePipeline::run (const CapturePipelineRequest& request,
 
     outResult.paths = makeArtifactPaths (plugin, request.description, request.roleIndex);
 
-    HardwareModeGuard modeGuard (engine, refreshHardwareUi);
+    // Flip send/return routing only. Do not refresh the chrome / tear down the
+    // Cocoa editor — destroying and recreating it after capture falls back to
+    // AUGenericView (empty "placeholder" UI) on many plugins.
+    HardwareModeGuard modeGuard (engine, {});
 
     if (wantPlugin)
     {
@@ -255,16 +363,54 @@ bool CapturePipeline::run (const CapturePipelineRequest& request,
     {
         modeGuard.showMode (true);
 
-        // Prefer the software take's duration so both files match; if plugin
-        // capture was skipped or duration could not be read, fall back to the
-        // fixture length so we do not sit forever on a noisy analog floor.
-        double hardwareTargetSeconds = outResult.softwareDurationSeconds;
-        if (hardwareTargetSeconds <= 0.0)
-            hardwareTargetSeconds = wavDurationSeconds (request.fixtureFile);
+        // Prefer the software take's duration so Both captures match. With no
+        // software reference (hardware-only), leave target at 0 so recording
+        // continues until silence, Stop, or the max-tail safety limit — never
+        // truncate to the dry fixture length (that cuts reverb tails short).
+        const double hardwareTargetSeconds = outResult.softwareDurationSeconds;
+
+        double silenceThresholdDb = HostPreferences::get().getHardwareCaptureSilenceThresholdDb (
+            NoiseFloorCalibration::defaultSilenceThresholdDb);
+
+        if (request.calibrateNoiseFloor)
+        {
+            juce::AlertWindow calibrating ("Calibrating",
+                                           utf8 ("Measuring hardware noise floor…"),
+                                           juce::MessageBoxIconType::NoIcon,
+                                           request.progressParent);
+            calibrating.setAlwaysOnTop (true);
+            calibrating.setSize (360, 120);
+            calibrating.setCentreRelative (0.5f, 0.4f);
+            calibrating.enterModalState (true, nullptr, false);
+
+            NoiseFloorCalibration::Result floorResult;
+            juce::String floorError;
+            const bool ok = NoiseFloorCalibration::measureHardwareReturn (engine, floorResult, floorError);
+            calibrating.exitModalState (0);
+            calibrating.setVisible (false);
+
+            if (! ok)
+            {
+                error = floorError;
+                return false;
+            }
+
+            silenceThresholdDb = floorResult.recommendedSilenceThresholdDb;
+            HostPreferences::get().setHardwareCaptureSilenceThresholdDb (silenceThresholdDb);
+            outResult.calibratedNoiseFloor = true;
+            HostLog::info ("Hardware noise floor "
+                           + juce::String (floorResult.peakDb, 1)
+                           + " dBFS peak → silence gate "
+                           + juce::String (silenceThresholdDb, 1)
+                           + " dBFS");
+        }
+
+        outResult.hardwareSilenceThresholdDb = silenceThresholdDb;
 
         if (! recordHardware (request.fixtureFile,
                               outResult.paths.hardwareOutput,
                               hardwareTargetSeconds,
+                              silenceThresholdDb,
                               request.progressParent,
                               error))
             return false;

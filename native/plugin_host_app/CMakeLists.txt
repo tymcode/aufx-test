@@ -71,6 +71,7 @@ target_sources(plugin_host_app
         Source/PresetHardwareState.cpp
         Source/SourceClipLibrary.cpp
         Source/CapturePipeline.cpp
+        Source/NoiseFloorCalibration.cpp
         Source/TestCaseCapture.cpp
         Source/TestCaseLoader.cpp
         Source/PluginAudioEngine.cpp

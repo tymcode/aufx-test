@@ -163,7 +163,13 @@ def write_mismatch_report(
         save_path=out / "waveform.png",
         show=False,
     )
-    plot_difference_metrics(result, title=f"{name}: metrics", save_path=out / "metrics.png", show=False)
+    plot_difference_metrics(
+        result,
+        thresholds=thresholds,
+        title=f"{name}: metrics",
+        save_path=out / "metrics.png",
+        show=False,
+    )
 
     return out
 
@@ -354,12 +360,50 @@ def write_compare_html_report(
     output = Path(output_path).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     bands = payload.get("band_analysis", {}).get("bands", [])
-    thresholds = payload.get("thresholds", {})
-    context = payload.get("context", {})
+    thresholds = payload.get("thresholds", {}) or {}
+    context = payload.get("context", {}) or {}
+    gated = bool(payload.get("gated", "passed" in payload and payload.get("passed") is not None))
+    mode = str(payload.get("mode", "hardware_vs_software"))
 
     def asset_url(path: str | Path) -> str:
         relative = os.path.relpath(Path(path).resolve(), output.parent)
         return quote(Path(relative).as_posix())
+
+    def metric_status(kind: str, value: float) -> str:
+        """Return CSS class for threshold pass/fail; empty when no gate applies."""
+        if not gated or not thresholds:
+            return ""
+        if kind == "correlation":
+            return "metric-ok" if value >= float(thresholds.get("correlation_min", 0.0)) else "metric-bad"
+        if kind == "snr_db":
+            return "metric-ok" if value >= float(thresholds.get("snr_db_min", 0.0)) else "metric-bad"
+        if kind == "rms_error":
+            return "metric-ok" if value <= float(thresholds.get("rms_error_max", 0.0)) else "metric-bad"
+        if kind == "spectral_distance":
+            return (
+                "metric-ok"
+                if value <= float(thresholds.get("spectral_distance_max", 0.0))
+                else "metric-bad"
+            )
+        return ""
+
+    def metrics_html(metrics: dict[str, Any]) -> str:
+        correlation = float(metrics.get("correlation", 0.0))
+        snr_db = float(metrics.get("snr_db", 0.0))
+        rms_error = float(metrics.get("rms_error", 0.0))
+        spectral = float(metrics.get("spectral_distance", 0.0))
+        lag = int(metrics.get("alignment_lag_samples", 0))
+        return (
+            f'<span class="{metric_status("correlation", correlation)}">'
+            f"Correlation <strong>{correlation:.4f}</strong></span>"
+            f'<span class="{metric_status("snr_db", snr_db)}">'
+            f"SNR <strong>{snr_db:.2f} dB</strong></span>"
+            f'<span class="{metric_status("rms_error", rms_error)}">'
+            f"RMS error <strong>{rms_error:.6f}</strong></span>"
+            f'<span class="{metric_status("spectral_distance", spectral)}">'
+            f"Spectral distance <strong>{spectral:.6f}</strong></span>"
+            f"<span>Lag <strong>{lag} samples</strong></span>"
+        )
 
     views = comparison_views or []
     if not views:
@@ -387,13 +431,15 @@ def write_compare_html_report(
         waveform_plot = view.get("waveform_plot")
         metrics_plot = view.get("metrics_plot")
         waveform_img = (
-            f'<figure><img src="{asset_url(waveform_plot)}" alt="Waveform comparison">'
+            f'<figure class="plot-card plot-waveform">'
+            f'<img src="{asset_url(waveform_plot)}" alt="Waveform comparison">'
             "<figcaption>Waveform comparison</figcaption></figure>"
             if waveform_plot
             else ""
         )
         metrics_img = (
-            f'<figure><img src="{asset_url(metrics_plot)}" alt="Difference metrics">'
+            f'<figure class="plot-card plot-metrics">'
+            f'<img src="{asset_url(metrics_plot)}" alt="Difference metrics">'
             "<figcaption>Difference metrics</figcaption></figure>"
             if metrics_plot
             else ""
@@ -403,14 +449,11 @@ def write_compare_html_report(
             f"""
   <section class="view-panel" data-view="{escape(str(view.get("key", "")))}"{style}>
     <h3>{escape(str(view.get("label", "View")))}</h3>
-    <div class="metrics">
-      <span>Correlation <strong>{float(metrics.get('correlation', 0)):.4f}</strong></span>
-      <span>SNR <strong>{float(metrics.get('snr_db', 0)):.2f} dB</strong></span>
-      <span>RMS error <strong>{float(metrics.get('rms_error', 0)):.6f}</strong></span>
-      <span>Spectral distance <strong>{float(metrics.get('spectral_distance', 0)):.6f}</strong></span>
-      <span>Lag <strong>{int(metrics.get('alignment_lag_samples', 0))} samples</strong></span>
+    <div class="metrics">{metrics_html(metrics)}</div>
+    <div class="plot-stack">
+      {waveform_img}
+      {metrics_img}
     </div>
-    <div class="images">{waveform_img}{metrics_img}</div>
   </section>
 """
         )
@@ -424,9 +467,16 @@ def write_compare_html_report(
         for row in bands
     )
     pretty_json = escape(json.dumps(payload, indent=2))
-    passed = bool(payload.get("passed", False))
-    status_text = "PASSED" if passed else "FAILED"
-    status_class = "ok" if passed else "bad"
+    if gated:
+        passed = bool(payload.get("passed", False))
+        status_text = "PASSED" if passed else "FAILED"
+        status_class = "ok" if passed else "bad"
+    else:
+        status_text = {
+            "dry_vs_software": "DRY VS SOFTWARE",
+            "dry_vs_hardware": "DRY VS HARDWARE",
+        }.get(mode, "REPORT")
+        status_class = "info"
     source_clip = context.get("source_clip")
     snapshot_name = context.get("snapshot_name")
     snapshot_id = context.get("snapshot_id")
@@ -440,6 +490,19 @@ def write_compare_html_report(
         )
         if item
     )
+    thresholds_section = ""
+    if gated and thresholds:
+        thresholds_section = f"""
+  <h2>Thresholds</h2>
+  <div class="metrics">
+    <span>SNR min <strong>{float(thresholds.get('snr_db_min', 0)):.2f} dB</strong></span>
+    <span>Correlation min <strong>{float(thresholds.get('correlation_min', 0)):.4f}</strong></span>
+    <span>RMS max <strong>{float(thresholds.get('rms_error_max', 0)):.6f}</strong></span>
+    <span>Spectral max <strong>{float(thresholds.get('spectral_distance_max', 0)):.6f}</strong></span>
+  </div>
+"""
+    band_actual_label = "Wet dB" if not gated else "Actual dB"
+    band_expected_label = "Dry dB" if not gated else "Expected dB"
 
     html = f"""<!doctype html>
 <html lang="en">
@@ -449,17 +512,28 @@ def write_compare_html_report(
   <title>AU/FX Compare Report</title>
   <style>
     :root {{ color-scheme: light dark; --ok:#238636; --bad:#cf222e; --muted:#6e7781; }}
-    body {{ font: 15px system-ui,sans-serif; max-width:1200px; margin:40px auto; padding:0 24px; }}
+    body {{ font: 15px system-ui,sans-serif; max-width:1600px; margin:40px auto; padding:0 24px; }}
     h1 {{ margin-bottom:8px; }}
     .pill {{ display:inline-block; padding:8px 12px; border-radius:8px; border:1px solid #8885; margin:8px 0 16px; }}
-    .ok {{ color:var(--ok); }} .bad {{ color:var(--bad); }}
+    .ok {{ color:var(--ok); background:#23863622; border-color:#23863688; }}
+    .bad {{ color:var(--bad); background:#cf222e22; border-color:#cf222e88; }}
+    .info {{ color:var(--muted); background:#8882; border-color:#8885; }}
     .metrics {{ display:flex; flex-wrap:wrap; gap:10px; margin:16px 0; }}
     .metrics span {{ padding:8px 12px; border:1px solid #8885; border-radius:8px; }}
+    .metrics span.metric-ok {{ background:#23863633; border-color:#23863699; }}
+    .metrics span.metric-bad {{ background:#cf222e33; border-color:#cf222e99; }}
     .controls {{ display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; }}
     .view-btn {{ border:1px solid #8885; border-radius:8px; padding:8px 12px; background:transparent; cursor:pointer; }}
     .view-btn.active {{ border-color:#3b82f6; background:#3b82f620; }}
-    .images {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; margin:18px 0; }}
-    figure {{ margin:0; }} img {{ width:100%; border-radius:6px; }} figcaption {{ color:var(--muted); }}
+    .plot-stack {{ display:flex; flex-direction:column; gap:18px; margin:18px 0 28px; }}
+    .plot-card {{
+      margin:0; padding:14px; border:1px solid #8885; border-radius:12px;
+      background:#8881; box-shadow:0 8px 24px #0002;
+    }}
+    .plot-waveform {{ border-color:#3b82f688; background:#3b82f610; }}
+    .plot-metrics {{ border-color:#8885; }}
+    .plot-card img {{ width:100%; height:auto; display:block; border-radius:6px; }}
+    .plot-card figcaption {{ color:var(--muted); margin-top:8px; }}
     table {{ width:100%; border-collapse:collapse; margin:16px 0; }}
     td,th {{ padding:8px; border-bottom:1px solid #8884; text-align:left; }}
     pre {{ white-space:pre-wrap; border:1px solid #8885; border-radius:8px; padding:12px; overflow-x:auto; }}
@@ -470,28 +544,17 @@ def write_compare_html_report(
   <h1>AU/FX Compare Report</h1>
   <div class="pill {status_class}"><strong>{status_text}</strong></div>
   <div>{escape(context_line)}</div>
-  <div class="metrics">
-    <span>Correlation <strong>{float(payload.get('correlation', 0)):.4f}</strong></span>
-    <span>SNR <strong>{float(payload.get('snr_db', 0)):.2f} dB</strong></span>
-    <span>RMS error <strong>{float(payload.get('rms_error', 0)):.6f}</strong></span>
-    <span>Spectral distance <strong>{float(payload.get('spectral_distance', 0)):.6f}</strong></span>
-    <span>Lag <strong>{int(payload.get('alignment_lag_samples', 0))} samples</strong></span>
-  </div>
-  <h2>Thresholds</h2>
-  <div class="metrics">
-    <span>SNR min <strong>{float(thresholds.get('snr_db_min', 0)):.2f} dB</strong></span>
-    <span>Correlation min <strong>{float(thresholds.get('correlation_min', 0)):.4f}</strong></span>
-    <span>RMS max <strong>{float(thresholds.get('rms_error_max', 0)):.6f}</strong></span>
-    <span>Spectral max <strong>{float(thresholds.get('spectral_distance_max', 0)):.6f}</strong></span>
-  </div>
-  <h2>Band Analysis</h2>
-  <table>
-    <thead><tr><th>Band</th><th>Range (Hz)</th><th>Actual dB</th><th>Expected dB</th><th>Delta dB</th></tr></thead>
-    <tbody>{rows}</tbody>
-  </table>
+  <div class="metrics">{metrics_html(payload)}</div>
+  {thresholds_section}
   <h2>Plots</h2>
   <div class="controls">{controls}</div>
   {''.join(panels)}
+  <h2>Band Analysis</h2>
+  <table>
+    <thead><tr><th>Band</th><th>Range (Hz)</th>
+      <th>{band_actual_label}</th><th>{band_expected_label}</th><th>Delta dB</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
   <h2>Raw JSON</h2>
   <pre><code>{pretty_json}</code></pre>
   <script>

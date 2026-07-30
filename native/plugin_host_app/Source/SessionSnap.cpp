@@ -190,6 +190,8 @@ bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::Str
 
     auto* snap = new juce::DynamicObject();
     snap->setProperty ("name", request.snapshotName);
+    if (request.sourceClipName.isNotEmpty())
+        snap->setProperty ("source_clip_name", request.sourceClipName);
     snap->setProperty ("parameters", juce::var (new juce::DynamicObject()));
     if (inputRel.isNotEmpty())
         snap->setProperty ("input_audio", inputRel);
@@ -251,6 +253,7 @@ namespace
         {
             ref.id = obj->getProperty ("id").toString();
             ref.name = obj->getProperty ("name").toString();
+            ref.sourceClipName = obj->getProperty ("source_clip_name").toString();
             ref.inputAudio = resolveSessionRelative (sessionDir, obj->getProperty ("input_audio").toString());
             ref.presetFile = resolveSessionRelative (sessionDir, obj->getProperty ("preset_file").toString());
             ref.sysexFile = resolveSessionRelative (sessionDir, obj->getProperty ("sysex_file").toString());

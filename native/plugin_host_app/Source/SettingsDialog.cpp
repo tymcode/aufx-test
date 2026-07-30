@@ -2,6 +2,7 @@
 #include "HostDialog.h"
 #include "HostPreferences.h"
 #include "AuPluginScanner.h"
+#include "Utf8.h"
 
 SettingsPanel::SettingsPanel (const HostConfig& config, juce::KnownPluginList* knownPluginsIn)
     : dataRoot (config.projectRoot),
@@ -24,8 +25,8 @@ SettingsPanel::SettingsPanel (const HostConfig& config, juce::KnownPluginList* k
 
     allowInstrumentInputToggle.setButtonText ("Allow input to virtual instruments");
     allowInstrumentInputToggle.setTooltip (
-        "Enable audio input buses on instruments/samplers and feed the source clip into them "
-        "(for sampling). Off by default — some AUs crash if input is enabled without a proper feed.");
+        utf8 ("Enable audio input buses on instruments/samplers and feed the source clip into them "
+              "(for sampling). Off by default — some AUs crash if input is enabled without a proper feed."));
     allowInstrumentInputToggle.setToggleState (HostPreferences::get().getAllowInstrumentAudioInput(),
                                                juce::dontSendNotification);
     addAndMakeVisible (allowInstrumentInputToggle);
@@ -164,8 +165,8 @@ void SettingsPanel::retrySelectedSkippedPlugin()
 
     pluginCacheModified = true;
     juce::AlertWindow alert ("Retry succeeded",
-                             niceName + " was scanned and added to the plugin cache.\n"
-                             "Use Plugins → Add Plugin… to put it on your list.",
+                             niceName + utf8 (" was scanned and added to the plugin cache.\n"
+                                              "Use Plugins → Add Plugin… to put it on your list."),
                              juce::MessageBoxIconType::InfoIcon,
                              this);
     alert.addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));

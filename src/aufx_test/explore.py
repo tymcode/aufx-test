@@ -146,7 +146,13 @@ def _capture_interactive(
     tags_raw = _prompt("Tags (comma-separated)")
     tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
 
-    snapshot = StateSnapshot(name=name, parameters=params, notes=notes, tags=tags)
+    snapshot = StateSnapshot(
+        name=name,
+        parameters=params,
+        source_clip_name=input_path.stem if input_path is not None else None,
+        notes=notes,
+        tags=tags,
+    )
     session.add_snapshot(
         snapshot,
         copy_input=input_path,
@@ -179,7 +185,13 @@ def capture_snapshot_from_cli(
     if preset_file is not None and preset_file.suffix.lower() == ".aupreset":
         validate_aupreset(preset_file)
 
-    snapshot = StateSnapshot(name=name, parameters=params, notes=notes, tags=tags or [])
+    snapshot = StateSnapshot(
+        name=name,
+        parameters=params,
+        source_clip_name=input_audio.stem if input_audio is not None else None,
+        notes=notes,
+        tags=tags or [],
+    )
     session.add_snapshot(
         snapshot,
         copy_input=input_audio,

@@ -224,6 +224,7 @@ class StateSnapshot:
 
     name: str
     parameters: dict[str, float | int | bool | str] = field(default_factory=dict)
+    source_clip_name: str | None = None
     input_audio: str | None = None
     output_audio: str | None = None
     # Hardware-insert capture (written by native SessionSnap); optional.
@@ -361,6 +362,8 @@ class ExperimentSession:
         stem_dir.mkdir(parents=True, exist_ok=True)
 
         if copy_input is not None:
+            if not snapshot.source_clip_name:
+                snapshot.source_clip_name = Path(copy_input).stem
             dest = stem_dir / f"{stem}_input{Path(copy_input).suffix or '.wav'}"
             staged = self._stage_artifact(Path(copy_input), dest)
             snapshot.input_audio = str(staged.relative_to(self.session_dir))
@@ -603,6 +606,8 @@ class ExperimentSession:
                 lines.append(f"      params: {params}")
             if snap.input_audio:
                 lines.append(f"      input: {snap.input_audio}")
+            if snap.source_clip_name:
+                lines.append(f"      source clip: {snap.source_clip_name}")
             if snap.output_audio:
                 lines.append(f"      output: {snap.output_audio}")
             if snap.output_audio_hw:

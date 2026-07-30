@@ -192,6 +192,11 @@ aufx-test compare --root sessions "DEEPZ exploration" flange_negative_regen_gld
 aufx-test compare --root sessions "DEEPZ exploration" flange_negative_regen_gld \
   --write-report
 
+# Software-only or hardware-only captures: informational dry vs wet report
+# (spectrogram + metrics, no pass/fail) when input_audio is present
+aufx-test compare --root sessions "DEEPZ exploration" software_only_snap \
+  --write-report
+
 # Override report directory explicitly
 aufx-test compare --root sessions "DEEPZ exploration" flange_negative_regen_gld \
   --write-report reports/deepz/flange_negative_regen_gld
@@ -203,9 +208,10 @@ aufx-test compare --root sessions "DEEPZ exploration" flange_negative_regen_gld 
 #   compare_report.html   (plots + formatted metrics + raw JSON)
 #
 # compare_report.html includes toggle controls for available views:
-#   - Hardware vs Software (default)
-#   - Dry vs Software Wet (when input_audio exists)
-#   - Dry vs Hardware Wet (when input_audio exists)
+#   - Hardware vs Software (default, when both wet captures exist)
+#   - Dry vs Software Wet (software capture + input, or Both + input)
+#   - Dry vs Hardware Wet (hardware capture + input, or Both + input)
+# Software-only / hardware-only reports are informational (no PASSED/FAILED).
 # It also shows Source Clip near the top when known.
 ```
 

@@ -220,6 +220,21 @@ juce::String HostPreferences::getMidiSysexModule() const
     return {};
 }
 
+bool HostPreferences::getHardwareCaptureCalibrate() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getBoolValue (keyHardwareCaptureCalibrate, true);
+    return true;
+}
+
+double HostPreferences::getHardwareCaptureSilenceThresholdDb (double defaultThresholdDb) const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        if (s->containsKey (keyHardwareCaptureSilenceThresholdDb))
+            return s->getDoubleValue (keyHardwareCaptureSilenceThresholdDb, defaultThresholdDb);
+    return defaultThresholdDb;
+}
+
 void HostPreferences::setMidiOutIdentifier (const juce::String& identifier)
 {
     if (auto* s = settings())
@@ -252,6 +267,24 @@ void HostPreferences::setMidiSysexModule (const juce::String& moduleName)
             s->removeValue (keyMidiSysexModule);
         else
             s->setValue (keyMidiSysexModule, moduleName);
+        s->saveIfNeeded();
+    }
+}
+
+void HostPreferences::setHardwareCaptureCalibrate (bool shouldCalibrate)
+{
+    if (auto* s = settings())
+    {
+        s->setValue (keyHardwareCaptureCalibrate, shouldCalibrate);
+        s->saveIfNeeded();
+    }
+}
+
+void HostPreferences::setHardwareCaptureSilenceThresholdDb (double thresholdDb)
+{
+    if (auto* s = settings())
+    {
+        s->setValue (keyHardwareCaptureSilenceThresholdDb, thresholdDb);
         s->saveIfNeeded();
     }
 }

@@ -27,6 +27,8 @@ public:
     static constexpr const char* keyMidiOutIdentifier = "midiOutIdentifier";
     static constexpr const char* keyMidiDumpInIdentifier = "midiDumpInIdentifier";
     static constexpr const char* keyMidiSysexModule = "midiSysexModule";
+    static constexpr const char* keyHardwareCaptureCalibrate = "hardwareCaptureCalibrate";
+    static constexpr const char* keyHardwareCaptureSilenceThresholdDb = "hardwareCaptureSilenceThresholdDb";
     static constexpr int defaultPluginScanTimeoutMs = 15000;
     static constexpr int minPluginScanTimeoutMs = 5000;
     static constexpr int maxPluginScanTimeoutMs = 300000;
@@ -52,6 +54,13 @@ public:
     juce::String getMidiOutIdentifier() const;
     juce::String getMidiDumpInIdentifier() const;
     juce::String getMidiSysexModule() const;
+    /** When true (default), measure hardware noise floor before capture. */
+    bool getHardwareCaptureCalibrate() const;
+    /**
+     * Last calibrated silence gate (dBFS). Returns defaultThresholdDb when
+     * the user has never successfully calibrated.
+     */
+    double getHardwareCaptureSilenceThresholdDb (double defaultThresholdDb = -60.0) const;
     void setExplorationDataRootPref (const juce::String& path);
     void setConfigPathPref (const juce::String& path);
     void setAllowInstrumentAudioInput (bool allow);
@@ -60,6 +69,8 @@ public:
     void setMidiOutIdentifier (const juce::String& identifier);
     void setMidiDumpInIdentifier (const juce::String& identifier);
     void setMidiSysexModule (const juce::String& moduleName);
+    void setHardwareCaptureCalibrate (bool shouldCalibrate);
+    void setHardwareCaptureSilenceThresholdDb (double thresholdDb);
     void clearPrefs();
 
     /** Read org-level defaults from /Library/Preferences (macOS). */

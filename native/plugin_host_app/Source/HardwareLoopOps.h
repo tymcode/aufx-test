@@ -57,6 +57,15 @@ public:
                             juce::String& error);
 
     /**
+     * Send silence through the send pair and measure return peak/RMS (dBFS)
+     * after latency settle. Used by NoiseFloorCalibration before hardware capture.
+     */
+    bool measureReturnNoiseFloor (double listenSeconds,
+                                  float& outPeakDb,
+                                  float& outRmsDb,
+                                  juce::String& error);
+
+    /**
      * Record the return pair while playing fixtureFile through the send pair.
      * Trims configured latency from the head and extends through silence tail.
      *
@@ -64,19 +73,22 @@ public:
      * loop in 10 ms slices while the realtime callback does the actual play/
      * record (LoopOp::capture). A worker thread would be cleaner, but the
      * capture UI is modal anyway and the message pump keeps the progress
-     * dialog and its Cancel button responsive with far less machinery.
+     * dialog and its Stop / Cancel buttons responsive with far less machinery.
      * TODO: move to a juce::ThreadWithProgressWindow if this ever needs to be
      * non-modal.
      *
      * End-of-capture detection, in priority order:
-     *  1. cancelRequested — treated as "stop and save what we have" (returns
-     *     false only if nothing usable was recorded yet),
-     *  2. targetDurationSeconds > 0 — stop shortly after that much audio is
+     *  1. abortRequested — discard the take (returns false),
+     *  2. stopRequested — stop recording and save what we have (returns false
+     *     only if nothing usable was recorded yet),
+     *  3. targetDurationSeconds > 0 — stop shortly after that much audio is
      *     usable. Used by "Capture Both": the offline software render tells us
      *     how long the hardware take should be. Needed because analog return
-     *     paths have a noise floor that can defeat silence detection,
-     *  3. silence tail — classic "quiet for N seconds after the clip ended",
-     *  4. stall detection — if the record position stops advancing for ~30 s
+     *     paths have a noise floor that can defeat silence detection. Do not
+     *     fall back to the dry fixture length — hardware-only takes must wait
+     *     for silence or a manual Stop so reverb tails are not cut short,
+     *  4. silence tail — classic "quiet for N seconds after the clip ended",
+     *  5. stall detection — if the record position stops advancing for ~30 s
      *     the device is wedged; bail instead of spinning forever.
      */
     bool captureHardwareToFile (const juce::File& fixtureFile,
@@ -85,7 +97,8 @@ public:
                                 double silenceThresholdDb,
                                 double maxTailSeconds,
                                 juce::String& error,
-                                const std::atomic<bool>* cancelRequested = nullptr,
+                                const std::atomic<bool>* stopRequested = nullptr,
+                                const std::atomic<bool>* abortRequested = nullptr,
                                 double targetDurationSeconds = 0.0);
 
     // Realtime helpers called from PluginAudioEngine::audioDeviceIOCallbackWithContext:

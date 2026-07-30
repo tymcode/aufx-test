@@ -64,7 +64,7 @@
 2. **Second Capture Test Case crash** — Offline render no longer calls `releaseResources()` on the live engine plugin; uses non-realtime + device sample rate / channel layout. Fixed SIGSEGV in AU `renderGetInput` on second capture.
 3. **Software vs hardware take length** — Offline render resamples to **device** rate so A/B files share SR and wall-clock length.
 4. **Hardware Audio Setup monitoring** — With software effect muted, monitor crossfade forces the hardware return (previously silent in software mode).
-5. **Capture Both progress dialog** — Clearer auto-stop copy; fixture-duration fallback if software duration is missing; dialog hidden on finish.
+5. **Capture Both progress dialog** — Clearer auto-stop copy; dialog hidden on finish. Hardware-only does **not** fall back to fixture duration (that cut reverb tails); it waits for silence or manual **Stop**. Dialog has **Stop** (save take) and **Cancel** (abort).
 6. **Portable config** — Saving `presets_dir` / `default_preset` under the home directory writes `~/…` instead of `/Users/…`.
 
 ## Config / fixtures
@@ -87,6 +87,7 @@ Checklist:
 - [ ] Default plugin from config loads with **native** editor (not AUGenericView); dropdown matches instance
 - [ ] Hardware Audio Setup → Test: hear loop return; VU moves; calibration still works
 - [ ] Capture Test Case → **Both**: software + hardware files; progress auto-dismisses; second capture does not crash
+- [ ] Capture Test Case → **Hardware** only: does not auto-stop at dry clip length; Stop saves / Cancel aborts; **Calibrate** (default on) sets silence gate from noise floor so reverb tails end cleanly
 - [ ] Software and hardware WAVs same sample rate; dry content length aligns
 - [ ] **Plugins → Rescan Source Clips** picks up new files under `fixtures/` without relaunch
 - [ ] MIDI Setup / sysex dump (if hardware present) still works

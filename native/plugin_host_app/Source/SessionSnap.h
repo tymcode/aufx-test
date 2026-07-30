@@ -8,6 +8,7 @@ struct SessionSnapRequest
     juce::File sessionsRoot;
     juce::String sessionName;
     juce::String snapshotName;
+    juce::String sourceClipName;
     juce::File inputFile;
     juce::File outputFile;
     juce::File hardwareOutputFile; // optional latency-corrected hardware capture
@@ -25,6 +26,7 @@ struct SessionSnapshotRef
 {
     juce::String id;
     juce::String name;
+    juce::String sourceClipName;
     juce::File sessionDir;
     juce::File inputAudio;
     juce::File presetFile;

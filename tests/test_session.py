@@ -109,6 +109,7 @@ def test_state_snapshot_round_trips_hardware_fields(tmp_session_root, sine_files
     snap = StateSnapshot(
         name="Both Capture",
         id="deadbeef",
+        source_clip_name="Factory Strings 01",
         input_audio=f"artifacts/{stem}/{stem}_input.wav",
         output_audio=f"artifacts/{stem}/{stem}_output_gld.wav",
         output_audio_hw=f"artifacts/{stem}/{stem}_output_hw_gld.wav",
@@ -131,6 +132,7 @@ def test_state_snapshot_round_trips_hardware_fields(tmp_session_root, sine_files
     assert got.output_audio == snap.output_audio
     assert got.output_audio_hw == snap.output_audio_hw
     assert got.sysex_file == snap.sysex_file
+    assert got.source_clip_name == snap.source_clip_name
     assert loaded.resolve_path(got.output_audio_hw).is_file()
     assert loaded.resolve_path(got.sysex_file).is_file()
     assert "output_hw:" in loaded.summary()
@@ -196,6 +198,7 @@ def test_compare_root_mode_write_report_auto_targets_snapshot_stem(tmp_session_r
     snap = StateSnapshot(
         name="stringies",
         id="259b3b94",
+        source_clip_name="Stringies Original Clip",
         input_audio=f"artifacts/{stem}/{stem}_input.wav",
         output_audio=f"artifacts/{stem}/{stem}_output_bkn.wav",
         output_audio_hw=f"artifacts/{stem}/{stem}_output_hw_bkn.wav",
@@ -237,6 +240,8 @@ def test_compare_root_mode_write_report_auto_targets_snapshot_stem(tmp_session_r
     assert report_html.is_file()
     payload = json.loads(report_json.read_text())
     assert payload["passed"] is True
+    assert payload["mode"] == "hardware_vs_software"
+    assert payload["gated"] is True
     assert "band_analysis" in payload
     html = report_html.read_text()
     assert "AU/FX Compare Report" in html
@@ -245,7 +250,119 @@ def test_compare_root_mode_write_report_auto_targets_snapshot_stem(tmp_session_r
     assert "Dry vs Software Wet" in html
     assert "Dry vs Hardware Wet" in html
     assert "Source Clip:" in html
+    assert "Stringies Original Clip" in html
+    assert "metric-ok" in html or "metric-bad" in html
+    assert html.index("<h2>Plots</h2>") < html.index("<h2>Band Analysis</h2>")
+    assert "plot-stack" in html
+    assert "plot-waveform" in html
+    assert "plot-metrics" in html
+    assert html.index("plot-waveform") < html.index("plot-metrics")
 
+
+def test_compare_root_mode_software_only_dry_vs_wet_report(tmp_session_root, sine_files):
+    """Software-only capture + input yields informational dry/wet report (no gate)."""
+    import argparse
+
+    from aufx_test.cli import _cmd_compare
+
+    _, out, _ = sine_files
+    session = ExperimentSession.create("compare-sw-only", root_dir=tmp_session_root)
+    stem = "tone_swonly01"
+    stem_dir = session.artifacts_dir / stem
+    stem_dir.mkdir(parents=True)
+    sw = stem_dir / f"{stem}_output_gld.wav"
+    inp = stem_dir / f"{stem}_input.wav"
+    # Slightly different wet so metrics are finite/non-trivial.
+    sw.write_bytes(out.read_bytes())
+    inp.write_bytes(out.read_bytes())
+
+    snap = StateSnapshot(
+        name="tone",
+        id="swonly01",
+        source_clip_name="Tone Clip",
+        input_audio=f"artifacts/{stem}/{stem}_input.wav",
+        output_audio=f"artifacts/{stem}/{stem}_output_gld.wav",
+        reference_kind="gld",
+    )
+    session.snapshots.append(snap)
+    session.save()
+
+    args = argparse.Namespace(
+        compare_config=None,
+        snr_min=None,
+        corr_min=None,
+        root=tmp_session_root,
+        actual="compare-sw-only",
+        expected="swonly01",
+        json=True,
+        plot=None,
+        metrics_plot=None,
+        write_report="auto",
+    )
+    assert _cmd_compare(args) == 0
+    payload = json.loads((stem_dir / "compare.json").read_text())
+    assert payload["mode"] == "dry_vs_software"
+    assert payload["gated"] is False
+    assert payload["passed"] is None
+    assert "thresholds" not in payload
+    assert (stem_dir / "compare_waveform.png").is_file()
+    assert (stem_dir / "compare_metrics.png").is_file()
+    html = (stem_dir / "compare_report.html").read_text()
+    assert "DRY VS SOFTWARE" in html
+    assert "Dry vs Software Wet" in html
+    assert "PASSED" not in html and "FAILED" not in html
+    assert "Thresholds" not in html
+    assert 'class="metric-ok"' not in html and 'class="metric-bad"' not in html
+    assert "Tone Clip" in html
+
+
+def test_compare_root_mode_hardware_only_dry_vs_wet_report(tmp_session_root, sine_files):
+    """Hardware-only capture + input yields informational dry/wet report (no gate)."""
+    import argparse
+
+    from aufx_test.cli import _cmd_compare
+
+    _, out, _ = sine_files
+    session = ExperimentSession.create("compare-hw-only", root_dir=tmp_session_root)
+    stem = "tone_hwonly01"
+    stem_dir = session.artifacts_dir / stem
+    stem_dir.mkdir(parents=True)
+    hw = stem_dir / f"{stem}_output_hw_gld.wav"
+    inp = stem_dir / f"{stem}_input.wav"
+    hw.write_bytes(out.read_bytes())
+    inp.write_bytes(out.read_bytes())
+
+    snap = StateSnapshot(
+        name="tone",
+        id="hwonly01",
+        input_audio=f"artifacts/{stem}/{stem}_input.wav",
+        output_audio_hw=f"artifacts/{stem}/{stem}_output_hw_gld.wav",
+        reference_kind="gld",
+    )
+    session.snapshots.append(snap)
+    session.save()
+
+    args = argparse.Namespace(
+        compare_config=None,
+        snr_min=None,
+        corr_min=None,
+        root=tmp_session_root,
+        actual="compare-hw-only",
+        expected="hwonly01",
+        json=True,
+        plot=None,
+        metrics_plot=None,
+        write_report="auto",
+    )
+    assert _cmd_compare(args) == 0
+    payload = json.loads((stem_dir / "compare.json").read_text())
+    assert payload["mode"] == "dry_vs_hardware"
+    assert payload["gated"] is False
+    assert payload["passed"] is None
+    html = (stem_dir / "compare_report.html").read_text()
+    assert "DRY VS HARDWARE" in html
+    assert "Dry vs Hardware Wet" in html
+    assert "Hardware vs Software" not in html
 
 def test_promote_and_export_resolve_stem_subfolders(tmp_session_root, sine_files, sample_aupreset):
     """CLI promote/export only need correct relative paths in session.json."""
