@@ -15,7 +15,7 @@ from .explore import capture_snapshot_from_cli, run_explore
 from .graphing import plot_comparison, plot_difference_metrics
 from .host_app import launch_host_app
 from .params import parse_param_args
-from .reporting import band_analysis
+from .reporting import band_analysis, write_compare_html_report
 from .session import ExperimentSession, slugify
 from .testgen import export_setups_json, export_test_module
 
@@ -32,8 +32,12 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             spectral_distance_max=thresholds.spectral_distance_max,
         )
 
+    write_report = getattr(args, "write_report", None)
     actual_path = args.actual
     expected_path = args.expected
+    auto_report_dir: Path | None = None
+    context: dict[str, str] = {}
+    source_wave: Waveform | None = None
 
     # Convenience mode:
     #   aufx-test compare --root <sessions_root> <session_name> <snapshot_id>
@@ -44,27 +48,31 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     if args.root is not None:
         session = _load_session(args.actual, args.root)
         snap = session.get_snapshot(args.expected)
-        # Read session.json directly: output_audio_hw is written by the native
-        # host (SessionSnap.cpp) and isn't part of the ExperimentSession
-        # snapshot dataclass. TODO: add hardware fields to the dataclass and
-        # drop this raw-JSON sidestep.
-        payload = json.loads(session.session_file.read_text())
-        snap_json = next((s for s in payload.get("snapshots", []) if s.get("id") == snap.id), None)
-
-        if snap_json is None:
-            raise KeyError(f"Snapshot metadata not found in {session.session_file}: {snap.id}")
-
-        sw_output = snap_json.get("output_audio")
-        hw_output = snap_json.get("output_audio_hw")
-        if not sw_output:
+        if not snap.output_audio:
             raise ValueError(f"Snapshot {snap.id!r} has no output_audio")
-        if not hw_output:
+        if not snap.output_audio_hw:
             raise ValueError(
                 f"Snapshot {snap.id!r} has no output_audio_hw; capture with source='Both' first."
             )
 
-        actual_path = session.resolve_path(hw_output)
-        expected_path = session.resolve_path(sw_output)
+        actual_path = session.resolve_path(snap.output_audio_hw)
+        expected_path = session.resolve_path(snap.output_audio)
+        if write_report == "auto":
+            auto_report_dir = session.resolve_path(snap.output_audio).parent
+        context = {
+            "session_name": session.name,
+            "snapshot_name": snap.name,
+            "snapshot_id": snap.id,
+        }
+        if snap.input_audio:
+            source_path = session.resolve_path(snap.input_audio)
+            if source_path.exists():
+                source_wave = Waveform.from_file(source_path)
+                source_name = source_path.stem
+                if source_name.endswith("_input"):
+                    source_name = source_name[: -len("_input")]
+                context["source_clip"] = source_name
+
         if not args.json:
             print(f"Comparing snapshot {snap.id} ({snap.name})")
             print(f"  actual   (hardware): {actual_path}")
@@ -75,13 +83,15 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     result = compare_waveforms(actual, expected, thresholds=thresholds)
     band_summary = band_analysis(actual, expected, config=config)
 
+    payload = {
+        "passed": result.passed,
+        **result.metrics.as_dict(),
+        "thresholds": thresholds.__dict__,
+        "band_analysis": band_summary,
+    }
+    if context:
+        payload["context"] = context
     if args.json:
-        payload = {
-            "passed": result.passed,
-            **result.metrics.as_dict(),
-            "thresholds": thresholds.__dict__,
-            "band_analysis": band_summary,
-        }
         print(json.dumps(payload, indent=2))
     else:
         print(result.summary())
@@ -92,6 +102,68 @@ def _cmd_compare(args: argparse.Namespace) -> int:
                 f"{row['low_hz']:.0f}-{row['high_hz']:.0f} Hz  "
                 f"Δ {row['delta_db']:+.2f} dB"
             )
+
+    if write_report is not None:
+        if write_report == "auto":
+            report_dir = auto_report_dir or Path(actual_path).expanduser().resolve().parent
+        else:
+            report_dir = Path(write_report).expanduser().resolve()
+        report_dir.mkdir(parents=True, exist_ok=True)
+
+        report_json = report_dir / "compare.json"
+        report_waveform = report_dir / "compare_waveform.png"
+        report_metrics = report_dir / "compare_metrics.png"
+        report_html = report_dir / "compare_report.html"
+        report_dry_sw_waveform = report_dir / "compare_dry_vs_software_waveform.png"
+        report_dry_sw_metrics = report_dir / "compare_dry_vs_software_metrics.png"
+        report_dry_hw_waveform = report_dir / "compare_dry_vs_hardware_waveform.png"
+        report_dry_hw_metrics = report_dir / "compare_dry_vs_hardware_metrics.png"
+
+        report_json.write_text(json.dumps(payload, indent=2) + "\n")
+        plot_comparison(expected, actual, save_path=report_waveform)
+        plot_difference_metrics(result, save_path=report_metrics, show=False)
+        comparison_views: list[dict[str, object]] = [
+            {
+                "key": "hardware_vs_software",
+                "label": "Hardware vs Software (default)",
+                "waveform_plot": report_waveform,
+                "metrics_plot": report_metrics,
+                "metrics": result.metrics.as_dict(),
+            }
+        ]
+        if source_wave is not None:
+            sw_result = compare_waveforms(expected, source_wave, thresholds=thresholds)
+            plot_comparison(source_wave, expected, save_path=report_dry_sw_waveform)
+            plot_difference_metrics(sw_result, save_path=report_dry_sw_metrics, show=False)
+            comparison_views.append(
+                {
+                    "key": "dry_vs_software",
+                    "label": "Dry vs Software Wet",
+                    "waveform_plot": report_dry_sw_waveform,
+                    "metrics_plot": report_dry_sw_metrics,
+                    "metrics": sw_result.metrics.as_dict(),
+                }
+            )
+
+            hw_result = compare_waveforms(actual, source_wave, thresholds=thresholds)
+            plot_comparison(source_wave, actual, save_path=report_dry_hw_waveform)
+            plot_difference_metrics(hw_result, save_path=report_dry_hw_metrics, show=False)
+            comparison_views.append(
+                {
+                    "key": "dry_vs_hardware",
+                    "label": "Dry vs Hardware Wet",
+                    "waveform_plot": report_dry_hw_waveform,
+                    "metrics_plot": report_dry_hw_metrics,
+                    "metrics": hw_result.metrics.as_dict(),
+                }
+            )
+        write_compare_html_report(
+            report_html,
+            payload=payload,
+            comparison_views=comparison_views,
+        )
+        if not args.json:
+            print(f"Report written to {report_dir}")
 
     if args.plot:
         plot_comparison(expected, actual, save_path=args.plot)
@@ -345,6 +417,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     compare.add_argument("--plot", metavar="PATH", help="Save waveform comparison plot")
     compare.add_argument("--metrics-plot", metavar="PATH", help="Save metrics bar chart")
+    compare.add_argument(
+        "--write-report",
+        nargs="?",
+        const="auto",
+        default=None,
+        metavar="[DIR|auto]",
+        help=(
+            "Write compare.json + compare_waveform.png + compare_metrics.png. "
+            "Use --write-report (or auto) to target the snapshot stem folder in --root mode "
+            "(otherwise: folder of the actual WAV), or pass DIR explicitly."
+        ),
+    )
     compare.add_argument("--json", action="store_true", help="Print metrics as JSON")
     compare.set_defaults(func=_cmd_compare)
 

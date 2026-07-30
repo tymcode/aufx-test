@@ -342,3 +342,174 @@ def write_html_report(
 """
     output.write_text(html)
     return output
+
+
+def write_compare_html_report(
+    output_path: str | Path,
+    *,
+    payload: dict[str, Any],
+    comparison_views: list[dict[str, Any]] | None = None,
+) -> Path:
+    """Write a standalone HTML compare report for one CLI compare run."""
+    output = Path(output_path).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    bands = payload.get("band_analysis", {}).get("bands", [])
+    thresholds = payload.get("thresholds", {})
+    context = payload.get("context", {})
+
+    def asset_url(path: str | Path) -> str:
+        relative = os.path.relpath(Path(path).resolve(), output.parent)
+        return quote(Path(relative).as_posix())
+
+    views = comparison_views or []
+    if not views:
+        views = [
+            {
+                "key": "default",
+                "label": "Comparison",
+                "waveform_plot": None,
+                "metrics_plot": None,
+                "metrics": payload,
+            }
+        ]
+
+    controls = "".join(
+        (
+            f'<button class="view-btn" data-view="{escape(str(view.get("key", "")))}">'
+            f'{escape(str(view.get("label", "View")))}</button>'
+        )
+        for view in views
+    )
+
+    panels: list[str] = []
+    for idx, view in enumerate(views):
+        metrics = view.get("metrics") or {}
+        waveform_plot = view.get("waveform_plot")
+        metrics_plot = view.get("metrics_plot")
+        waveform_img = (
+            f'<figure><img src="{asset_url(waveform_plot)}" alt="Waveform comparison">'
+            "<figcaption>Waveform comparison</figcaption></figure>"
+            if waveform_plot
+            else ""
+        )
+        metrics_img = (
+            f'<figure><img src="{asset_url(metrics_plot)}" alt="Difference metrics">'
+            "<figcaption>Difference metrics</figcaption></figure>"
+            if metrics_plot
+            else ""
+        )
+        style = "" if idx == 0 else ' style="display:none"'
+        panels.append(
+            f"""
+  <section class="view-panel" data-view="{escape(str(view.get("key", "")))}"{style}>
+    <h3>{escape(str(view.get("label", "View")))}</h3>
+    <div class="metrics">
+      <span>Correlation <strong>{float(metrics.get('correlation', 0)):.4f}</strong></span>
+      <span>SNR <strong>{float(metrics.get('snr_db', 0)):.2f} dB</strong></span>
+      <span>RMS error <strong>{float(metrics.get('rms_error', 0)):.6f}</strong></span>
+      <span>Spectral distance <strong>{float(metrics.get('spectral_distance', 0)):.6f}</strong></span>
+      <span>Lag <strong>{int(metrics.get('alignment_lag_samples', 0))} samples</strong></span>
+    </div>
+    <div class="images">{waveform_img}{metrics_img}</div>
+  </section>
+"""
+        )
+
+    rows = "".join(
+        f"<tr><td>{escape(str(row.get('band', '')))}</td>"
+        f"<td>{float(row.get('low_hz', 0)):.0f}-{float(row.get('high_hz', 0)):.0f}</td>"
+        f"<td>{float(row.get('actual_db', 0)):.3f}</td>"
+        f"<td>{float(row.get('expected_db', 0)):.3f}</td>"
+        f"<td>{float(row.get('delta_db', 0)):+.3f}</td></tr>"
+        for row in bands
+    )
+    pretty_json = escape(json.dumps(payload, indent=2))
+    passed = bool(payload.get("passed", False))
+    status_text = "PASSED" if passed else "FAILED"
+    status_class = "ok" if passed else "bad"
+    source_clip = context.get("source_clip")
+    snapshot_name = context.get("snapshot_name")
+    snapshot_id = context.get("snapshot_id")
+    session_name = context.get("session_name")
+    context_line = " · ".join(
+        str(item)
+        for item in (
+            f"Session: {session_name}" if session_name else None,
+            f"Snapshot: {snapshot_name} ({snapshot_id})" if snapshot_name and snapshot_id else None,
+            f"Source Clip: {source_clip}" if source_clip else None,
+        )
+        if item
+    )
+
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AU/FX Compare Report</title>
+  <style>
+    :root {{ color-scheme: light dark; --ok:#238636; --bad:#cf222e; --muted:#6e7781; }}
+    body {{ font: 15px system-ui,sans-serif; max-width:1200px; margin:40px auto; padding:0 24px; }}
+    h1 {{ margin-bottom:8px; }}
+    .pill {{ display:inline-block; padding:8px 12px; border-radius:8px; border:1px solid #8885; margin:8px 0 16px; }}
+    .ok {{ color:var(--ok); }} .bad {{ color:var(--bad); }}
+    .metrics {{ display:flex; flex-wrap:wrap; gap:10px; margin:16px 0; }}
+    .metrics span {{ padding:8px 12px; border:1px solid #8885; border-radius:8px; }}
+    .controls {{ display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; }}
+    .view-btn {{ border:1px solid #8885; border-radius:8px; padding:8px 12px; background:transparent; cursor:pointer; }}
+    .view-btn.active {{ border-color:#3b82f6; background:#3b82f620; }}
+    .images {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; margin:18px 0; }}
+    figure {{ margin:0; }} img {{ width:100%; border-radius:6px; }} figcaption {{ color:var(--muted); }}
+    table {{ width:100%; border-collapse:collapse; margin:16px 0; }}
+    td,th {{ padding:8px; border-bottom:1px solid #8884; text-align:left; }}
+    pre {{ white-space:pre-wrap; border:1px solid #8885; border-radius:8px; padding:12px; overflow-x:auto; }}
+    code {{ overflow-wrap:anywhere; }}
+  </style>
+</head>
+<body>
+  <h1>AU/FX Compare Report</h1>
+  <div class="pill {status_class}"><strong>{status_text}</strong></div>
+  <div>{escape(context_line)}</div>
+  <div class="metrics">
+    <span>Correlation <strong>{float(payload.get('correlation', 0)):.4f}</strong></span>
+    <span>SNR <strong>{float(payload.get('snr_db', 0)):.2f} dB</strong></span>
+    <span>RMS error <strong>{float(payload.get('rms_error', 0)):.6f}</strong></span>
+    <span>Spectral distance <strong>{float(payload.get('spectral_distance', 0)):.6f}</strong></span>
+    <span>Lag <strong>{int(payload.get('alignment_lag_samples', 0))} samples</strong></span>
+  </div>
+  <h2>Thresholds</h2>
+  <div class="metrics">
+    <span>SNR min <strong>{float(thresholds.get('snr_db_min', 0)):.2f} dB</strong></span>
+    <span>Correlation min <strong>{float(thresholds.get('correlation_min', 0)):.4f}</strong></span>
+    <span>RMS max <strong>{float(thresholds.get('rms_error_max', 0)):.6f}</strong></span>
+    <span>Spectral max <strong>{float(thresholds.get('spectral_distance_max', 0)):.6f}</strong></span>
+  </div>
+  <h2>Band Analysis</h2>
+  <table>
+    <thead><tr><th>Band</th><th>Range (Hz)</th><th>Actual dB</th><th>Expected dB</th><th>Delta dB</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+  <h2>Plots</h2>
+  <div class="controls">{controls}</div>
+  {''.join(panels)}
+  <h2>Raw JSON</h2>
+  <pre><code>{pretty_json}</code></pre>
+  <script>
+    const buttons = document.querySelectorAll(".view-btn");
+    const panels = document.querySelectorAll(".view-panel");
+    const setActive = (key) => {{
+      buttons.forEach((btn) => btn.classList.toggle("active", btn.dataset.view === key));
+      panels.forEach((panel) => {{
+        panel.style.display = panel.dataset.view === key ? "" : "none";
+      }});
+    }};
+    if (buttons.length) {{
+      setActive(buttons[0].dataset.view);
+      buttons.forEach((btn) => btn.addEventListener("click", () => setActive(btn.dataset.view)));
+    }}
+  </script>
+</body>
+</html>
+"""
+    output.write_text(html)
+    return output

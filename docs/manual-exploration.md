@@ -184,6 +184,29 @@ aufx-test session promote "DEEPZ exploration" pan_lfo_pulse_bkn \
 # Export pytest module -- adds all promoted snapshots
 aufx-test session export "DEEPZ exploration" \
   -o tests/generated/test_deepz.py
+
+# Compare hardware-vs-software for one snapshot by id/name/stem
+aufx-test compare --root sessions "DEEPZ exploration" flange_negative_regen_gld
+
+# Write compare artifacts into that snapshot's artifacts/<stem>/ folder
+aufx-test compare --root sessions "DEEPZ exploration" flange_negative_regen_gld \
+  --write-report
+
+# Override report directory explicitly
+aufx-test compare --root sessions "DEEPZ exploration" flange_negative_regen_gld \
+  --write-report reports/deepz/flange_negative_regen_gld
+
+# Generated report files:
+#   compare.json
+#   compare_waveform.png
+#   compare_metrics.png
+#   compare_report.html   (plots + formatted metrics + raw JSON)
+#
+# compare_report.html includes toggle controls for available views:
+#   - Hardware vs Software (default)
+#   - Dry vs Software Wet (when input_audio exists)
+#   - Dry vs Hardware Wet (when input_audio exists)
+# It also shows Source Clip near the top when known.
 ```
 
 Headless replay in CI still uses `plugin_renderer` + `SubprocessPluginHost` with the captured `.aupreset`.
