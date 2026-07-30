@@ -1,284 +1,58 @@
-"""Manual experiment sessions and automatable test setups."""
+"""Manual experiment sessions and automatable test setups.
+
+Owns ``ExperimentSession``; re-exports naming, output-role, golden-import, and
+model helpers previously defined in this module for backward-compatible imports.
+"""
 
 from __future__ import annotations
 
 import json
-import re
 import shutil
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from .aupreset import import_aupreset, validate_aupreset
 from .comparison import ComparisonThresholds
+from .golden_import import GoldenTriplet, discover_golden_triplets
+from .naming import (
+    _artifact_subdir,
+    _keyword_from_description,
+    _utc_now,
+    artifact_stem,
+    relative_artifact_path,
+    slugify,
+)
+from .output_roles import (
+    _OUTPUT_ROLE_LABELS,
+    OUTPUT_ROLES,
+    _base_stem_from_output,
+    expect_match_for_output_role,
+    hardware_output_artifact_filename,
+    output_artifact_filename,
+    parse_output_role,
+)
+from .session_models import StateSnapshot, TestSetup
 
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def slugify(value: str) -> str:
-    """Lowercase alphanumeric slug; non-alnum runs become ``_``."""
-    slug = re.sub(r"[^a-z0-9]+", "_", value.strip().lower())
-    return slug.strip("_") or "snapshot"
-
-
-def _keyword_from_description(description: str) -> str:
-    """Return the first slug token from a description for artifact filenames."""
-    slug = re.sub(r"[^a-z0-9]+", "_", description.strip().lower()).strip("_")
-    if not slug:
-        return ""
-    return slug.split("_", 1)[0]
-
-
-def artifact_stem(description: str, snapshot_id: str) -> str:
-    """Filename stem for session artifacts: ``{keyword}_{id}`` or ``{id}``."""
-    keyword = _keyword_from_description(description)
-    return f"{keyword}_{snapshot_id}" if keyword else snapshot_id
-
-
-def _artifact_subdir(artifacts_dir: Path, stem: str) -> Path:
-    """Per-capture folder: ``artifacts/<stem>/``."""
-    return artifacts_dir / stem
-
-
-def relative_artifact_path(stem: str, file_name: str) -> str:
-    """Session-relative path: ``artifacts/<stem>/<file_name>``."""
-    return f"artifacts/{stem}/{file_name}"
-
-
-# Output WAV role flags: ``{stem}_output_{role}.wav`` / ``{stem}_output_hw_{role}.wav``
-OUTPUT_ROLES = ("gld", "sus", "bkn")
-_OUTPUT_ROLE_LABELS = {"gld": "golden", "sus": "suspect", "bkn": "broken"}
-# For now, suspect and broken are negative cases (fail if output still matches).
-_NEGATIVE_OUTPUT_ROLES = frozenset({"sus", "bkn"})
-
-
-def parse_output_role(path: str | Path | None) -> str | None:
-    """Return ``gld`` / ``sus`` / ``bkn`` from software or hardware output filenames.
-
-    Recognizes ``*_output_<role>.wav`` and ``*_output_hw_<role>.wav``
-    (mirrors ``SessionArtifactSchema::parseOutputRole``).
-    """
-    if path is None:
-        return None
-    stem = Path(path).stem
-    for role in OUTPUT_ROLES:
-        if stem.endswith(f"_output_hw_{role}") or stem.endswith(f"_output_{role}"):
-            return role
-    return None
-
-
-def output_artifact_filename(stem: str, role: str | None = None, *, ext: str = ".wav") -> str:
-    """Build a software output basename: ``{stem}_output.wav`` or ``{stem}_output_{role}.wav``."""
-    if role in OUTPUT_ROLES:
-        return f"{stem}_output_{role}{ext}"
-    return f"{stem}_output{ext}"
-
-
-def hardware_output_artifact_filename(stem: str, role: str | None = None, *, ext: str = ".wav") -> str:
-    """Build a hardware output basename: ``{stem}_output_hw.wav`` or ``{stem}_output_hw_{role}.wav``."""
-    if role in OUTPUT_ROLES:
-        return f"{stem}_output_hw_{role}{ext}"
-    return f"{stem}_output_hw{ext}"
-
-
-def expect_match_for_output_role(role: str | None) -> bool | None:
-    """Map an output role flag to ``expect_match``, or ``None`` if unknown/absent."""
-    if role is None:
-        return None
-    if role == "gld":
-        return True
-    if role in _NEGATIVE_OUTPUT_ROLES:
-        return False
-    return None
-
-
-def _base_stem_from_output(path: str | Path) -> str:
-    """Strip ``_output`` / ``_output_{role}`` / ``_output_hw_{role}`` from an artifact stem."""
-    stem = Path(path).stem
-    for role in OUTPUT_ROLES:
-        hw_suffix = f"_output_hw_{role}"
-        if stem.endswith(hw_suffix):
-            return stem[: -len(hw_suffix)]
-        suffix = f"_output_{role}"
-        if stem.endswith(suffix):
-            return stem[: -len(suffix)]
-    if stem.endswith("_output_hw"):
-        return stem[: -len("_output_hw")]
-    if stem.endswith("_output"):
-        return stem[: -len("_output")]
-    return stem
-
-
-@dataclass(frozen=True)
-class GoldenTriplet:
-    """One external golden/broken/suspect case discovered on disk."""
-
-    name: str
-    stem: str
-    role: str
-    preset: Path
-    input_audio: Path
-    output_audio: Path
-
-
-def _try_complete_triplet(
-    root: Path,
-    output: Path,
-    role: str,
-    *,
-    seen_stems: set[str],
-    complete: list[GoldenTriplet],
-    warnings: list[str],
-) -> None:
-    """Validate and append one output WAV as a golden triplet, or record a warning."""
-    stem = _base_stem_from_output(output)
-    if stem in seen_stems:
-        warnings.append(f"Duplicate stem {stem!r}; keeping first match ({output.name})")
-        return
-
-    preset = root / f"{stem}.aupreset"
-    input_audio = root / f"{stem}_input.wav"
-    missing: list[str] = []
-    if not preset.is_file():
-        missing.append(preset.name)
-    if not input_audio.is_file():
-        missing.append(input_audio.name)
-    if missing:
-        warnings.append(f"Incomplete set for {stem!r}: missing {', '.join(missing)}")
-        return
-
-    seen_stems.add(stem)
-    complete.append(
-        GoldenTriplet(
-            name=stem,
-            stem=stem,
-            role=role,
-            preset=preset,
-            input_audio=input_audio,
-            output_audio=output,
-        )
-    )
-
-
-def discover_golden_triplets(directory: str | Path) -> tuple[list[GoldenTriplet], list[str]]:
-    """Find ``{stem}.aupreset`` + ``{stem}_input.wav`` + output WAV sets.
-
-    Accepts flat layouts and per-stem subfolders::
-
-        {stem}.aupreset / {stem}_input.wav / {stem}_output_{role}.wav
-        {stem}/{stem}.aupreset / …   (session artifacts layout)
-
-    Bare ``{stem}_output.wav`` is treated as golden / ``gld``.
-
-    Returns ``(complete, warnings)``. Incomplete sets are reported in ``warnings``.
-    """
-    root = Path(directory)
-    if not root.is_dir():
-        raise FileNotFoundError(f"Golden directory not found: {root}")
-
-    complete: list[GoldenTriplet] = []
-    warnings: list[str] = []
-    seen_stems: set[str] = set()
-
-    def _scan_dir(search_root: Path) -> None:
-        for role in OUTPUT_ROLES:
-            for output in sorted(search_root.glob(f"*_output_{role}.wav")):
-                _try_complete_triplet(
-                    search_root,
-                    output,
-                    role,
-                    seen_stems=seen_stems,
-                    complete=complete,
-                    warnings=warnings,
-                )
-
-        for output in sorted(search_root.glob("*_output.wav")):
-            if parse_output_role(output) is not None:
-                continue
-            _try_complete_triplet(
-                search_root,
-                output,
-                "gld",
-                seen_stems=seen_stems,
-                complete=complete,
-                warnings=warnings,
-            )
-
-    _scan_dir(root)
-    # Also accept session-style ``artifacts/<stem>/`` trees when importing from
-    # an existing session artifacts directory.
-    for child in sorted(p for p in root.iterdir() if p.is_dir()):
-        _scan_dir(child)
-
-    complete.sort(key=lambda t: t.name.lower())
-    return complete, warnings
-
-
-@dataclass
-class StateSnapshot:
-    """One captured plugin state from manual exploration."""
-
-    name: str
-    parameters: dict[str, float | int | bool | str] = field(default_factory=dict)
-    source_clip_name: str | None = None
-    input_audio: str | None = None
-    output_audio: str | None = None
-    # Hardware-insert capture (written by native SessionSnap); optional.
-    output_audio_hw: str | None = None
-    preset_file: str | None = None
-    # Optional MIDI sysex dump staged beside the capture artifacts.
-    sysex_file: str | None = None
-    notes: str = ""
-    tags: list[str] = field(default_factory=list)
-    id: str = field(default_factory=lambda: uuid4().hex[:8])
-    created_at: str = field(default_factory=_utc_now)
-    promoted: bool = False
-    test_name: str | None = None
-    thresholds: dict[str, float] | None = None
-    # True: output should match reference. False: negative case — fail if it matches
-    # (reference is a known-broken capture; pass only when the bug is fixed).
-    expect_match: bool = True
-    # Output artifact role: ``gld`` / ``sus`` / ``bkn`` (from filename flag).
-    reference_kind: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> StateSnapshot:
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
-
-
-@dataclass
-class TestSetup:
-    """An automatable test derived from a promoted snapshot."""
-
-    name: str
-    input_audio: str
-    reference_output: str
-    parameters: dict[str, float | int | bool | str] = field(default_factory=dict)
-    plugin_path: str | None = None
-    preset_file: str | None = None
-    notes: str = ""
-    source_snapshot_id: str | None = None
-    thresholds: ComparisonThresholds = field(default_factory=ComparisonThresholds)
-    expect_match: bool = True
-
-    def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data["thresholds"] = asdict(self.thresholds)
-        return data
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> TestSetup:
-        thresholds_data = data.pop("thresholds", {})
-        thresholds = ComparisonThresholds(**thresholds_data) if thresholds_data else ComparisonThresholds()
-        allowed = {k: v for k, v in data.items() if k in cls.__dataclass_fields__ and k != "thresholds"}
-        return cls(thresholds=thresholds, **allowed)
+__all__ = [
+    "ExperimentSession",
+    "GoldenTriplet",
+    "OUTPUT_ROLES",
+    "StateSnapshot",
+    "TestSetup",
+    "_artifact_subdir",
+    "_base_stem_from_output",
+    "_keyword_from_description",
+    "_utc_now",
+    "artifact_stem",
+    "discover_golden_triplets",
+    "expect_match_for_output_role",
+    "hardware_output_artifact_filename",
+    "output_artifact_filename",
+    "parse_output_role",
+    "relative_artifact_path",
+    "slugify",
+]
 
 
 @dataclass

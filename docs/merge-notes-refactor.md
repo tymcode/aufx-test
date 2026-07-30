@@ -95,9 +95,7 @@ Checklist:
 ## Not in this branch (follow-ups)
 
 - Calibration Boost (multi-impulse, DC, L/R, LUFS) — deferred; hooks live on `HardwareLoopOps`
-- Full HW/SW compare + reporting UI — pipeline is ready, reporting module later
 - Load Testcase menu/dialog — backend (`TestCaseLoader` / `SessionSnap`) ready; UI not finished
-- Further cleanup (scanner split, Python schema dedupe) — not done here
 
 ## Merge recommendation
 
