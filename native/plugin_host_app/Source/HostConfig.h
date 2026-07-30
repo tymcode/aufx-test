@@ -83,6 +83,11 @@ struct HostConfig
     juce::Array<HostPluginEntry> plugins;
 
     const HostPluginEntry* findPluginById (const juce::String& id) const;
+    /** Configured default_plugin when installed; otherwise nullptr. */
+    const HostPluginEntry* configuredDefaultPlugin() const;
+    /** First installed plugin in the list (fallback). */
+    const HostPluginEntry* firstInstalledPlugin() const;
+    /** configuredDefaultPlugin() if set, else firstInstalledPlugin(). */
     const HostPluginEntry* defaultPlugin() const;
 
     /** Build sessionLogFile from logFile + sessionHash (e.g. plugin_host.log → plugin_host_a1b2c3d4.log). */

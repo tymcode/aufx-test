@@ -1,5 +1,6 @@
 #include "PluginRenderer.h"
 #include "AUpresetLoader.h"
+#include "AudioBufferUtils.h"
 #include "ParameterHelpers.h"
 
 #include <iostream>
@@ -67,24 +68,6 @@ namespace
         return true;
     }
 
-    float blockPeak (const juce::AudioBuffer<float>& buffer)
-    {
-        float peak = 0.0f;
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-            peak = juce::jmax (peak, buffer.getMagnitude (ch, 0, buffer.getNumSamples()));
-
-        return peak;
-    }
-
-    void appendBlock (juce::AudioBuffer<float>& dst, const juce::AudioBuffer<float>& src)
-    {
-        const int oldSize = dst.getNumSamples();
-        dst.setSize (dst.getNumChannels(), oldSize + src.getNumSamples(), true, false, true);
-
-        for (int ch = 0; ch < dst.getNumChannels(); ++ch)
-            dst.copyFrom (ch, oldSize, src, ch, 0, src.getNumSamples());
-    }
-
     bool renderOffline (juce::AudioPluginInstance& plugin,
                         const juce::File& inputFile,
                         const juce::File& outputFile,
@@ -129,7 +112,7 @@ namespace
                 block.copyFrom (ch, 0, inputBuffer, ch, offset, currentBlock);
 
             plugin.processBlock (block, midi);
-            appendBlock (outputBuffer, block);
+            AudioBufferUtils::appendBlock (outputBuffer, block);
         }
 
         // Tail rendering: keep feeding silence so reverbs/delays ring out.
@@ -146,11 +129,11 @@ namespace
             juce::AudioBuffer<float> block (numChannels, blockSize);
             block.clear();
             plugin.processBlock (block, midi);
-            appendBlock (outputBuffer, block);
+            AudioBufferUtils::appendBlock (outputBuffer, block);
 
             tailSamplesRendered += blockSize;
 
-            if (blockPeak (block) < silenceThreshold)
+            if (AudioBufferUtils::blockPeak (block) < silenceThreshold)
                 consecutiveSilentSamples += blockSize;
             else
                 consecutiveSilentSamples = 0;

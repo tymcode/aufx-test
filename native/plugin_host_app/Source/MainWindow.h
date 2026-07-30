@@ -5,6 +5,8 @@
 #include "LightsOutManager.h"
 #include "PluginAudioEngine.h"
 
+class MainContent;
+
 class MainWindow : public juce::DocumentWindow,
                    public juce::MenuBarModel,
                    private juce::KeyListener
@@ -35,14 +37,13 @@ private:
     bool keyPressed (const juce::KeyPress& key, juce::Component* originatingComponent) override;
     void syncNativeMenuShortcuts();
 
-    class MainContent;
-
     enum MenuIds
     {
         menuAbout = 1,
         menuSettings,
         menuAddPlugin,
         menuRescanPlugins,
+        menuRescanSourceClips,
         menuCaptureTestCase,
         menuLightsOut,
         menuHardwareAudioSetup,

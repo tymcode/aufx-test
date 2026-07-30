@@ -77,19 +77,30 @@ const HostPluginEntry* HostConfig::findPluginById (const juce::String& id) const
     return nullptr;
 }
 
-const HostPluginEntry* HostConfig::defaultPlugin() const
+const HostPluginEntry* HostConfig::configuredDefaultPlugin() const
 {
     if (auto* plugin = findPluginById (defaultPluginId))
         if (plugin->installed)
             return plugin;
+    return nullptr;
+}
 
+const HostPluginEntry* HostConfig::firstInstalledPlugin() const
+{
     for (const auto& plugin : plugins)
         if (plugin.installed)
             return &plugin;
-
-    if (! plugins.isEmpty())
-        return &plugins.getReference (0);
     return nullptr;
+}
+
+const HostPluginEntry* HostConfig::defaultPlugin() const
+{
+    // Prefer the configured default when it is installed. Only then fall back
+    // to the first installed entry (often Apple AUMatrixReverb in this repo).
+    if (auto* preferred = configuredDefaultPlugin())
+        return preferred;
+
+    return firstInstalledPlugin();
 }
 
 juce::String HostConfig::slugify (juce::String value)

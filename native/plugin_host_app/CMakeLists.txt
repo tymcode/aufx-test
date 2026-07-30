@@ -66,7 +66,18 @@ target_sources(plugin_host_app
         Source/HostLog.cpp
         Source/HostLookAndFeel.cpp
         Source/MainWindow.cpp
+        Source/MainContent.cpp
+        Source/HostChromeControls.cpp
+        Source/PresetHardwareState.cpp
+        Source/SourceClipLibrary.cpp
+        Source/CapturePipeline.cpp
+        Source/TestCaseCapture.cpp
+        Source/TestCaseLoader.cpp
         Source/PluginAudioEngine.cpp
+        Source/MonitorOutputBridge.cpp
+        Source/HardwareLoopOps.cpp
+        Source/MidiHostServices.cpp
+        Source/HostClockMetronome.cpp
         Source/OfflineCapture.cpp
         Source/SessionSnap.cpp
         Source/PluginScanLog.cpp
@@ -82,8 +93,7 @@ target_sources(plugin_host_app
         Source/sysex/SysexDeviceRegistry.cpp
         Source/sysex/QuadraverbSysex.cpp
         ${AUFX_GEN_DIR}/AppVersion.cpp
-        ../plugin_renderer/Source/AUpresetLoader.cpp
-        ../plugin_renderer/Source/ParameterHelpers.cpp)
+        ../plugin_renderer/Source/AUpresetLoader.cpp)
 
 set_source_files_properties("${AUFX_GEN_DIR}/AppVersion.cpp" "${AUFX_GEN_DIR}/AppVersion.h"
     PROPERTIES GENERATED TRUE)
