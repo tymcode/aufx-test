@@ -67,4 +67,28 @@ namespace HostFileUtils
 
         return slug.upToFirstOccurrenceOf ("_", false, false);
     }
+
+    inline juce::StringArray readLinesFile (const juce::File& file)
+    {
+        juce::StringArray lines;
+        if (file.existsAsFile())
+            file.readLines (lines);
+        lines.removeEmptyStrings();
+        return lines;
+    }
+
+    inline void writeLinesFile (const juce::File& file, const juce::StringArray& lines)
+    {
+        file.getParentDirectory().createDirectory();
+        file.replaceWithText (lines.joinIntoString ("\n") + (lines.isEmpty() ? "" : "\n"));
+    }
+
+    /** First registered format whose name contains "AudioUnit", or nullptr. */
+    inline juce::AudioPluginFormat* findAudioUnitFormat (juce::AudioPluginFormatManager& formatManager)
+    {
+        for (auto* format : formatManager.getFormats())
+            if (format != nullptr && format->getName().containsIgnoreCase ("AudioUnit"))
+                return format;
+        return nullptr;
+    }
 }

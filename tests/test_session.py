@@ -68,7 +68,7 @@ def test_keyword_from_description():
 
 def test_output_role_filename_helpers():
     assert parse_output_role("artifacts/long_67dc49d2_output_bkn.wav") == "bkn"
-    assert parse_output_role("artifacts/long_67dc49d2_output_gld.wav") == "gld"
+    assert parse_output_role("artifacts/long_67dc49d2/long_67dc49d2_output_gld.wav") == "gld"
     assert parse_output_role("artifacts/long_67dc49d2_output_sus.wav") == "sus"
     assert parse_output_role("artifacts/long_67dc49d2_output.wav") is None
     assert output_artifact_filename("long_67dc49d2", "bkn") == "long_67dc49d2_output_bkn.wav"
@@ -79,6 +79,30 @@ def test_output_role_filename_helpers():
     assert expect_match_for_output_role(None) is None
 
 
+def test_promote_and_export_resolve_stem_subfolders(tmp_session_root, sine_files, sample_aupreset):
+    """CLI promote/export only need correct relative paths in session.json."""
+    inp, out, _ = sine_files
+    session = ExperimentSession.create("nested-demo", root_dir=tmp_session_root)
+    snap = StateSnapshot(name="chamber")
+    session.add_snapshot(snap, copy_input=inp, copy_output=out, copy_preset=sample_aupreset)
+    session.promote_snapshot(snap.id, test_name="test_chamber")
+    session.save()
+
+    stem = f"chamber_{snap.id}"
+    assert snap.output_audio == f"artifacts/{stem}/{stem}_output.wav"
+
+    setup = session.snapshot_to_test_setup(snap)
+    assert Path(setup.input_audio).is_file()
+    assert Path(setup.reference_output).is_file()
+    assert Path(setup.preset_file).is_file()
+
+    out_path = tmp_session_root / "nested_test.py"
+    export_test_module(session, out_path)
+    content = out_path.read_text()
+    assert f"artifacts/{stem}/{stem}_output.wav" in content
+    assert f"artifacts/{stem}/{stem}.aupreset" in content
+
+
 def test_add_snapshot_copies_artifacts(tmp_session_root, sine_files, sample_aupreset):
     inp, out, _ = sine_files
     session = ExperimentSession.create("demo", root_dir=tmp_session_root)
@@ -87,24 +111,27 @@ def test_add_snapshot_copies_artifacts(tmp_session_root, sine_files, sample_aupr
     session.save()
 
     stem = f"half_{snap.id}"
-    assert (session.artifacts_dir / f"{stem}.aupreset").exists()
-    assert (session.artifacts_dir / f"{stem}_input.wav").exists()
-    assert (session.artifacts_dir / f"{stem}_output.wav").exists()
-    assert snap.input_audio == f"artifacts/{stem}_input.wav"
-    assert snap.output_audio == f"artifacts/{stem}_output.wav"
-    assert snap.preset_file == f"artifacts/{stem}.aupreset"
+    stem_dir = session.artifacts_dir / stem
+    assert (stem_dir / f"{stem}.aupreset").exists()
+    assert (stem_dir / f"{stem}_input.wav").exists()
+    assert (stem_dir / f"{stem}_output.wav").exists()
+    assert snap.input_audio == f"artifacts/{stem}/{stem}_input.wav"
+    assert snap.output_audio == f"artifacts/{stem}/{stem}_output.wav"
+    assert snap.preset_file == f"artifacts/{stem}/{stem}.aupreset"
 
 
 def test_add_snapshot_reuses_host_staged_artifacts(tmp_session_root, sine_files, sample_aupreset):
-    """Host writes into artifacts/; session snap should rename, not duplicate."""
+    """Host writes into artifacts/<stem>/; session snap should rename, not duplicate."""
     import shutil
 
     inp, out, _ = sine_files
     session = ExperimentSession.create("demo", root_dir=tmp_session_root)
-    session.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    host_stem = "init_aabbccdd"
+    host_dir = session.artifacts_dir / host_stem
+    host_dir.mkdir(parents=True, exist_ok=True)
 
-    host_out = session.artifacts_dir / "init_aabbccdd_output_bkn.wav"
-    host_preset = session.artifacts_dir / "init_aabbccdd.aupreset"
+    host_out = host_dir / f"{host_stem}_output_bkn.wav"
+    host_preset = host_dir / f"{host_stem}.aupreset"
     shutil.copy2(out, host_out)
     shutil.copy2(sample_aupreset, host_preset)
 
@@ -112,14 +139,15 @@ def test_add_snapshot_reuses_host_staged_artifacts(tmp_session_root, sine_files,
     session.add_snapshot(snap, copy_input=inp, copy_output=host_out, copy_preset=host_preset)
 
     stem = f"init_{snap.id}"
-    assert (session.artifacts_dir / f"{stem}_output_bkn.wav").exists()
-    assert (session.artifacts_dir / f"{stem}.aupreset").exists()
+    stem_dir = session.artifacts_dir / stem
+    assert (stem_dir / f"{stem}_output_bkn.wav").exists()
+    assert (stem_dir / f"{stem}.aupreset").exists()
     assert snap.reference_kind == "bkn"
-    assert snap.output_audio == f"artifacts/{stem}_output_bkn.wav"
+    assert snap.output_audio == f"artifacts/{stem}/{stem}_output_bkn.wav"
     assert not host_out.exists()
     assert not host_preset.exists()
-    assert len(list(session.artifacts_dir.glob("*_output_bkn.wav"))) == 1
-    assert len(list(session.artifacts_dir.glob("*.aupreset"))) == 1
+    assert len(list(session.artifacts_dir.rglob("*_output_bkn.wav"))) == 1
+    assert len(list(session.artifacts_dir.rglob("*.aupreset"))) == 1
 
 
 def test_get_snapshot_accepts_id_name_and_artifact_stem(tmp_session_root, sine_files, sample_aupreset):
@@ -171,9 +199,10 @@ def test_promote_infers_expect_match_from_output_role(tmp_session_root, sine_fil
 
     inp, out, _ = sine_files
     session = ExperimentSession.create("demo", root_dir=tmp_session_root)
-    session.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    host_dir = session.artifacts_dir / "x"
+    host_dir.mkdir(parents=True, exist_ok=True)
 
-    bkn_out = session.artifacts_dir / "x_output_bkn.wav"
+    bkn_out = host_dir / "x_output_bkn.wav"
     gld_out = tmp_session_root / "y_output_gld.wav"
     shutil.copy2(out, bkn_out)
     shutil.copy2(out, gld_out)
@@ -183,6 +212,9 @@ def test_promote_infers_expect_match_from_output_role(tmp_session_root, sine_fil
     setup = session.promote_snapshot(broken.id)
     assert broken.reference_kind == "bkn"
     assert setup.expect_match is False
+    assert Path(setup.reference_output).exists()
+    assert Path(setup.input_audio).exists()
+    assert Path(setup.preset_file).exists()
 
     golden = StateSnapshot(name="golden capture")
     session.add_snapshot(golden, copy_input=inp, copy_output=gld_out, copy_preset=sample_aupreset)

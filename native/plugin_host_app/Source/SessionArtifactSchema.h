@@ -5,7 +5,8 @@
 /**
  * Shared session artifact naming — kept in sync with src/aufx_test/session.py.
  * Role codes: gld = golden, sus = suspect, bkn = broken.
- * Filenames: <stem>_output_<role>.wav  and  <stem>_output_hw_<role>.wav
+ * Layout: artifacts/<stem>/<stem>_output_<role>.wav
+ *          artifacts/<stem>/<stem>_output_hw_<role>.wav
  */
 namespace SessionArtifactSchema
 {
@@ -83,5 +84,11 @@ namespace SessionArtifactSchema
         if (! fileName.endsWithIgnoreCase (aupresetExtension))
             fileName << aupresetExtension;
         return fileName;
+    }
+
+    /** Session-relative path: ``artifacts/<stem>/<fileName>``. */
+    inline juce::String relativeArtifactPath (const juce::String& stem, const juce::String& fileName)
+    {
+        return "artifacts/" + stem + "/" + fileName;
     }
 }

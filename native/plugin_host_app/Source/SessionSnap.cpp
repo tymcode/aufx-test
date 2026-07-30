@@ -1,6 +1,6 @@
 /**
  * Native re-implementation of `aufx-test session snap`: stage capture
- * artifacts into <session>/artifacts/ and append a snapshot entry to
+ * artifacts into <session>/artifacts/<stem>/ and append a snapshot entry to
  * session.json. Kept byte-compatible with the Python session module in
  * src/aufx_test/session.py — the pytest tooling reads what this writes, so
  * schema change must land in both places. Role suffixes and aupreset naming
@@ -53,6 +53,37 @@ namespace
         obj->setProperty ("snapshots", juce::var (juce::Array<juce::var>{}));
         return juce::var (obj);
     }
+
+    bool stageIntoStemDir (const juce::File& source,
+                           const juce::File& dest,
+                           juce::String& error,
+                           const juce::String& failMessage)
+    {
+        if (! source.existsAsFile())
+            return true;
+
+        if (source.getFullPathName() == dest.getFullPathName())
+            return true;
+
+        dest.getParentDirectory().createDirectory();
+
+        if (source.getParentDirectory() == dest.getParentDirectory())
+        {
+            if (source.getFileName() != dest.getFileName() && ! source.moveFileTo (dest))
+            {
+                error = failMessage;
+                return false;
+            }
+            return true;
+        }
+
+        if (! source.copyFileTo (dest))
+        {
+            error = failMessage;
+            return false;
+        }
+        return true;
+    }
 }
 
 bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::String& error)
@@ -101,22 +132,16 @@ bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::Str
     const auto stem = SessionArtifactSchema::baseStemFromOutput (primaryOut);
     const auto role = SessionArtifactSchema::parseOutputRole (primaryOut);
     const auto snapId = snapshotIdFromStem (stem);
+    const auto stemDir = artifactsDir.getChildFile (stem);
+    stemDir.createDirectory();
 
-    // Stage input into artifacts when needed.
     juce::String inputRel;
     if (request.inputFile.existsAsFile())
     {
-        const auto inputDest = artifactsDir.getChildFile (stem + "_input" + request.inputFile.getFileExtension());
-        if (request.inputFile.getParentDirectory() != artifactsDir
-            || request.inputFile.getFileName() != inputDest.getFileName())
-        {
-            if (! request.inputFile.copyFileTo (inputDest))
-            {
-                error = "Failed to copy input into artifacts";
-                return false;
-            }
-        }
-        inputRel = "artifacts/" + inputDest.getFileName();
+        const auto inputDest = stemDir.getChildFile (stem + "_input" + request.inputFile.getFileExtension());
+        if (! stageIntoStemDir (request.inputFile, inputDest, error, "Failed to copy input into artifacts"))
+            return false;
+        inputRel = SessionArtifactSchema::relativeArtifactPath (stem, inputDest.getFileName());
     }
 
     auto stageOutput = [&] (const juce::File& file, juce::String& rel) -> bool
@@ -124,17 +149,10 @@ bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::Str
         if (! file.existsAsFile())
             return true;
 
-        rel = "artifacts/" + file.getFileName();
-        if (file.getParentDirectory() != artifactsDir)
-        {
-            const auto dest = artifactsDir.getChildFile (file.getFileName());
-            if (! file.copyFileTo (dest))
-            {
-                error = "Failed to copy output into artifacts";
-                return false;
-            }
-            rel = "artifacts/" + dest.getFileName();
-        }
+        const auto dest = stemDir.getChildFile (file.getFileName());
+        if (! stageIntoStemDir (file, dest, error, "Failed to copy output into artifacts"))
+            return false;
+        rel = SessionArtifactSchema::relativeArtifactPath (stem, dest.getFileName());
         return true;
     };
 
@@ -155,40 +173,19 @@ bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::Str
         else
             destName = stem + request.presetFile.getFileExtension();
 
-        const auto dest = artifactsDir.getChildFile (destName);
-        if (request.presetFile.getFullPathName() != dest.getFullPathName())
-        {
-            if (request.presetFile.getParentDirectory() == artifactsDir)
-            {
-                if (request.presetFile.getFileName() != dest.getFileName())
-                    request.presetFile.moveFileTo (dest);
-            }
-            else if (! request.presetFile.copyFileTo (dest))
-            {
-                error = "Failed to stage preset into artifacts";
-                return false;
-            }
-        }
-        presetRel = "artifacts/" + dest.getFileName();
+        const auto dest = stemDir.getChildFile (destName);
+        if (! stageIntoStemDir (request.presetFile, dest, error, "Failed to stage preset into artifacts"))
+            return false;
+        presetRel = SessionArtifactSchema::relativeArtifactPath (stem, dest.getFileName());
     }
 
     juce::String sysexRel;
     if (request.sysexFile.existsAsFile())
     {
-        const auto dest = artifactsDir.getChildFile (stem + ".syx");
-        if (request.sysexFile.getFullPathName() != dest.getFullPathName())
-        {
-            if (! request.sysexFile.copyFileTo (dest)
-                && request.sysexFile.getParentDirectory() != artifactsDir)
-            {
-                error = "Failed to stage sysex into artifacts";
-                return false;
-            }
-            if (request.sysexFile.getParentDirectory() == artifactsDir
-                && request.sysexFile.getFileName() != dest.getFileName())
-                request.sysexFile.moveFileTo (dest);
-        }
-        sysexRel = "artifacts/" + dest.getFileName();
+        const auto dest = stemDir.getChildFile (stem + ".syx");
+        if (! stageIntoStemDir (request.sysexFile, dest, error, "Failed to stage sysex into artifacts"))
+            return false;
+        sysexRel = SessionArtifactSchema::relativeArtifactPath (stem, dest.getFileName());
     }
 
     auto* snap = new juce::DynamicObject();

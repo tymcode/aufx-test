@@ -38,6 +38,16 @@ def _artifact_stem(description: str, snapshot_id: str) -> str:
     return f"{keyword}_{snapshot_id}" if keyword else snapshot_id
 
 
+def _artifact_subdir(artifacts_dir: Path, stem: str) -> Path:
+    """Per-capture folder: ``artifacts/<stem>/``."""
+    return artifacts_dir / stem
+
+
+def relative_artifact_path(stem: str, file_name: str) -> str:
+    """Session-relative path: ``artifacts/<stem>/<file_name>``."""
+    return f"artifacts/{stem}/{file_name}"
+
+
 # Output WAV role flags: ``{stem}_output_{role}.wav``
 OUTPUT_ROLES = ("gld", "sus", "bkn")
 _OUTPUT_ROLE_LABELS = {"gld": "golden", "sus": "suspect", "bkn": "broken"}
@@ -140,8 +150,12 @@ def _try_complete_triplet(
 def discover_golden_triplets(directory: str | Path) -> tuple[list[GoldenTriplet], list[str]]:
     """Find ``{stem}.aupreset`` + ``{stem}_input.wav`` + output WAV sets.
 
-    Accepts ``{stem}_output_{gld,sus,bkn}.wav`` and bare ``{stem}_output.wav``
-    (treated as golden / ``gld``).
+    Accepts flat layouts and per-stem subfolders::
+
+        {stem}.aupreset / {stem}_input.wav / {stem}_output_{role}.wav
+        {stem}/{stem}.aupreset / …   (session artifacts layout)
+
+    Bare ``{stem}_output.wav`` is treated as golden / ``gld``.
 
     Returns ``(complete, warnings)``. Incomplete sets are reported in ``warnings``.
     """
@@ -153,21 +167,35 @@ def discover_golden_triplets(directory: str | Path) -> tuple[list[GoldenTriplet]
     warnings: list[str] = []
     seen_stems: set[str] = set()
 
-    for role in OUTPUT_ROLES:
-        for output in sorted(root.glob(f"*_output_{role}.wav")):
+    def _scan_dir(search_root: Path) -> None:
+        for role in OUTPUT_ROLES:
+            for output in sorted(search_root.glob(f"*_output_{role}.wav")):
+                _try_complete_triplet(
+                    search_root,
+                    output,
+                    role,
+                    seen_stems=seen_stems,
+                    complete=complete,
+                    warnings=warnings,
+                )
+
+        for output in sorted(search_root.glob("*_output.wav")):
+            if parse_output_role(output) is not None:
+                continue
             _try_complete_triplet(
-                root, output, role, seen_stems=seen_stems, complete=complete, warnings=warnings
+                search_root,
+                output,
+                "gld",
+                seen_stems=seen_stems,
+                complete=complete,
+                warnings=warnings,
             )
 
-    # Bare ``*_output.wav`` (no role flag) counts as golden — common for hand-exported
-    # references that never went through the host role dropdown.
-    for output in sorted(root.glob("*_output.wav")):
-        # ``*_output.wav`` does not match ``*_output_gld.wav`` via Path.glob.
-        if parse_output_role(output) is not None:
-            continue
-        _try_complete_triplet(
-            root, output, "gld", seen_stems=seen_stems, complete=complete, warnings=warnings
-        )
+    _scan_dir(root)
+    # Also accept session-style ``artifacts/<stem>/`` trees when importing from
+    # an existing session artifacts directory.
+    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+        _scan_dir(child)
 
     complete.sort(key=lambda t: t.name.lower())
     return complete, warnings
@@ -300,12 +328,19 @@ class ExperimentSession:
         copy_output: Path | None = None,
         copy_preset: Path | None = None,
     ) -> StateSnapshot:
-        """Add a snapshot, optionally staging audio/preset files into the session."""
+        """Add a snapshot, optionally staging audio/preset files into the session.
+
+        Artifacts are stored under ``artifacts/<stem>/`` so each capture keeps
+        its files together as the set grows (input, software/hardware outputs,
+        preset, sysex, future reports).
+        """
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         stem = _artifact_stem(snapshot.name, snapshot.id)
+        stem_dir = _artifact_subdir(self.artifacts_dir, stem)
+        stem_dir.mkdir(parents=True, exist_ok=True)
 
         if copy_input is not None:
-            dest = self.artifacts_dir / f"{stem}_input{Path(copy_input).suffix or '.wav'}"
+            dest = stem_dir / f"{stem}_input{Path(copy_input).suffix or '.wav'}"
             staged = self._stage_artifact(Path(copy_input), dest)
             snapshot.input_audio = str(staged.relative_to(self.session_dir))
 
@@ -314,7 +349,7 @@ class ExperimentSession:
             role = snapshot.reference_kind or parse_output_role(output_src)
             if role in OUTPUT_ROLES:
                 snapshot.reference_kind = role
-            dest = self.artifacts_dir / output_artifact_filename(
+            dest = stem_dir / output_artifact_filename(
                 stem, role, ext=output_src.suffix or ".wav"
             )
             staged = self._stage_artifact(output_src, dest)
@@ -323,10 +358,10 @@ class ExperimentSession:
         if copy_preset is not None:
             preset = Path(copy_preset)
             if preset.suffix.lower() == ".aupreset":
-                dest = self.artifacts_dir / f"{stem}.aupreset"
+                dest = stem_dir / f"{stem}.aupreset"
                 staged = self._stage_artifact(preset, dest, aupreset=True)
             else:
-                dest = self.artifacts_dir / f"{stem}_preset{preset.suffix}"
+                dest = stem_dir / f"{stem}_preset{preset.suffix}"
                 staged = self._stage_artifact(preset, dest)
             snapshot.preset_file = str(staged.relative_to(self.session_dir))
 
@@ -422,13 +457,14 @@ class ExperimentSession:
     ) -> tuple[list[StateSnapshot], list[str]]:
         """Import external golden triplets into this session.
 
-        Expects files named::
+        Expects files named (flat or under a ``{stem}/`` subfolder)::
 
             {stem}.aupreset
             {stem}_input.wav
             {stem}_output_gld.wav   # or _output_bkn / _output_sus / bare _output.wav
 
         Bare ``{stem}_output.wav`` is treated as a golden (``gld``) reference.
+        Imported files are staged into ``artifacts/<stem>/`` in this session.
 
         Already-present snapshot names are skipped. When ``promote`` is true,
         new snapshots are marked ready for automation.
