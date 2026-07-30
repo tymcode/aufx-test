@@ -8,8 +8,8 @@ import pytest
 from aufx_test import ExperimentSession, StateSnapshot, Waveform
 from aufx_test.explore import capture_snapshot_from_cli
 from aufx_test.session import (
-    _artifact_stem,
     _keyword_from_description,
+    artifact_stem,
     expect_match_for_output_role,
     output_artifact_filename,
     parse_output_role,
@@ -62,8 +62,8 @@ def test_keyword_from_description():
     assert _keyword_from_description("Init Serial guitar") == "init"
     assert _keyword_from_description("  half-mix tone  ") == "half"
     assert _keyword_from_description("") == ""
-    assert _artifact_stem("Init Serial guitar", "abcd1234") == "init_abcd1234"
-    assert _artifact_stem("", "abcd1234") == "abcd1234"
+    assert artifact_stem("Init Serial guitar", "abcd1234") == "init_abcd1234"
+    assert artifact_stem("", "abcd1234") == "abcd1234"
 
 
 def test_output_role_filename_helpers():
@@ -155,7 +155,7 @@ def test_get_snapshot_accepts_id_name_and_artifact_stem(tmp_session_root, sine_f
     session = ExperimentSession.create("demo", root_dir=tmp_session_root)
     snap = StateSnapshot(name="Long Tail")
     session.add_snapshot(snap, copy_input=inp, copy_output=out, copy_preset=sample_aupreset)
-    stem = _artifact_stem(snap.name, snap.id)
+    stem = artifact_stem(snap.name, snap.id)
 
     assert session.get_snapshot(snap.id).id == snap.id
     assert session.get_snapshot("Long Tail").id == snap.id

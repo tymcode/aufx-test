@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .audio import Waveform
-from .compare_config import load_compare_config
+from .compare_config import CompareConfig, load_compare_config
 from .comparison import (
     ComparisonResult,
     ComparisonThresholds,
@@ -44,8 +44,14 @@ def compare_for_test(
     )
 
 
-def _band_analysis(actual: Waveform, expected: Waveform) -> dict[str, Any]:
-    config = load_compare_config()
+def band_analysis(
+    actual: Waveform,
+    expected: Waveform,
+    *,
+    config: CompareConfig | None = None,
+) -> dict[str, Any]:
+    """Per-band mean amplitude delta using bands from compare.config.json."""
+    config = config or load_compare_config()
     bands = analysis_bands(config=config)
     actual_bands = band_amplitude_over_time(actual, bands=bands, config=config)
     expected_bands = band_amplitude_over_time(expected, bands=bands, config=config)
@@ -74,6 +80,8 @@ def _band_analysis(actual: Waveform, expected: Waveform) -> dict[str, Any]:
     return {
         "num_of_bands": config.num_of_bands,
         "window_samples": config.window_samples,
+        "band_low_hz": config.band_low_hz,
+        "band_high_hz": config.band_high_hz,
         "bands": rows,
     }
 
@@ -126,7 +134,7 @@ def write_mismatch_report(
                 result.metrics.alignment_lag_samples / expected.sample_rate * 1000.0, 4
             ),
         },
-        "band_analysis": _band_analysis(actual_cmp, expected_cmp),
+        "band_analysis": band_analysis(actual_cmp, expected_cmp),
     }
     if thresholds is not None:
         payload["thresholds"] = thresholds.__dict__
@@ -303,7 +311,8 @@ def write_html_report(
     h1 {{ margin-bottom:4px; }} .summary {{ display:flex; gap:12px; margin:24px 0; }}
     .pill,.metrics span {{ padding:8px 12px; border:1px solid #8885; border-radius:8px; }}
     .failed,.failures {{ color:var(--bad); }} .passed {{ color:var(--ok); }}
-    table {{ width:100%; border-collapse:collapse; }} td,th {{ padding:8px; border-bottom:1px solid #8884; text-align:left; }}
+    table {{ width:100%; border-collapse:collapse; }}
+    td,th {{ padding:8px; border-bottom:1px solid #8884; text-align:left; }}
     .case {{ margin:36px 0; padding:22px; border:1px solid #8885; border-radius:12px; }}
     .metrics {{ display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }}
     .detail {{ color:var(--muted); margin:12px 0; }}

@@ -12,62 +12,12 @@ from .audio import Waveform
 from .compare_config import clear_compare_config_cache, load_compare_config
 from .comparison import ComparisonThresholds, compare_waveforms
 from .explore import capture_snapshot_from_cli, run_explore
-from .host_app import launch_host_app
 from .graphing import plot_comparison, plot_difference_metrics
-from .session import ExperimentSession, _slug
-from .spectrum import analysis_bands, band_amplitude_over_time, band_amplitude_to_db
+from .host_app import launch_host_app
+from .params import parse_param_args
+from .reporting import band_analysis
+from .session import ExperimentSession, slugify
 from .testgen import export_setups_json, export_test_module
-
-
-def _parse_param_args(values: list[str]) -> dict:
-    params: dict = {}
-    for raw in values:
-        if "=" not in raw:
-            raise argparse.ArgumentTypeError(f"Expected name=value, got {raw!r}")
-        key, value = raw.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if value.lower() in {"true", "false"}:
-            params[key] = value.lower() == "true"
-        else:
-            try:
-                params[key] = float(value) if "." in value else int(value)
-            except ValueError:
-                params[key] = value
-    return params
-
-
-def _band_compare_summary(actual: Waveform, expected: Waveform, *, config) -> dict:
-    """Per-band mean amplitude delta using bands from compare.config.json."""
-    bands = analysis_bands(config=config)
-    actual_bands = band_amplitude_over_time(actual, bands=bands, config=config)
-    expected_bands = band_amplitude_over_time(expected, bands=bands, config=config)
-
-    rows: list[dict] = []
-    for band in bands:
-        a = actual_bands[band.name]
-        e = expected_bands[band.name]
-        a_db = band_amplitude_to_db(a)
-        e_db = band_amplitude_to_db(e)
-        a_mean = float(sum(a_db[f"channel_{ch}"].mean() for ch in range(actual.num_channels)) / actual.num_channels)
-        e_mean = float(sum(e_db[f"channel_{ch}"].mean() for ch in range(expected.num_channels)) / expected.num_channels)
-        rows.append(
-            {
-                "band": band.name,
-                "low_hz": band.low_hz,
-                "high_hz": band.high_hz,
-                "actual_db": round(a_mean, 3),
-                "expected_db": round(e_mean, 3),
-                "delta_db": round(a_mean - e_mean, 3),
-            }
-        )
-    return {
-        "num_of_bands": config.num_of_bands,
-        "window_samples": config.window_samples,
-        "band_low_hz": config.band_low_hz,
-        "band_high_hz": config.band_high_hz,
-        "bands": rows,
-    }
 
 
 def _cmd_compare(args: argparse.Namespace) -> int:
@@ -123,7 +73,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     actual = Waveform.from_file(actual_path)
     expected = Waveform.from_file(expected_path)
     result = compare_waveforms(actual, expected, thresholds=thresholds)
-    band_summary = _band_compare_summary(actual, expected, config=config)
+    band_summary = band_analysis(actual, expected, config=config)
 
     if args.json:
         payload = {
@@ -144,7 +94,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             )
 
     if args.plot:
-        plot_comparison(actual, actual, expected, save_path=args.plot)
+        plot_comparison(expected, actual, save_path=args.plot)
         if not args.json:
             print(f"Plot saved to {args.plot}")
     elif args.metrics_plot:
@@ -190,7 +140,7 @@ def _load_session(name: str, root: Path) -> ExperimentSession:
     """
     candidates = [
         root / name,
-        root / _slug(name),
+        root / slugify(name),
         Path(name),
     ]
     for candidate in candidates:
@@ -200,17 +150,21 @@ def _load_session(name: str, root: Path) -> ExperimentSession:
 
     for path in root.glob("*/session.json"):
         session = ExperimentSession.load(path, root_dir=root)
-        if session.name == name or path.parent.name == name or path.parent.name == _slug(name):
+        if session.name == name or path.parent.name == name or path.parent.name == slugify(name):
             return session
     raise FileNotFoundError(f"Session not found: {name!r} in {root}")
 
 
 def _cmd_session_snap(args: argparse.Namespace) -> int:
     session = _load_session(args.name, args.root)
+    try:
+        parameters = parse_param_args(args.param)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
     snapshot = capture_snapshot_from_cli(
         session,
         name=args.snapshot_name,
-        parameters=_parse_param_args(args.param),
+        parameters=parameters,
         params_file=args.params_file,
         input_audio=args.input,
         output_audio=args.output,

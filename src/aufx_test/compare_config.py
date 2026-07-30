@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .comparison import ComparisonThresholds
+from .paths import project_root
 
 
 @dataclass(frozen=True)
@@ -26,10 +27,6 @@ class CompareConfig:
 
 
 _DEFAULTS = CompareConfig()
-
-
-def project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
 
 
 def default_config_path(root: Path | None = None) -> Path:
@@ -98,11 +95,6 @@ def num_of_bands(path: str | Path | None = None) -> int:
 def cached_compare_config(path: str | None = None) -> CompareConfig:
     """Cached lookup of compare.config.json (``None`` → project-root default)."""
     return load_compare_config(path)
-
-
-def cached_num_of_bands() -> int:
-    """Cached lookup of project-root ``num_of_bands``."""
-    return cached_compare_config().num_of_bands
 
 
 def clear_compare_config_cache() -> None:

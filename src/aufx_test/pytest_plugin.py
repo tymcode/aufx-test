@@ -29,7 +29,6 @@ def pytest_configure(config: Any) -> None:
 def pytest_runtest_logreport(report: Any) -> None:
     if report.when != "call":
         return
-    config = getattr(report, "config", None)
     # TestReport does not expose config, so pytest attaches our active state
     # through the module globals initialized by pytest_sessionstart.
     if _active_state is None:

@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from .aupreset import AUpresetError, validate_aupreset
-from .session import ExperimentSession, StateSnapshot, _slug
+from .params import parse_param_value
+from .session import ExperimentSession, StateSnapshot, slugify
 
 
 def _prompt(text: str, default: str = "") -> str:
@@ -43,20 +44,8 @@ def _prompt_params() -> dict[str, Any]:
         key, value = raw.split("=", 1)
         key = key.strip()
         value = value.strip()
-        params[key] = _parse_param_value(value)
+        params[key] = parse_param_value(value)
     return params
-
-
-def _parse_param_value(raw: str) -> float | int | bool | str:
-    lower = raw.lower()
-    if lower in {"true", "false"}:
-        return lower == "true"
-    try:
-        if "." in raw:
-            return float(raw)
-        return int(raw)
-    except ValueError:
-        return raw
 
 
 def _load_params_file(path: Path) -> dict[str, Any]:
@@ -109,7 +98,7 @@ def run_explore(
                 snap_id = _prompt("Snapshot id or name")
             else:
                 snap_id = parts[1]
-            test_name = parts[2] if len(parts) > 2 else _prompt("Test name", default=_slug(snap_id))
+            test_name = parts[2] if len(parts) > 2 else _prompt("Test name", default=slugify(snap_id))
             try:
                 setup = session.promote_snapshot(snap_id, test_name=test_name)
                 session.save()

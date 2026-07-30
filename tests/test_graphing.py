@@ -1,6 +1,5 @@
 """Tests for graphing (smoke tests — no display)."""
 
-from pathlib import Path
 
 import pytest
 

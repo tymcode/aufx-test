@@ -11,15 +11,16 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .comparison import ComparisonThresholds
 from .aupreset import import_aupreset, validate_aupreset
+from .comparison import ComparisonThresholds
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _slug(value: str) -> str:
+def slugify(value: str) -> str:
+    """Lowercase alphanumeric slug; non-alnum runs become ``_``."""
     slug = re.sub(r"[^a-z0-9]+", "_", value.strip().lower())
     return slug.strip("_") or "snapshot"
 
@@ -32,7 +33,7 @@ def _keyword_from_description(description: str) -> str:
     return slug.split("_", 1)[0]
 
 
-def _artifact_stem(description: str, snapshot_id: str) -> str:
+def artifact_stem(description: str, snapshot_id: str) -> str:
     """Filename stem for session artifacts: ``{keyword}_{id}`` or ``{id}``."""
     keyword = _keyword_from_description(description)
     return f"{keyword}_{snapshot_id}" if keyword else snapshot_id
@@ -273,7 +274,7 @@ class ExperimentSession:
 
     @property
     def session_dir(self) -> Path:
-        return self.root_dir / _slug(self.name)
+        return self.root_dir / slugify(self.name)
 
     @property
     def artifacts_dir(self) -> Path:
@@ -335,7 +336,7 @@ class ExperimentSession:
         preset, sysex, future reports).
         """
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
-        stem = _artifact_stem(snapshot.name, snapshot.id)
+        stem = artifact_stem(snapshot.name, snapshot.id)
         stem_dir = _artifact_subdir(self.artifacts_dir, stem)
         stem_dir.mkdir(parents=True, exist_ok=True)
 
@@ -372,10 +373,10 @@ class ExperimentSession:
     def get_snapshot(self, snapshot_id: str) -> StateSnapshot:
         key = snapshot_id.strip()
         for snap in self.snapshots:
-            if snap.id == key or _slug(snap.name) == _slug(key):
+            if snap.id == key or slugify(snap.name) == slugify(key):
                 return snap
             # Accept artifact stems like ``long_67dc49d2`` (keyword + id).
-            if key.endswith("_" + snap.id) or key == _artifact_stem(snap.name, snap.id):
+            if key.endswith("_" + snap.id) or key == artifact_stem(snap.name, snap.id):
                 return snap
             if snap.preset_file and Path(snap.preset_file).stem == key:
                 return snap
@@ -410,7 +411,7 @@ class ExperimentSession:
         if test_name is not None:
             snap.test_name = test_name
         elif not snap.test_name:
-            snap.test_name = _slug(snap.name)
+            snap.test_name = slugify(snap.name)
         if thresholds is not None:
             snap.thresholds = asdict(thresholds)
 
@@ -433,7 +434,7 @@ class ExperimentSession:
         output_path = str(self.resolve_path(snap.output_audio))
         preset_path = str(self.resolve_path(snap.preset_file)) if snap.preset_file else None
         return TestSetup(
-            name=snap.test_name or _slug(snap.name),
+            name=snap.test_name or slugify(snap.name),
             plugin_path=self.plugin_path,
             input_audio=input_path,
             reference_output=output_path,
@@ -475,11 +476,11 @@ class ExperimentSession:
                 f"No *_output.wav or *_output_{{gld,sus,bkn}}.wav files found in {directory}"
             )
 
-        existing_names = {_slug(s.name) for s in self.snapshots}
+        existing_names = {slugify(s.name) for s in self.snapshots}
         imported: list[StateSnapshot] = []
 
         for triplet in triplets:
-            if _slug(triplet.name) in existing_names:
+            if slugify(triplet.name) in existing_names:
                 warnings.append(f"Skipped existing snapshot {triplet.name!r}")
                 continue
 
@@ -498,7 +499,7 @@ class ExperimentSession:
             )
             if promote:
                 self.promote_snapshot(snap.id, thresholds=thresholds)
-            existing_names.add(_slug(triplet.name))
+            existing_names.add(slugify(triplet.name))
             imported.append(snap)
 
         if imported:
@@ -608,7 +609,7 @@ class ExperimentSession:
             if snap.preset_file:
                 source = self.resolve_path(snap.preset_file)
                 info = validate_aupreset(source)
-                dest = presets_dir / f"{snap.id}_{_slug(snap.name)}.aupreset"
+                dest = presets_dir / f"{snap.id}_{slugify(snap.name)}.aupreset"
                 import_aupreset(source, dest)
                 entry["preset_file"] = str(dest.relative_to(out))
                 entry["preset_info"] = info.as_dict()

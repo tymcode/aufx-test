@@ -1,6 +1,5 @@
 """Tests for mismatch reporting helpers."""
 
-from pathlib import Path
 
 import numpy as np
 import pytest

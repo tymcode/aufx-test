@@ -58,8 +58,8 @@ def sum_signals(
     """
     a_aligned, b_aligned = a.aligned_to(b)
     channels = max(a_aligned.num_channels, b_aligned.num_channels)
-    a_data = _pad_channels(a_aligned.data, channels)
-    b_data = _pad_channels(b_aligned.data, channels)
+    a_data = pad_channels(a_aligned.data, channels)
+    b_data = pad_channels(b_aligned.data, channels)
     combined = gains[0] * a_data + gains[1] * b_data
     if normalize:
         divisor = sum(1 for g in gains if g != 0.0) or 1.0
@@ -67,7 +67,8 @@ def sum_signals(
     return Waveform(data=combined, sample_rate=a_aligned.sample_rate)
 
 
-def _pad_channels(data: np.ndarray, target_channels: int) -> np.ndarray:
+def pad_channels(data: np.ndarray, target_channels: int) -> np.ndarray:
+    """Pad, tile, or truncate channel axis to ``target_channels``."""
     if data.shape[1] == target_channels:
         return data
     if data.shape[1] == 1 and target_channels > 1:

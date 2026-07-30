@@ -1,6 +1,6 @@
 """Tests for frequency-band analysis."""
 
-from aufx_test import Waveform, band_amplitude_over_time, num_of_bands
+from aufx_test import band_amplitude_over_time, num_of_bands
 from aufx_test.spectrum import FrequencyBand, analysis_bands, log_spaced_bands
 
 

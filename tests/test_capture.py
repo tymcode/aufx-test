@@ -1,7 +1,6 @@
 """Tests for capture helpers and plugin host."""
 
 from aufx_test import capture_before_after, capture_with_host, compare_captured_to_reference
-from aufx_test.host import PassthroughHost
 
 
 def test_capture_before_after(passthrough_host, sine_mono):
