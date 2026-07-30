@@ -1,1 +1,28 @@
-{"fixtures_dir": "fixtures", "sessions_root": "sessions", "python_cli": ".venv/bin/aufx-test", "log_file": "sessions/plugin_host.log", "default_plugin": "deepz", "default_midi_input": ["Expression Pedal", "Oxy Pro 49", "iConnectMIDI4+ O2 Pro HUI"], "plugins": [{"id": "matrix_reverb", "name": "AUMatrixReverb", "manufacturer": "Apple", "path": "AudioUnit:Effects/aufx,mrev,appl", "format": "AudioUnit", "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Apple/AUMatrixReverb", "session": "AUMatrixReverb exploration"}, {"id": "deepz", "name": "DEEP/Z", "manufacturer": "Temecula DSP", "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEPZ.component", "format": "AudioUnit", "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/DEEP:Z", "session": "DEEPZ exploration"}, {"id": "deep4", "name": "DEEP/4", "manufacturer": "Temecula DSP", "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEP4.component", "format": "AudioUnit", "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/DEEP:4", "session": "DEEP4 exploration"}, {"id": "vext", "name": "VEXT", "manufacturer": "Temecula DSP", "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPVEXT.component", "format": "AudioUnit", "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/VEXT", "session": "VEXT exploration"}, {"id": "sst206", "name": "SST-206", "manufacturer": "Temecula DSP", "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPSST206.component", "format": "AudioUnit", "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/SST206", "session": "SST206 exploration"}, {"id": "sg626", "name": "SG-626", "manufacturer": "Temecula DSP", "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPSG626.component", "format": "AudioUnit", "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/SG626", "session": "SG-626 exploration"}, {"id": "mdvii", "name": "MDV-II", "manufacturer": "Temecula DSP", "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPMDVII.component", "format": "AudioUnit", "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/MDVII", "session": "MDV-II exploration"}, {"id": "msp126", "name": "MSP-126", "manufacturer": "Temecula DSP", "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPMSP126.component", "format": "AudioUnit", "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/MSP126", "session": "MSP126 exploration"}, {"id": "dpv", "name": "DP-V", "manufacturer": "Hare Tech", "path": "/Library/Audio/Plug-Ins/Components/DP-V.component", "format": "AudioUnit", "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Hare Tech/DP-V", "session": "DP-V exploration"}, {"id": "qdv1", "name": "QDV1", "manufacturer": "Temecula DSP", "path": "AudioUnit:Effects/aufx,QDV1,TDSP", "format": "AudioUnit", "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/QDV1", "session": "QDV1 exploration"}]}
+{
+    "fixtures_dir": "fixtures",
+    "sessions_root": "sessions",
+    "python_cli": ".venv/bin/aufx-test",
+    "log_file": "sessions/plugin_host.log",
+    "default_plugin": "matrix_reverb",
+    "default_midi_input": [],
+    "plugins": [
+        {
+            "id": "matrix_reverb",
+            "name": "AUMatrixReverb",
+            "manufacturer": "Apple",
+            "path": "AudioUnit:Effects/aufx,mrev,appl",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Apple/AUMatrixReverb",
+            "session": "AUMatrixReverb exploration"
+        },
+        {
+            "id": "auvectorpanner",
+            "name": "AUVectorPanner",
+            "manufacturer": "Apple",
+            "path": "AudioUnit:Panners/aupn,vbas,appl",
+            "format": "AudioUnit",
+            "presets_dir": "/Users/mikejennings/Library/Audio/Presets/Apple/AUVectorPanner",
+            "session": "AUVectorPanner exploration"
+        }
+    ]
+}

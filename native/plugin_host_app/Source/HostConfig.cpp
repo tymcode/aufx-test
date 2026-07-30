@@ -65,6 +65,13 @@ namespace
             if (rel.isNotEmpty())
                 return rel;
         }
+
+        // Prefer ~/… for anything under the user's home so shared configs
+        // (especially presets_dir) are portable across machines.
+        const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory).getFullPathName();
+        if (home.isNotEmpty() && (full == home || full.startsWith (home + "/")))
+            return "~" + full.substring (home.length());
+
         return full;
     }
 }
@@ -382,9 +389,9 @@ bool HostConfig::saveToFile (juce::String& error, const juce::File& dest) const
         if (plugin.pluginFormatName.isNotEmpty())
             obj->setProperty ("format", plugin.pluginFormatName);
         if (plugin.presetsDir != juce::File())
-            obj->setProperty ("presets_dir", plugin.presetsDir.getFullPathName());
+            obj->setProperty ("presets_dir", pathForJson (plugin.presetsDir, projectRoot));
         if (plugin.defaultPreset != juce::File())
-            obj->setProperty ("default_preset", plugin.defaultPreset.getFullPathName());
+            obj->setProperty ("default_preset", pathForJson (plugin.defaultPreset, projectRoot));
         obj->setProperty ("session", plugin.sessionName);
         pluginsArr.add (juce::var (obj));
     }
