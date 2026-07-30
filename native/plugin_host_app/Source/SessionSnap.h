@@ -39,7 +39,10 @@ struct SessionSnapshotRef
 
 struct SessionSnap
 {
-    static bool registerSnapshot (const SessionSnapRequest& request, juce::String& error);
+    /** Register a snapshot; optionally returns the assigned snapshot id. */
+    static bool registerSnapshot (const SessionSnapRequest& request,
+                                  juce::String& error,
+                                  juce::String* outSnapshotId = nullptr);
 
     /** Load and parse session.json under sessionDir. */
     static bool loadSessionRoot (const juce::File& sessionDir, juce::var& outRoot, juce::String& error);

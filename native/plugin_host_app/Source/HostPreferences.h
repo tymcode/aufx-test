@@ -29,6 +29,7 @@ public:
     static constexpr const char* keyMidiSysexModule = "midiSysexModule";
     static constexpr const char* keyHardwareCaptureCalibrate = "hardwareCaptureCalibrate";
     static constexpr const char* keyHardwareCaptureSilenceThresholdDb = "hardwareCaptureSilenceThresholdDb";
+    static constexpr const char* keyCaptureGenerateReport = "captureGenerateReport";
     static constexpr int defaultPluginScanTimeoutMs = 15000;
     static constexpr int minPluginScanTimeoutMs = 5000;
     static constexpr int maxPluginScanTimeoutMs = 300000;
@@ -61,6 +62,8 @@ public:
      * the user has never successfully calibrated.
      */
     double getHardwareCaptureSilenceThresholdDb (double defaultThresholdDb = -60.0) const;
+    /** When true (default), run aufx-test compare --write-report after capture. */
+    bool getCaptureGenerateReport() const;
     void setExplorationDataRootPref (const juce::String& path);
     void setConfigPathPref (const juce::String& path);
     void setAllowInstrumentAudioInput (bool allow);
@@ -71,6 +74,7 @@ public:
     void setMidiSysexModule (const juce::String& moduleName);
     void setHardwareCaptureCalibrate (bool shouldCalibrate);
     void setHardwareCaptureSilenceThresholdDb (double thresholdDb);
+    void setCaptureGenerateReport (bool shouldGenerate);
     void clearPrefs();
 
     /** Read org-level defaults from /Library/Preferences (macOS). */

@@ -86,7 +86,9 @@ namespace
     }
 }
 
-bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::String& error)
+bool SessionSnap::registerSnapshot (const SessionSnapRequest& request,
+                                    juce::String& error,
+                                    juce::String* outSnapshotId)
 {
     if (request.sessionName.isEmpty())
     {
@@ -214,6 +216,8 @@ bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::Str
     if (role.isNotEmpty())
         snap->setProperty ("reference_kind", role);
 
+    const auto assignedId = snap->getProperty ("id").toString();
+
     auto snapshots = root->getProperty ("snapshots");
     if (! snapshots.isArray())
         snapshots = juce::var (juce::Array<juce::var>{});
@@ -226,6 +230,9 @@ bool SessionSnap::registerSnapshot (const SessionSnapRequest& request, juce::Str
         error = "Failed to write session.json";
         return false;
     }
+
+    if (outSnapshotId != nullptr)
+        *outSnapshotId = assignedId;
 
     return true;
 }

@@ -64,6 +64,17 @@ void TestCaseCapture::prompt (juce::Component* parent,
     calibrateToggle->setSize (280, 24);
     aw->addCustomComponent (calibrateToggle);
 
+    auto* reportToggle = new juce::ToggleButton();
+    reportToggle->setName ({});
+    reportToggle->setButtonText ("Generate report");
+    const bool storedGenerateReport = HostPreferences::get().getCaptureGenerateReport();
+    reportToggle->setToggleState (storedGenerateReport, juce::dontSendNotification);
+    reportToggle->setTooltip (
+        "After a successful capture, run aufx-test compare with --write-report "
+        "for this snapshot (JSON, plots, and HTML in the stem folder).");
+    reportToggle->setSize (280, 24);
+    aw->addCustomComponent (reportToggle);
+
     // Heap so the modal callback and combo onChange share the same remembered state.
     auto calibrateState = std::make_shared<bool> (storedCalibrate);
 
@@ -113,7 +124,7 @@ void TestCaseCapture::prompt (juce::Component* parent,
     aw->enterModalState (true,
                          juce::ModalCallbackFunction::create (
                              [safeParent = juce::Component::SafePointer<juce::Component> (parent),
-                              capture = this, aw, calibrateToggle, calibrateState,
+                              capture = this, aw, calibrateToggle, calibrateState, reportToggle,
                               &sourceClips, &fixtureBox] (int result)
                              {
                                  std::unique_ptr<juce::AlertWindow> dialog (aw);
@@ -141,6 +152,9 @@ void TestCaseCapture::prompt (juce::Component* parent,
                                      HostPreferences::get().setHardwareCaptureCalibrate (calibrate);
                                  }
 
+                                 const bool generateReport = reportToggle->getToggleState();
+                                 HostPreferences::get().setCaptureGenerateReport (generateReport);
+
                                  capture->lastCaptureDescription = description;
                                  capture->lastCaptureRoleIndex = roleIndex;
                                  capture->lastCaptureSourceIndex = sourceIndex;
@@ -148,13 +162,14 @@ void TestCaseCapture::prompt (juce::Component* parent,
 
                                  const auto fixtureFile = sourceClips.getSelectedFile (fixtureBox);
                                  capture->capture (description, roleIndex, sourceIndex, calibrate,
-                                                   fixtureFile, safeParent.getComponent());
+                                                   generateReport, fixtureFile, safeParent.getComponent());
                              }),
                          true);
 }
 
 void TestCaseCapture::capture (const juce::String& snapshotName, int roleIndex, int sourceIndex,
                                bool calibrateNoiseFloor,
+                               bool generateReport,
                                const juce::File& fixtureFile,
                                juce::Component* progressParent)
 {
@@ -206,7 +221,8 @@ void TestCaseCapture::capture (const juce::String& snapshotName, int roleIndex, 
     snap.pluginPath = getCurrentPlugin().identifierForLoad();
     snap.notes = "Captured from AU Effects Explorer";
 
-    if (! SessionSnap::registerSnapshot (snap, error))
+    juce::String snapshotId;
+    if (! SessionSnap::registerSnapshot (snap, error, &snapshotId))
     {
         setStatus ("Capture saved to disk but session update failed: " + error, true);
         return;
@@ -222,4 +238,89 @@ void TestCaseCapture::capture (const juce::String& snapshotName, int roleIndex, 
     if (result.calibratedNoiseFloor)
         status += " (silence gate " + juce::String (result.hardwareSilenceThresholdDb, 1) + " dBFS)";
     setStatus (status, false);
+
+    if (generateReport)
+        runCompareReport (snap.sessionName, snapshotId, snapshotName);
+}
+
+void TestCaseCapture::runCompareReport (const juce::String& sessionName,
+                                        const juce::String& snapshotId,
+                                        const juce::String& snapshotName)
+{
+    if (config.pythonCli == juce::File() || ! config.pythonCli.existsAsFile())
+    {
+        setStatus ("Capture succeeded, but Generate report needs python_cli in host.config.json", true);
+        return;
+    }
+
+    if (snapshotId.isEmpty())
+    {
+        setStatus ("Capture succeeded, but snapshot id is missing for report generation", true);
+        return;
+    }
+
+    setStatus ("Generating compare report for " + snapshotName + utf8 ("…"), false);
+
+    const auto pythonCli = config.pythonCli;
+    const auto sessionsRoot = config.sessionsRoot;
+    const auto setStatusFn = setStatus;
+
+    juce::Thread::launch ([pythonCli, sessionsRoot, sessionName, snapshotId, snapshotName, setStatusFn]
+    {
+        juce::StringArray args;
+        args.add (pythonCli.getFullPathName());
+        args.add ("compare");
+        args.add ("--root");
+        args.add (sessionsRoot.getFullPathName());
+        args.add (sessionName);
+        args.add (snapshotId);
+        args.add ("--write-report");
+
+        juce::ChildProcess process;
+        juce::String detail;
+        bool ok = false;
+
+        if (! process.start (args))
+        {
+            detail = "failed to start " + pythonCli.getFullPathName();
+        }
+        else
+        {
+            // Blocks this worker until the CLI exits. Exit 1 can mean gated
+            // compare FAILED while --write-report still wrote artifacts.
+            const auto output = process.readAllProcessOutput();
+            const auto exitCode = process.getExitCode();
+
+            const auto sessionDir = sessionsRoot.getChildFile (HostConfig::slugify (sessionName));
+            juce::String findError;
+            SessionSnapshotRef ref;
+            if (SessionSnap::findSnapshot (sessionDir, snapshotId, ref, findError))
+            {
+                juce::File stemDir;
+                if (ref.outputAudio.existsAsFile())
+                    stemDir = ref.outputAudio.getParentDirectory();
+                else if (ref.hardwareOutputAudio.existsAsFile())
+                    stemDir = ref.hardwareOutputAudio.getParentDirectory();
+
+                ok = stemDir != juce::File()
+                     && stemDir.getChildFile ("compare_report.html").existsAsFile();
+            }
+
+            if (! ok)
+            {
+                if (output.trim().isNotEmpty())
+                    detail = output.trim().upToFirstOccurrenceOf ("\n", false, false);
+                else
+                    detail = "aufx-test compare exited with code " + juce::String (exitCode);
+            }
+        }
+
+        juce::MessageManager::callAsync ([setStatusFn, snapshotName, ok, detail]
+        {
+            if (ok)
+                setStatusFn ("Captured test case: " + snapshotName + " (report written)", false);
+            else
+                setStatusFn ("Capture succeeded, but report failed: " + detail, true);
+        });
+    });
 }

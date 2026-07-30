@@ -158,6 +158,7 @@ You do **not** need a working venv just to run the host UI.## Using the app
   - current plugin state as `.aupreset`
   - offline reference render from a one-shot playback of the fixture WAV (same tail logic as CI)
   - snapshot entry in the configured session (e.g. `sessions/DEEPZ exploration/session.json`) including the entered description and test role
+  - optional **Generate report** (default on): runs `aufx-test compare --root … --write-report` for the new snapshot when capture succeeds (`python_cli` in `host.config.json` must point at `.venv/bin/aufx-test`)
 
 Tweak the plugin UI between captures. Each capture creates a new snapshot you can promote and export.
 

@@ -227,6 +227,13 @@ bool HostPreferences::getHardwareCaptureCalibrate() const
     return true;
 }
 
+bool HostPreferences::getCaptureGenerateReport() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getBoolValue (keyCaptureGenerateReport, true);
+    return true;
+}
+
 double HostPreferences::getHardwareCaptureSilenceThresholdDb (double defaultThresholdDb) const
 {
     if (auto* s = const_cast<HostPreferences*> (this)->settings())
@@ -276,6 +283,15 @@ void HostPreferences::setHardwareCaptureCalibrate (bool shouldCalibrate)
     if (auto* s = settings())
     {
         s->setValue (keyHardwareCaptureCalibrate, shouldCalibrate);
+        s->saveIfNeeded();
+    }
+}
+
+void HostPreferences::setCaptureGenerateReport (bool shouldGenerate)
+{
+    if (auto* s = settings())
+    {
+        s->setValue (keyCaptureGenerateReport, shouldGenerate);
         s->saveIfNeeded();
     }
 }
