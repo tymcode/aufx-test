@@ -82,6 +82,7 @@ target_sources(plugin_host_app
         Source/SessionSnap.cpp
         Source/PluginScanLog.cpp
         Source/AuPluginScanner.cpp
+        Source/AuPluginScanDialog.cpp
         Source/PluginScannerOOP.cpp
         Source/SettingsDialog.cpp
         Source/AddPluginDialog.cpp

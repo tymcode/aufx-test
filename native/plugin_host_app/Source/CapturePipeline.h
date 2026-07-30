@@ -93,7 +93,7 @@ public:
                      HostConfig& hostConfig,
                      RefreshUiFn refreshHardwareUi);
 
-    /** Build artifact directory + stem filenames for a capture/compare run. */
+    /** Build ``artifacts/<stem>/`` plus stem filenames for a capture/compare run. */
     CaptureArtifactPaths makeArtifactPaths (const HostPluginEntry& plugin,
                                             const juce::String& description,
                                             int roleIndex) const;

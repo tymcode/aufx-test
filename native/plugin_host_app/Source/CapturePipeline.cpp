@@ -22,14 +22,18 @@ CaptureArtifactPaths CapturePipeline::makeArtifactPaths (const HostPluginEntry& 
                                                          int roleIndex) const
 {
     CaptureArtifactPaths paths;
-    paths.captureDir = config.sessionsRoot
-                           .getChildFile (HostConfig::slugify (plugin.sessionName))
-                           .getChildFile ("artifacts");
-    paths.captureDir.createDirectory();
 
     const auto keyword = HostFileUtils::keywordFromDescription (description);
     const auto token = juce::Uuid().toString().substring (0, 8);
     paths.stem = keyword.isNotEmpty() ? keyword + "_" + token : token;
+
+    // One folder per capture stem so growing artifact sets stay grouped:
+    // sessions/<slug>/artifacts/<stem>/{preset,wavs,sysex,…}
+    paths.captureDir = config.sessionsRoot
+                           .getChildFile (HostConfig::slugify (plugin.sessionName))
+                           .getChildFile ("artifacts")
+                           .getChildFile (paths.stem);
+    paths.captureDir.createDirectory();
 
     const auto roleSuffix = SessionArtifactSchema::roleCodeFromIndex (roleIndex);
     paths.presetFile = paths.captureDir.getChildFile (

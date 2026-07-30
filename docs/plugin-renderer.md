@@ -111,7 +111,7 @@ with SubprocessPluginHost(
     renderer_bin="build/plugin_renderer",
     plugin_path="/path/to/MyEffect.component",
 ) as host:
-    host.load_preset("sessions/demo/artifacts/abc123_half_mix.aupreset")
+    host.load_preset("sessions/demo/artifacts/abc123_half_mix/abc123_half_mix.aupreset")
     output = host.process(Waveform.from_file("fixtures/sine.wav"))
     output.to_file("/tmp/rendered.wav")
 ```
