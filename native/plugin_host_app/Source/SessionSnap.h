@@ -8,6 +8,7 @@ struct SessionSnapRequest
     juce::File sessionsRoot;
     juce::String sessionName;
     juce::String snapshotName;
+    juce::String sourceClipName;
     juce::File inputFile;
     juce::File outputFile;
     juce::File hardwareOutputFile; // optional latency-corrected hardware capture
@@ -25,6 +26,7 @@ struct SessionSnapshotRef
 {
     juce::String id;
     juce::String name;
+    juce::String sourceClipName;
     juce::File sessionDir;
     juce::File inputAudio;
     juce::File presetFile;
@@ -37,7 +39,10 @@ struct SessionSnapshotRef
 
 struct SessionSnap
 {
-    static bool registerSnapshot (const SessionSnapRequest& request, juce::String& error);
+    /** Register a snapshot; optionally returns the assigned snapshot id. */
+    static bool registerSnapshot (const SessionSnapRequest& request,
+                                  juce::String& error,
+                                  juce::String* outSnapshotId = nullptr);
 
     /** Load and parse session.json under sessionDir. */
     static bool loadSessionRoot (const juce::File& sessionDir, juce::var& outRoot, juce::String& error);

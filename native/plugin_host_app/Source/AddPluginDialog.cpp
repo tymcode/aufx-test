@@ -1,5 +1,6 @@
 #include "AddPluginDialog.h"
 #include "HostDialog.h"
+#include "Utf8.h"
 
 AddPluginPanel::AddPluginPanel (const juce::KnownPluginList& list)
 {
@@ -166,7 +167,7 @@ bool showAddPluginDialog (HostConfig& config,
     {
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon,
                                                 "Add Plugin",
-                                                "No Audio Units are in the cache. The scan may have been cancelled — try again, or use Plugins -> Rescan Audio Units...");
+                                                utf8 ("No Audio Units are in the cache. The scan may have been cancelled — try again, or use Plugins → Rescan Audio Units…"));
         return false;
     }
 

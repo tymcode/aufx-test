@@ -8,9 +8,11 @@ import pytest
 from aufx_test import ExperimentSession, StateSnapshot, Waveform
 from aufx_test.explore import capture_snapshot_from_cli
 from aufx_test.session import (
-    _artifact_stem,
+    _base_stem_from_output,
     _keyword_from_description,
+    artifact_stem,
     expect_match_for_output_role,
+    hardware_output_artifact_filename,
     output_artifact_filename,
     parse_output_role,
 )
@@ -62,21 +64,328 @@ def test_keyword_from_description():
     assert _keyword_from_description("Init Serial guitar") == "init"
     assert _keyword_from_description("  half-mix tone  ") == "half"
     assert _keyword_from_description("") == ""
-    assert _artifact_stem("Init Serial guitar", "abcd1234") == "init_abcd1234"
-    assert _artifact_stem("", "abcd1234") == "abcd1234"
+    assert artifact_stem("Init Serial guitar", "abcd1234") == "init_abcd1234"
+    assert artifact_stem("", "abcd1234") == "abcd1234"
 
 
 def test_output_role_filename_helpers():
     assert parse_output_role("artifacts/long_67dc49d2_output_bkn.wav") == "bkn"
-    assert parse_output_role("artifacts/long_67dc49d2_output_gld.wav") == "gld"
+    assert parse_output_role("artifacts/long_67dc49d2/long_67dc49d2_output_gld.wav") == "gld"
     assert parse_output_role("artifacts/long_67dc49d2_output_sus.wav") == "sus"
     assert parse_output_role("artifacts/long_67dc49d2_output.wav") is None
+    assert parse_output_role("artifacts/long_67dc49d2/long_67dc49d2_output_hw_gld.wav") == "gld"
+    assert parse_output_role("artifacts/long_67dc49d2_output_hw_bkn.wav") == "bkn"
+    assert parse_output_role("artifacts/long_67dc49d2_output_hw.wav") is None
     assert output_artifact_filename("long_67dc49d2", "bkn") == "long_67dc49d2_output_bkn.wav"
     assert output_artifact_filename("long_67dc49d2") == "long_67dc49d2_output.wav"
+    assert (
+        hardware_output_artifact_filename("long_67dc49d2", "gld")
+        == "long_67dc49d2_output_hw_gld.wav"
+    )
+    assert hardware_output_artifact_filename("long_67dc49d2") == "long_67dc49d2_output_hw.wav"
+    assert _base_stem_from_output("artifacts/x/init_abcd_output_hw_sus.wav") == "init_abcd"
+    assert _base_stem_from_output("artifacts/x/init_abcd_output_gld.wav") == "init_abcd"
+    assert _base_stem_from_output("artifacts/x/init_abcd_output_hw.wav") == "init_abcd"
     assert expect_match_for_output_role("gld") is True
     assert expect_match_for_output_role("bkn") is False
     assert expect_match_for_output_role("sus") is False
     assert expect_match_for_output_role(None) is None
+
+
+def test_state_snapshot_round_trips_hardware_fields(tmp_session_root, sine_files):
+    """Native SessionSnap writes output_audio_hw / sysex_file; Python must keep them."""
+    inp, out, _ = sine_files
+    session = ExperimentSession.create("hw-demo", root_dir=tmp_session_root)
+    stem = "both_deadbeef"
+    stem_dir = session.artifacts_dir / stem
+    stem_dir.mkdir(parents=True)
+    sw = stem_dir / f"{stem}_output_gld.wav"
+    hw = stem_dir / f"{stem}_output_hw_gld.wav"
+    syx = stem_dir / f"{stem}.syx"
+    sw.write_bytes(out.read_bytes())
+    hw.write_bytes(out.read_bytes())
+    syx.write_bytes(b"\xf0\x00\xf7")
+
+    snap = StateSnapshot(
+        name="Both Capture",
+        id="deadbeef",
+        source_clip_name="Factory Strings 01",
+        input_audio=f"artifacts/{stem}/{stem}_input.wav",
+        output_audio=f"artifacts/{stem}/{stem}_output_gld.wav",
+        output_audio_hw=f"artifacts/{stem}/{stem}_output_hw_gld.wav",
+        sysex_file=f"artifacts/{stem}/{stem}.syx",
+        reference_kind="gld",
+    )
+    (stem_dir / f"{stem}_input.wav").write_bytes(inp.read_bytes())
+    session.snapshots.append(snap)
+    session.save()
+
+    # Mimic a native-written session.json payload (extra unknown keys ignored).
+    payload = json.loads(session.session_file.read_text())
+    assert payload["snapshots"][0]["output_audio_hw"] == snap.output_audio_hw
+    assert payload["snapshots"][0]["sysex_file"] == snap.sysex_file
+    payload["snapshots"][0]["native_only_field"] = "ignored"
+    session.session_file.write_text(json.dumps(payload, indent=2) + "\n")
+
+    loaded = ExperimentSession.load(session.session_file, root_dir=tmp_session_root)
+    got = loaded.get_snapshot("deadbeef")
+    assert got.output_audio == snap.output_audio
+    assert got.output_audio_hw == snap.output_audio_hw
+    assert got.sysex_file == snap.sysex_file
+    assert got.source_clip_name == snap.source_clip_name
+    assert loaded.resolve_path(got.output_audio_hw).is_file()
+    assert loaded.resolve_path(got.sysex_file).is_file()
+    assert "output_hw:" in loaded.summary()
+    assert "sysex:" in loaded.summary()
+
+
+def test_compare_root_mode_uses_snapshot_hardware_fields(tmp_session_root, sine_files):
+    """aufx-test compare --root resolves HW/SW via StateSnapshot, not raw JSON."""
+    import argparse
+
+    from aufx_test.cli import _cmd_compare
+
+    _, out, _ = sine_files
+    session = ExperimentSession.create("compare-demo", root_dir=tmp_session_root)
+    stem = "tone_cafef00d"
+    stem_dir = session.artifacts_dir / stem
+    stem_dir.mkdir(parents=True)
+    sw = stem_dir / f"{stem}_output_gld.wav"
+    hw = stem_dir / f"{stem}_output_hw_gld.wav"
+    sw.write_bytes(out.read_bytes())
+    hw.write_bytes(out.read_bytes())
+
+    snap = StateSnapshot(
+        name="Tone",
+        id="cafef00d",
+        output_audio=f"artifacts/{stem}/{stem}_output_gld.wav",
+        output_audio_hw=f"artifacts/{stem}/{stem}_output_hw_gld.wav",
+        reference_kind="gld",
+    )
+    session.snapshots.append(snap)
+    session.save()
+
+    args = argparse.Namespace(
+        compare_config=None,
+        snr_min=None,
+        corr_min=None,
+        root=tmp_session_root,
+        actual="compare-demo",
+        expected="cafef00d",
+        json=True,
+        plot=None,
+        metrics_plot=None,
+    )
+    assert _cmd_compare(args) == 0
+
+
+def test_compare_root_mode_write_report_auto_targets_snapshot_stem(tmp_session_root, sine_files):
+    """--write-report auto should place compare artifacts in the snapshot stem folder."""
+    import argparse
+
+    from aufx_test.cli import _cmd_compare
+
+    _, out, _ = sine_files
+    session = ExperimentSession.create("compare-report-demo", root_dir=tmp_session_root)
+    stem = "stringies_259b3b94"
+    stem_dir = session.artifacts_dir / stem
+    stem_dir.mkdir(parents=True)
+    sw = stem_dir / f"{stem}_output_bkn.wav"
+    hw = stem_dir / f"{stem}_output_hw_bkn.wav"
+    sw.write_bytes(out.read_bytes())
+    hw.write_bytes(out.read_bytes())
+
+    snap = StateSnapshot(
+        name="stringies",
+        id="259b3b94",
+        source_clip_name="Stringies Original Clip",
+        input_audio=f"artifacts/{stem}/{stem}_input.wav",
+        output_audio=f"artifacts/{stem}/{stem}_output_bkn.wav",
+        output_audio_hw=f"artifacts/{stem}/{stem}_output_hw_bkn.wav",
+        reference_kind="bkn",
+    )
+    inp = stem_dir / f"{stem}_input.wav"
+    inp.write_bytes(out.read_bytes())
+    session.snapshots.append(snap)
+    session.save()
+
+    args = argparse.Namespace(
+        compare_config=None,
+        snr_min=None,
+        corr_min=None,
+        root=tmp_session_root,
+        actual="compare-report-demo",
+        expected="259b3b94",
+        json=True,
+        plot=None,
+        metrics_plot=None,
+        write_report="auto",
+    )
+    assert _cmd_compare(args) == 0
+    report_json = stem_dir / "compare.json"
+    report_wave = stem_dir / "compare_waveform.png"
+    report_metrics = stem_dir / "compare_metrics.png"
+    dry_sw_wave = stem_dir / "compare_dry_vs_software_waveform.png"
+    dry_sw_metrics = stem_dir / "compare_dry_vs_software_metrics.png"
+    dry_hw_wave = stem_dir / "compare_dry_vs_hardware_waveform.png"
+    dry_hw_metrics = stem_dir / "compare_dry_vs_hardware_metrics.png"
+    report_html = stem_dir / "compare_report.html"
+    assert report_json.is_file()
+    assert report_wave.is_file()
+    assert report_metrics.is_file()
+    assert dry_sw_wave.is_file()
+    assert dry_sw_metrics.is_file()
+    assert dry_hw_wave.is_file()
+    assert dry_hw_metrics.is_file()
+    assert report_html.is_file()
+    payload = json.loads(report_json.read_text())
+    assert payload["passed"] is True
+    assert payload["mode"] == "hardware_vs_software"
+    assert payload["gated"] is True
+    assert "band_analysis" in payload
+    html = report_html.read_text()
+    assert "AU/FX Compare Report" in html
+    assert "Raw JSON" in html
+    assert "Hardware vs Software (default)" in html
+    assert "Dry vs Software Wet" in html
+    assert "Dry vs Hardware Wet" in html
+    assert "Source Clip:" in html
+    assert "Stringies Original Clip" in html
+    assert "metric-ok" in html or "metric-bad" in html
+    assert html.index("<h2>Plots</h2>") < html.index("<h2>Band Analysis</h2>")
+    assert "plot-stack" in html
+    assert "plot-waveform" in html
+    assert "plot-metrics" in html
+    assert html.index("plot-waveform") < html.index("plot-metrics")
+
+
+def test_compare_root_mode_software_only_dry_vs_wet_report(tmp_session_root, sine_files):
+    """Software-only capture + input yields informational dry/wet report (no gate)."""
+    import argparse
+
+    from aufx_test.cli import _cmd_compare
+
+    _, out, _ = sine_files
+    session = ExperimentSession.create("compare-sw-only", root_dir=tmp_session_root)
+    stem = "tone_swonly01"
+    stem_dir = session.artifacts_dir / stem
+    stem_dir.mkdir(parents=True)
+    sw = stem_dir / f"{stem}_output_gld.wav"
+    inp = stem_dir / f"{stem}_input.wav"
+    # Slightly different wet so metrics are finite/non-trivial.
+    sw.write_bytes(out.read_bytes())
+    inp.write_bytes(out.read_bytes())
+
+    snap = StateSnapshot(
+        name="tone",
+        id="swonly01",
+        source_clip_name="Tone Clip",
+        input_audio=f"artifacts/{stem}/{stem}_input.wav",
+        output_audio=f"artifacts/{stem}/{stem}_output_gld.wav",
+        reference_kind="gld",
+    )
+    session.snapshots.append(snap)
+    session.save()
+
+    args = argparse.Namespace(
+        compare_config=None,
+        snr_min=None,
+        corr_min=None,
+        root=tmp_session_root,
+        actual="compare-sw-only",
+        expected="swonly01",
+        json=True,
+        plot=None,
+        metrics_plot=None,
+        write_report="auto",
+    )
+    assert _cmd_compare(args) == 0
+    payload = json.loads((stem_dir / "compare.json").read_text())
+    assert payload["mode"] == "dry_vs_software"
+    assert payload["gated"] is False
+    assert payload["passed"] is None
+    assert "thresholds" not in payload
+    assert (stem_dir / "compare_waveform.png").is_file()
+    assert (stem_dir / "compare_metrics.png").is_file()
+    html = (stem_dir / "compare_report.html").read_text()
+    assert "DRY VS SOFTWARE" in html
+    assert "Dry vs Software Wet" in html
+    assert "PASSED" not in html and "FAILED" not in html
+    assert "Thresholds" not in html
+    assert 'class="metric-ok"' not in html and 'class="metric-bad"' not in html
+    assert "Tone Clip" in html
+
+
+def test_compare_root_mode_hardware_only_dry_vs_wet_report(tmp_session_root, sine_files):
+    """Hardware-only capture + input yields informational dry/wet report (no gate)."""
+    import argparse
+
+    from aufx_test.cli import _cmd_compare
+
+    _, out, _ = sine_files
+    session = ExperimentSession.create("compare-hw-only", root_dir=tmp_session_root)
+    stem = "tone_hwonly01"
+    stem_dir = session.artifacts_dir / stem
+    stem_dir.mkdir(parents=True)
+    hw = stem_dir / f"{stem}_output_hw_gld.wav"
+    inp = stem_dir / f"{stem}_input.wav"
+    hw.write_bytes(out.read_bytes())
+    inp.write_bytes(out.read_bytes())
+
+    snap = StateSnapshot(
+        name="tone",
+        id="hwonly01",
+        input_audio=f"artifacts/{stem}/{stem}_input.wav",
+        output_audio_hw=f"artifacts/{stem}/{stem}_output_hw_gld.wav",
+        reference_kind="gld",
+    )
+    session.snapshots.append(snap)
+    session.save()
+
+    args = argparse.Namespace(
+        compare_config=None,
+        snr_min=None,
+        corr_min=None,
+        root=tmp_session_root,
+        actual="compare-hw-only",
+        expected="hwonly01",
+        json=True,
+        plot=None,
+        metrics_plot=None,
+        write_report="auto",
+    )
+    assert _cmd_compare(args) == 0
+    payload = json.loads((stem_dir / "compare.json").read_text())
+    assert payload["mode"] == "dry_vs_hardware"
+    assert payload["gated"] is False
+    assert payload["passed"] is None
+    html = (stem_dir / "compare_report.html").read_text()
+    assert "DRY VS HARDWARE" in html
+    assert "Dry vs Hardware Wet" in html
+    assert "Hardware vs Software" not in html
+
+def test_promote_and_export_resolve_stem_subfolders(tmp_session_root, sine_files, sample_aupreset):
+    """CLI promote/export only need correct relative paths in session.json."""
+    inp, out, _ = sine_files
+    session = ExperimentSession.create("nested-demo", root_dir=tmp_session_root)
+    snap = StateSnapshot(name="chamber")
+    session.add_snapshot(snap, copy_input=inp, copy_output=out, copy_preset=sample_aupreset)
+    session.promote_snapshot(snap.id, test_name="test_chamber")
+    session.save()
+
+    stem = f"chamber_{snap.id}"
+    assert snap.output_audio == f"artifacts/{stem}/{stem}_output.wav"
+
+    setup = session.snapshot_to_test_setup(snap)
+    assert Path(setup.input_audio).is_file()
+    assert Path(setup.reference_output).is_file()
+    assert Path(setup.preset_file).is_file()
+
+    out_path = tmp_session_root / "nested_test.py"
+    export_test_module(session, out_path)
+    content = out_path.read_text()
+    assert f"artifacts/{stem}/{stem}_output.wav" in content
+    assert f"artifacts/{stem}/{stem}.aupreset" in content
 
 
 def test_add_snapshot_copies_artifacts(tmp_session_root, sine_files, sample_aupreset):
@@ -87,24 +396,27 @@ def test_add_snapshot_copies_artifacts(tmp_session_root, sine_files, sample_aupr
     session.save()
 
     stem = f"half_{snap.id}"
-    assert (session.artifacts_dir / f"{stem}.aupreset").exists()
-    assert (session.artifacts_dir / f"{stem}_input.wav").exists()
-    assert (session.artifacts_dir / f"{stem}_output.wav").exists()
-    assert snap.input_audio == f"artifacts/{stem}_input.wav"
-    assert snap.output_audio == f"artifacts/{stem}_output.wav"
-    assert snap.preset_file == f"artifacts/{stem}.aupreset"
+    stem_dir = session.artifacts_dir / stem
+    assert (stem_dir / f"{stem}.aupreset").exists()
+    assert (stem_dir / f"{stem}_input.wav").exists()
+    assert (stem_dir / f"{stem}_output.wav").exists()
+    assert snap.input_audio == f"artifacts/{stem}/{stem}_input.wav"
+    assert snap.output_audio == f"artifacts/{stem}/{stem}_output.wav"
+    assert snap.preset_file == f"artifacts/{stem}/{stem}.aupreset"
 
 
 def test_add_snapshot_reuses_host_staged_artifacts(tmp_session_root, sine_files, sample_aupreset):
-    """Host writes into artifacts/; session snap should rename, not duplicate."""
+    """Host writes into artifacts/<stem>/; session snap should rename, not duplicate."""
     import shutil
 
     inp, out, _ = sine_files
     session = ExperimentSession.create("demo", root_dir=tmp_session_root)
-    session.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    host_stem = "init_aabbccdd"
+    host_dir = session.artifacts_dir / host_stem
+    host_dir.mkdir(parents=True, exist_ok=True)
 
-    host_out = session.artifacts_dir / "init_aabbccdd_output_bkn.wav"
-    host_preset = session.artifacts_dir / "init_aabbccdd.aupreset"
+    host_out = host_dir / f"{host_stem}_output_bkn.wav"
+    host_preset = host_dir / f"{host_stem}.aupreset"
     shutil.copy2(out, host_out)
     shutil.copy2(sample_aupreset, host_preset)
 
@@ -112,14 +424,15 @@ def test_add_snapshot_reuses_host_staged_artifacts(tmp_session_root, sine_files,
     session.add_snapshot(snap, copy_input=inp, copy_output=host_out, copy_preset=host_preset)
 
     stem = f"init_{snap.id}"
-    assert (session.artifacts_dir / f"{stem}_output_bkn.wav").exists()
-    assert (session.artifacts_dir / f"{stem}.aupreset").exists()
+    stem_dir = session.artifacts_dir / stem
+    assert (stem_dir / f"{stem}_output_bkn.wav").exists()
+    assert (stem_dir / f"{stem}.aupreset").exists()
     assert snap.reference_kind == "bkn"
-    assert snap.output_audio == f"artifacts/{stem}_output_bkn.wav"
+    assert snap.output_audio == f"artifacts/{stem}/{stem}_output_bkn.wav"
     assert not host_out.exists()
     assert not host_preset.exists()
-    assert len(list(session.artifacts_dir.glob("*_output_bkn.wav"))) == 1
-    assert len(list(session.artifacts_dir.glob("*.aupreset"))) == 1
+    assert len(list(session.artifacts_dir.rglob("*_output_bkn.wav"))) == 1
+    assert len(list(session.artifacts_dir.rglob("*.aupreset"))) == 1
 
 
 def test_get_snapshot_accepts_id_name_and_artifact_stem(tmp_session_root, sine_files, sample_aupreset):
@@ -127,7 +440,7 @@ def test_get_snapshot_accepts_id_name_and_artifact_stem(tmp_session_root, sine_f
     session = ExperimentSession.create("demo", root_dir=tmp_session_root)
     snap = StateSnapshot(name="Long Tail")
     session.add_snapshot(snap, copy_input=inp, copy_output=out, copy_preset=sample_aupreset)
-    stem = _artifact_stem(snap.name, snap.id)
+    stem = artifact_stem(snap.name, snap.id)
 
     assert session.get_snapshot(snap.id).id == snap.id
     assert session.get_snapshot("Long Tail").id == snap.id
@@ -171,9 +484,10 @@ def test_promote_infers_expect_match_from_output_role(tmp_session_root, sine_fil
 
     inp, out, _ = sine_files
     session = ExperimentSession.create("demo", root_dir=tmp_session_root)
-    session.artifacts_dir.mkdir(parents=True, exist_ok=True)
+    host_dir = session.artifacts_dir / "x"
+    host_dir.mkdir(parents=True, exist_ok=True)
 
-    bkn_out = session.artifacts_dir / "x_output_bkn.wav"
+    bkn_out = host_dir / "x_output_bkn.wav"
     gld_out = tmp_session_root / "y_output_gld.wav"
     shutil.copy2(out, bkn_out)
     shutil.copy2(out, gld_out)
@@ -183,6 +497,9 @@ def test_promote_infers_expect_match_from_output_role(tmp_session_root, sine_fil
     setup = session.promote_snapshot(broken.id)
     assert broken.reference_kind == "bkn"
     assert setup.expect_match is False
+    assert Path(setup.reference_output).exists()
+    assert Path(setup.input_audio).exists()
+    assert Path(setup.preset_file).exists()
 
     golden = StateSnapshot(name="golden capture")
     session.add_snapshot(golden, copy_input=inp, copy_output=gld_out, copy_preset=sample_aupreset)

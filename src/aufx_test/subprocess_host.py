@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .audio import Waveform
-from .aupreset import AUpresetError, validate_aupreset
+from .aupreset import validate_aupreset
 from .paths import unique_output_path
 
 

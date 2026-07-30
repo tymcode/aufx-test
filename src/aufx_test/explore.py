@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from .aupreset import AUpresetError, validate_aupreset
-from .session import ExperimentSession, StateSnapshot, _slug
+from .params import parse_param_value
+from .session import ExperimentSession, StateSnapshot, slugify
 
 
 def _prompt(text: str, default: str = "") -> str:
@@ -43,20 +44,8 @@ def _prompt_params() -> dict[str, Any]:
         key, value = raw.split("=", 1)
         key = key.strip()
         value = value.strip()
-        params[key] = _parse_param_value(value)
+        params[key] = parse_param_value(value)
     return params
-
-
-def _parse_param_value(raw: str) -> float | int | bool | str:
-    lower = raw.lower()
-    if lower in {"true", "false"}:
-        return lower == "true"
-    try:
-        if "." in raw:
-            return float(raw)
-        return int(raw)
-    except ValueError:
-        return raw
 
 
 def _load_params_file(path: Path) -> dict[str, Any]:
@@ -109,7 +98,7 @@ def run_explore(
                 snap_id = _prompt("Snapshot id or name")
             else:
                 snap_id = parts[1]
-            test_name = parts[2] if len(parts) > 2 else _prompt("Test name", default=_slug(snap_id))
+            test_name = parts[2] if len(parts) > 2 else _prompt("Test name", default=slugify(snap_id))
             try:
                 setup = session.promote_snapshot(snap_id, test_name=test_name)
                 session.save()
@@ -157,7 +146,13 @@ def _capture_interactive(
     tags_raw = _prompt("Tags (comma-separated)")
     tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
 
-    snapshot = StateSnapshot(name=name, parameters=params, notes=notes, tags=tags)
+    snapshot = StateSnapshot(
+        name=name,
+        parameters=params,
+        source_clip_name=input_path.stem if input_path is not None else None,
+        notes=notes,
+        tags=tags,
+    )
     session.add_snapshot(
         snapshot,
         copy_input=input_path,
@@ -190,7 +185,13 @@ def capture_snapshot_from_cli(
     if preset_file is not None and preset_file.suffix.lower() == ".aupreset":
         validate_aupreset(preset_file)
 
-    snapshot = StateSnapshot(name=name, parameters=params, notes=notes, tags=tags or [])
+    snapshot = StateSnapshot(
+        name=name,
+        parameters=params,
+        source_clip_name=input_audio.stem if input_audio is not None else None,
+        notes=notes,
+        tags=tags or [],
+    )
     session.add_snapshot(
         snapshot,
         copy_input=input_audio,

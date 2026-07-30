@@ -500,18 +500,27 @@ bool PluginAudioEngine::autoDetectLatency (const juce::File& impulseFile,
     return hardwareLoop.autoDetectLatency (impulseFile, outLatencySamples, outLoopGainDb, error);
 }
 
+bool PluginAudioEngine::measureHardwareNoiseFloor (double listenSeconds,
+                                                   float& outPeakDb,
+                                                   float& outRmsDb,
+                                                   juce::String& error)
+{
+    return hardwareLoop.measureReturnNoiseFloor (listenSeconds, outPeakDb, outRmsDb, error);
+}
+
 bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
                                                const juce::File& outputFile,
                                                double tailSilenceSeconds,
                                                double silenceThresholdDb,
                                                double maxTailSeconds,
                                                juce::String& error,
-                                               const std::atomic<bool>* cancelRequested,
+                                               const std::atomic<bool>* stopRequested,
+                                               const std::atomic<bool>* abortRequested,
                                                double targetDurationSeconds)
 {
     return hardwareLoop.captureHardwareToFile (fixtureFile, outputFile,
                                                tailSilenceSeconds, silenceThresholdDb, maxTailSeconds,
-                                               error, cancelRequested, targetDurationSeconds);
+                                               error, stopRequested, abortRequested, targetDurationSeconds);
 }
 
 void PluginAudioEngine::clearOutputChannels (float* const* outputChannelData, int numOutputChannels, int numSamples)

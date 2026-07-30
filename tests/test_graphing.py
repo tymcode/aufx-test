@@ -1,6 +1,5 @@
 """Tests for graphing (smoke tests — no display)."""
 
-from pathlib import Path
 
 import pytest
 
@@ -38,10 +37,42 @@ def test_plot_comparison(sine_mono, output_dir):
     assert (output_dir / "cmp.png").exists()
 
 
+def test_plot_comparison_with_spectrogram_background(sine_mono, output_dir):
+    shifted = sine_mono.with_data(sine_mono.data * 0.85)
+    plot_comparison(
+        sine_mono,
+        shifted,
+        save_path=output_dir / "cmp_spec_bg.png",
+        spectrogram_background=shifted,
+    )
+    assert (output_dir / "cmp_spec_bg.png").exists()
+
+
 def test_plot_difference_metrics(sine_mono, output_dir):
+    from aufx_test.comparison import ComparisonThresholds
+
     result = compare_waveforms(sine_mono, sine_mono)
-    plot_difference_metrics(result, save_path=output_dir / "metrics.png", show=False)
+    thresholds = ComparisonThresholds()
+    fig = plot_difference_metrics(
+        result,
+        thresholds=thresholds,
+        save_path=output_dir / "metrics.png",
+        show=False,
+    )
     assert (output_dir / "metrics.png").exists()
+    ax = fig.axes[0]
+    hline_ys: list[float] = []
+    for coll in ax.collections:
+        get_segments = getattr(coll, "get_segments", None)
+        if get_segments is None:
+            continue
+        for seg in get_segments():
+            # Each hline segment is [[x0, y], [x1, y]].
+            hline_ys.append(float(seg[0][1]))
+    assert thresholds.snr_db_min in hline_ys
+    assert thresholds.correlation_min in hline_ys
+    assert thresholds.rms_error_max in hline_ys
+    assert thresholds.spectral_distance_max in hline_ys
 
 
 def test_plot_distance_from_silence(sine_stereo, output_dir):

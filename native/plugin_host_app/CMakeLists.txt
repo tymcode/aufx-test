@@ -71,6 +71,7 @@ target_sources(plugin_host_app
         Source/PresetHardwareState.cpp
         Source/SourceClipLibrary.cpp
         Source/CapturePipeline.cpp
+        Source/NoiseFloorCalibration.cpp
         Source/TestCaseCapture.cpp
         Source/TestCaseLoader.cpp
         Source/PluginAudioEngine.cpp
@@ -82,6 +83,7 @@ target_sources(plugin_host_app
         Source/SessionSnap.cpp
         Source/PluginScanLog.cpp
         Source/AuPluginScanner.cpp
+        Source/AuPluginScanDialog.cpp
         Source/PluginScannerOOP.cpp
         Source/SettingsDialog.cpp
         Source/AddPluginDialog.cpp

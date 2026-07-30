@@ -6,9 +6,10 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from scipy import signal as sp_signal
-from scipy.fft import rfft, rfftfreq
+from scipy.fft import rfft
 
 from .audio import Waveform
+from .signal_ops import pad_channels
 
 
 @dataclass(frozen=True)
@@ -93,8 +94,8 @@ def compute_difference_metrics(
     else:
         actual_a, expected_a = actual.padded_to_match(expected)
     channels = max(actual_a.num_channels, expected_a.num_channels)
-    a_data = _pad_channels(actual_a.data, channels)
-    e_data = _pad_channels(expected_a.data, channels)
+    a_data = pad_channels(actual_a.data, channels)
+    e_data = pad_channels(expected_a.data, channels)
 
     channel_metrics: dict[int, dict[str, float]] = {}
     snrs: list[float] = []
@@ -226,8 +227,8 @@ def align_waveforms(
         return actual, expected, 0
 
     channels = max(actual.num_channels, expected.num_channels)
-    a = np.mean(_pad_channels(actual.data, channels), axis=1)
-    e = np.mean(_pad_channels(expected.data, channels), axis=1)
+    a = np.mean(pad_channels(actual.data, channels), axis=1)
+    e = np.mean(pad_channels(expected.data, channels), axis=1)
 
     # Two seconds is enough to identify fixed host/plugin latency while keeping
     # alignment inexpensive for long reverb renders.
@@ -256,7 +257,7 @@ def difference_signal(actual: Waveform, expected: Waveform) -> Waveform:
     """Return the sample-wise difference (actual - expected)."""
     actual_a, expected_a = actual.padded_to_match(expected)
     channels = max(actual_a.num_channels, expected_a.num_channels)
-    diff = _pad_channels(actual_a.data, channels) - _pad_channels(expected_a.data, channels)
+    diff = pad_channels(actual_a.data, channels) - pad_channels(expected_a.data, channels)
     return Waveform(data=diff, sample_rate=actual_a.sample_rate)
 
 
@@ -294,11 +295,3 @@ def _spectral_distance(a: np.ndarray, e: np.ndarray, sample_rate: int) -> float:
     spec_e /= norm_e
     return float(np.linalg.norm(spec_a - spec_e) / np.sqrt(len(spec_a)))
 
-
-def _pad_channels(data: np.ndarray, target_channels: int) -> np.ndarray:
-    if data.shape[1] >= target_channels:
-        return data[:, :target_channels]
-    if data.shape[1] == 1:
-        return np.tile(data, (1, target_channels))
-    pad = np.zeros((data.shape[0], target_channels - data.shape[1]))
-    return np.hstack([data, pad])

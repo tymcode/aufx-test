@@ -10,9 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
-def project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+from .paths import project_root
 
 
 def default_host_app_bin(root: Path | None = None) -> Path:
@@ -69,7 +67,7 @@ def load_host_config(config_path: Path, project_root_dir: Path) -> dict[str, Any
 
 def ensure_sessions_from_config(config: dict[str, Any], root: Path) -> Path:
     """Create missing exploration sessions for each configured plugin."""
-    from .session import ExperimentSession, _slug
+    from .session import ExperimentSession, slugify
 
     sessions_root = _expand_path(config.get("sessions_root") or "sessions", root)
     sessions_root.mkdir(parents=True, exist_ok=True)
@@ -79,7 +77,7 @@ def ensure_sessions_from_config(config: dict[str, Any], root: Path) -> Path:
             continue
         plugin_path = _expand_path(item["path"], root)
         session_name = item.get("session") or f"{item.get('name') or plugin_path.stem} exploration"
-        session_file = sessions_root / _slug(session_name) / "session.json"
+        session_file = sessions_root / slugify(session_name) / "session.json"
         if session_file.exists():
             continue
         ExperimentSession.create(

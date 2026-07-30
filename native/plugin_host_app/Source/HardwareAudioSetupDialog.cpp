@@ -494,13 +494,20 @@ bool showHardwareAudioSetupDialog (PluginAudioEngine& engine,
 
     HardwareAudioSetupPanel panel (engine, fixturesDir);
 
-    if (HostDialog::runCustomPanelModal (
+    const int result = HostDialog::runCustomPanelModal (
             "Hardware Audio Setup",
             "Select the CoreAudio interface and stereo pairs for the hardware insert loop.\n"
             "For screen recording, route Monitor output to your Multi-Output Device "
             "(or System Default Output).",
             panel,
-            centreAround) != 1)
+            centreAround);
+
+    // Cancel (and any other non-Save exit) must stop a running Test — otherwise
+    // the fixture keeps playing through the send pair until the next Save
+    // restarts the audio device.
+    engine.stopFixture();
+
+    if (result != 1)
         return false;
 
     const auto settings = panel.getSettings();

@@ -1,0 +1,28 @@
+{
+    "fixtures_dir": "fixtures",
+    "sessions_root": "sessions",
+    "python_cli": ".venv/bin/aufx-test",
+    "log_file": "sessions/plugin_host.log",
+    "default_plugin": "matrix_reverb",
+    "default_midi_input": [],
+    "plugins": [
+        {
+            "id": "matrix_reverb",
+            "name": "AUMatrixReverb",
+            "manufacturer": "Apple",
+            "path": "AudioUnit:Effects/aufx,mrev,appl",
+            "format": "AudioUnit",
+            "presets_dir": "~/Library/Audio/Presets/Apple/AUMatrixReverb",
+            "session": "AUMatrixReverb exploration"
+        },
+        {
+            "id": "auvectorpanner",
+            "name": "AUVectorPanner",
+            "manufacturer": "Apple",
+            "path": "AudioUnit:Panners/aupn,vbas,appl",
+            "format": "AudioUnit",
+            "presets_dir": "~/Library/Audio/Presets/Apple/AUVectorPanner",
+            "session": "AUVectorPanner exploration"
+        }
+    ]
+}

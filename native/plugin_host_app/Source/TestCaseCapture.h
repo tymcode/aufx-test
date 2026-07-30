@@ -35,12 +35,19 @@ public:
                  juce::ComboBox& fixtureBox);
 
     void capture (const juce::String& snapshotName, int roleIndex, int sourceIndex,
+                  bool calibrateNoiseFloor,
+                  bool generateReport,
                   const juce::File& fixtureFile,
                   juce::Component* progressParent);
 
     CapturePipeline& getPipeline() { return pipeline; }
 
 private:
+    /** Run `aufx-test compare --root … --write-report` for a registered snapshot. */
+    void runCompareReport (const juce::String& sessionName,
+                           const juce::String& snapshotId,
+                           const juce::String& snapshotName);
+
     PluginAudioEngine& engine;
     HostConfig& config;
     StatusFn setStatus;

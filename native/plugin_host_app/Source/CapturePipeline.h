@@ -39,6 +39,8 @@ struct CapturePipelineRequest
     CaptureSource source { CaptureSource::plugin };
     juce::File fixtureFile;
     juce::Component* progressParent { nullptr };
+    /** When true, measure hardware noise floor before recording. */
+    bool calibrateNoiseFloor { true };
 };
 
 struct CapturePipelineResult
@@ -48,6 +50,8 @@ struct CapturePipelineResult
     bool capturedHardware { false };
     bool capturedSysex { false };
     double softwareDurationSeconds { 0.0 };
+    double hardwareSilenceThresholdDb { -60.0 };
+    bool calibratedNoiseFloor { false };
 };
 
 /** RAII: restore hardware-mode flag and refresh UI on scope exit. */
@@ -93,7 +97,7 @@ public:
                      HostConfig& hostConfig,
                      RefreshUiFn refreshHardwareUi);
 
-    /** Build artifact directory + stem filenames for a capture/compare run. */
+    /** Build ``artifacts/<stem>/`` plus stem filenames for a capture/compare run. */
     CaptureArtifactPaths makeArtifactPaths (const HostPluginEntry& plugin,
                                             const juce::String& description,
                                             int roleIndex) const;
@@ -116,6 +120,7 @@ public:
     bool recordHardware (const juce::File& fixtureFile,
                          const juce::File& hardwareOut,
                          double targetDurationSeconds,
+                         double silenceThresholdDb,
                          juce::Component* progressParent,
                          juce::String& error);
 

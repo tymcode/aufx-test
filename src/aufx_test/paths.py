@@ -1,9 +1,14 @@
-"""Path helpers for render outputs."""
+"""Path helpers for project layout and render outputs."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from uuid import uuid4
+
+
+def project_root() -> Path:
+    """Repository root (parent of ``src/``)."""
+    return Path(__file__).resolve().parents[2]
 
 
 def unique_output_path(

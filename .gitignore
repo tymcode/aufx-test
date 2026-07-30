@@ -34,3 +34,4 @@ plugin-scan-skip.txt
 plugin-scan-failures.log
 plugin-scan-last-run.txt
 plugin-scan-in-progress.txt
+host.config.json

@@ -158,6 +158,7 @@ You do **not** need a working venv just to run the host UI.## Using the app
   - current plugin state as `.aupreset`
   - offline reference render from a one-shot playback of the fixture WAV (same tail logic as CI)
   - snapshot entry in the configured session (e.g. `sessions/DEEPZ exploration/session.json`) including the entered description and test role
+  - optional **Generate report** (default on): runs `aufx-test compare --root … --write-report` for the new snapshot when capture succeeds (`python_cli` in `host.config.json` must point at `.venv/bin/aufx-test`)
 
 Tweak the plugin UI between captures. Each capture creates a new snapshot you can promote and export.
 
@@ -184,6 +185,35 @@ aufx-test session promote "DEEPZ exploration" pan_lfo_pulse_bkn \
 # Export pytest module -- adds all promoted snapshots
 aufx-test session export "DEEPZ exploration" \
   -o tests/generated/test_deepz.py
+
+# Compare hardware-vs-software for one snapshot by id/name/stem
+aufx-test compare --root sessions "DEEPZ exploration" flange_negative_regen_gld
+
+# Write compare artifacts into that snapshot's artifacts/<stem>/ folder
+aufx-test compare --root sessions "DEEPZ exploration" flange_negative_regen_gld \
+  --write-report
+
+# Software-only or hardware-only captures: informational dry vs wet report
+# (spectrogram + metrics, no pass/fail) when input_audio is present
+aufx-test compare --root sessions "DEEPZ exploration" software_only_snap \
+  --write-report
+
+# Override report directory explicitly
+aufx-test compare --root sessions "DEEPZ exploration" flange_negative_regen_gld \
+  --write-report reports/deepz/flange_negative_regen_gld
+
+# Generated report files:
+#   compare.json
+#   compare_waveform.png
+#   compare_metrics.png
+#   compare_report.html   (plots + formatted metrics + raw JSON)
+#
+# compare_report.html includes toggle controls for available views:
+#   - Hardware vs Software (default, when both wet captures exist)
+#   - Dry vs Software Wet (software capture + input, or Both + input)
+#   - Dry vs Hardware Wet (hardware capture + input, or Both + input)
+# Software-only / hardware-only reports are informational (no PASSED/FAILED).
+# It also shows Source Clip near the top when known.
 ```
 
 Headless replay in CI still uses `plugin_renderer` + `SubprocessPluginHost` with the captured `.aupreset`.
