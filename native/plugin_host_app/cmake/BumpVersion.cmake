@@ -1,5 +1,7 @@
-# Increments the build number in VERSION and regenerates AppVersion.h/.cpp.
+# Reads VERSION and regenerates AppVersion.h/.cpp.
+# When AUFX_BUMP_VERSION is true, increments the build number and writes VERSION back.
 # Expected cache vars: AUFX_VERSION_FILE, AUFX_GEN_DIR
+# Optional: AUFX_BUMP_VERSION (ON/OFF, default OFF)
 
 if (NOT DEFINED AUFX_VERSION_FILE OR NOT DEFINED AUFX_GEN_DIR)
   message (FATAL_ERROR "BumpVersion.cmake requires AUFX_VERSION_FILE and AUFX_GEN_DIR")
@@ -28,9 +30,10 @@ if (NOT AUFX_BUILD MATCHES "^[0-9]+$")
   set (AUFX_BUILD 0)
 endif()
 
-math (EXPR AUFX_BUILD "${AUFX_BUILD} + 1")
-
-file (WRITE "${AUFX_VERSION_FILE}" "${AUFX_SEMVER}\n${AUFX_BUILD}\n")
+if (AUFX_BUMP_VERSION)
+  math (EXPR AUFX_BUILD "${AUFX_BUILD} + 1")
+  file (WRITE "${AUFX_VERSION_FILE}" "${AUFX_SEMVER}\n${AUFX_BUILD}\n")
+endif()
 
 string (TIMESTAMP AUFX_BUILD_YEAR "%Y")
 set (AUFX_VERSION_FULL "${AUFX_SEMVER}+${AUFX_BUILD}")

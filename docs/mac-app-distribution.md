@@ -21,14 +21,20 @@ CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/packa
 
 Default signing is ad-hoc (`-`). **Notarization is not required for v1**; recipients use Gatekeeper “Open Anyway”.
 
-Shipped builds target **macOS 13+** and **Apple Silicon (arm64)** only.
+Shipped builds target **macOS 13+** and are **universal** (`arm64` + `x86_64`).
 
-The packaging script zips **without** AppleDouble `._*` resource-fork sidecars. Older zips that included those files fail codesign verification after unzip on another Mac (often reported as the app can’t be opened, sometimes with **-47**). If Gatekeeper still blocks a fresh unzip, clear quarantine:
+The packaging script:
+
+- Builds into `native/build-universal/` (keeps your day-to-day `native/build/` host-arch tree intact)
+- Increments the build number in `native/plugin_host_app/VERSION` (semver is edited by hand)
+- Asserts `lipo` reports both architectures before zipping
+- Zips **without** AppleDouble `._*` resource-fork sidecars
+
+Older zips that included those files fail codesign verification after unzip on another Mac (often reported as the app can’t be opened, sometimes with **-47**). If Gatekeeper still blocks a fresh unzip, clear quarantine:
 
 ```bash
 xattr -cr "/path/to/AU Effects Explorer.app"
 ```
-
 ## First launch (recipient)
 
 1. Unzip the archive to Applications (or anywhere).

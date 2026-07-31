@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master, release_*, calibration]
+  pull_request:
+
+jobs:
+  python-tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev]"
+      - name: Pytest
+        run: pytest -q
+
+  native-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure
+        run: |
+          cmake -S native -B native/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
+      - name: Build plugin_renderer
+        run: cmake --build native/build --target plugin_renderer --config Release
+      - name: Build plugin_host_app
+        run: cmake --build native/build --target plugin_host_app --config Release

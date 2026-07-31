@@ -71,7 +71,7 @@ Edit `host.config.json` at the project root for the repo-rooted workflow. The to
       "manufacturer": "Temecula DSP",
       "path": "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEPZ.component",
       "presets_dir": "~/Library/Audio/Presets/Temecula DSP/DEEP:Z",
-      "default_preset": "/Users/mikejennings/Library/Audio/Presets/Temecula DSP/DEEP:Z/Init Serial.aupreset",
+      "default_preset": "~/Library/Audio/Presets/Temecula DSP/DEEP:Z/Init Serial.aupreset",
       "session": "DEEPZ exploration"
     }
   ]
@@ -155,8 +155,10 @@ You do **not** need a working venv just to run the host UI.## Using the app
 6. **Stop** — stop playback.
 7. **Test Role** — whether this is a `golden` reference (expects match), `broken` reference (expects mismatch) or `suspect`, which currently behaves the same as `broken`
 8. **Capture Test Case** (`Cmd+T`) — saves:
-  - current plugin state as `.aupreset`
-  - offline reference render from a one-shot playback of the fixture WAV (same tail logic as CI)
+  - current plugin state as `.aupreset` when **Capture settings → Software** is on (live settings, not the last loaded preset file)
+  - offline reference render from a one-shot playback of the fixture WAV (same tail logic as CI), when Capture is Rendered plugin or Both
+  - hardware return WAV when Capture is Hardware or Both
+  - hardware sysex dump when **Capture settings → Hardware** is on (dimmed if MIDI out is unset in MIDI Setup)
   - snapshot entry in the configured session (e.g. `sessions/DEEPZ exploration/session.json`) including the entered description and test role
   - optional **Generate report** (default on): runs `aufx-test compare --root … --write-report` for the new snapshot when capture succeeds (`python_cli` in `host.config.json` must point at `.venv/bin/aufx-test`)
   - for Hardware / Both: **Calibrate** (default on) measures the return noise floor for the silence gate and subtracts measured DC offset from the hardware WAV

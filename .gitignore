@@ -36,3 +36,4 @@ plugin-scan-failures.log
 plugin-scan-last-run.txt
 plugin-scan-in-progress.txt
 host.config.json
+native/build-universal/

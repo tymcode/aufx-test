@@ -6,34 +6,38 @@ Headless CLI host for offline plugin rendering in automated tests. Implements th
 
 - CMake 3.22+
 - A C++17 compiler (Xcode on macOS)
-- [JUCE](https://github.com/juce-framework/JUCE) 7 or later
+- [JUCE](https://github.com/juce-framework/JUCE) **8.0.14** (git submodule at `native/JUCE`)
 
 ## Setup JUCE
 
-This project auto-detects a sibling checkout at `../JUCE` (e.g. `~/dev/JUCE` next to `~/dev/aufx-test`).
-
-Alternatively, clone JUCE as a submodule:
+Preferred (already configured in this repo):
 
 ```bash
-git submodule add https://github.com/juce-framework/JUCE.git native/JUCE
 git submodule update --init --recursive
+# or: ./scripts/bootstrap.sh
 ```
 
-Or point CMake at any checkout:
+The pinned checkout is `native/JUCE` @ tag **8.0.14**.
+
+Alternatively, point CMake at any checkout:
 
 ```bash
 cmake -S native -B native/build -DJUCE_PATH=/path/to/JUCE
 ```
 
+A sibling `../JUCE` next to the repo is still auto-detected if the submodule is missing.
+
 ## Build
 
-From `aufx-test/` (with `~/dev/JUCE` as a sibling, no extra flags needed):
+From `aufx-test/`:
 
 ```bash
 cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
 cmake --build native/build --target plugin_renderer
 cmake --build native/build --target plugin_host_app
 ```
+
+Or use `./scripts/bootstrap.sh` for venv + both targets.
 
 The headless renderer binary:
 
@@ -61,6 +65,7 @@ aufx-test host
 ```
 
 See [docs/manual-exploration.md](../docs/manual-exploration.md) if venv activation fails with permission errors.
+
 ## Usage
 
 ```bash
@@ -79,6 +84,16 @@ Optional flags:
   --block-size 512
   --dump-parameters --format json
 ```
+
+See [docs/plugin-renderer.md](../docs/plugin-renderer.md) for the full CLI contract.
+
+## Packaging for other Macs
+
+```bash
+./scripts/package_mac_app.sh
+```
+
+Produces a **universal** (`arm64` + `x86_64`) zip under `dist/`. See [docs/mac-app-distribution.md](../docs/mac-app-distribution.md).
 
 ## Wire into Python tests
 
@@ -106,19 +121,10 @@ Then run exported session tests:
 pytest tests/generated/test_my_effect.py
 ```
 
+Generated tests skip cleanly when local session artifacts or plugins are missing.
+
 ## .aupreset loading
 
 On macOS, presets are parsed with `NSPropertyListSerialization` (supports Logic's binary plists). The state blob is read from the `data`, `jucePluginState`, or `state` key and passed to `AudioProcessor::setStateInformation()`.
 
 On other platforms, XML `.aupreset` plists are supported via JUCE's XML parser.
-
-## Integrate with your plugin project
-
-You can either:
-
-1. **Keep this as a standalone tool** in `aufx-test/native/` (simplest to start), or
-2. **Add `add_subdirectory()` from your plugin's CMake** and install `plugin_renderer` next to your AU/VST3 build outputs.
-
-For option 2, expose the path to CI and point `SubprocessPluginHost` at the built binary.
-
-See also [docs/plugin-renderer.md](../docs/plugin-renderer.md).
