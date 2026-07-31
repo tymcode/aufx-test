@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <atomic>
+#include <functional>
 #include "HardwareLoopSettings.h"
 #include "MonitorOutputBridge.h"
 
@@ -9,10 +10,11 @@
  * Hardware insert loop: latency delay line, monitor crossfade, and
  * message-thread loop ops (calibrate / capture).
  *
- * Calibration Boost (planned, not yet implemented) will extend this unit:
- * multi-impulse latency, DC removal, L/R balance, LUFS gain, and a
- * calibrate→render→compare loop. Keep single-impulse correlation and
- * peak-based loop gain as private helpers that those features can replace.
+ * Calibration Boost: interactive Level Meters (View menu) owns named
+ * level-sweep linearity. Latency auto-detect averages several impulse
+ * trials. Still deferred here: DC removal, L/R balance, LUFS gain, and a
+ * calibrate→render→compare loop. Keep correlation and peak-based loop
+ * gain as private helpers that those features can replace.
  */
 class HardwareLoopOps
 {
@@ -48,13 +50,17 @@ public:
     bool isSoftwareEffectMuted() const { return softwareEffectMuted.load(); }
 
     /**
-     * Play impulseFile once through the send pair, record the return, find the
-     * correlation peak, and update latencySamples. Sets measuredLoopGainDb.
+     * Play impulseFile through the send pair several times, average the
+     * correlation-peak latencies (and peak loop gains), and update
+     * latencySamples. Sets measuredLoopGainDb from the averaged gain.
+     * Optional onProgress is called on the message thread before each trial
+     * with 1-based current and total trial counts.
      */
     bool autoDetectLatency (const juce::File& impulseFile,
                             int& outLatencySamples,
                             float& outLoopGainDb,
-                            juce::String& error);
+                            juce::String& error,
+                            std::function<void (int current, int total)> onProgress = {});
 
     /**
      * Send silence through the send pair and measure return peak/RMS (dBFS)
@@ -130,7 +136,7 @@ public:
     void prepareForAudioDevice (int fadeLengthSamples);
 
 private:
-    /** Single-impulse correlation peak. Calibration Boost will call this N times. */
+    /** Correlation peak for one impulse trial. */
     static int findCorrelationPeakLatency (const juce::AudioBuffer<float>& impulseMono,
                                            const juce::AudioBuffer<float>& recorded,
                                            int recordedSamples,

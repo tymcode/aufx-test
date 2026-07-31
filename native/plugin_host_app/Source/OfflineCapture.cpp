@@ -1,5 +1,6 @@
 #include "OfflineCapture.h"
 #include "AudioBufferUtils.h"
+#include <cmath>
 
 namespace
 {
@@ -91,6 +92,9 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
         return false;
     }
 
+    if (std::abs (options.inputGainDb) > 1.0e-6f)
+        inputBuffer.applyGain (juce::Decibels::decibelsToGain (options.inputGainDb));
+
     // Offline on a live plugin instance that also serves the device callback:
     // never releaseResources here (the engine owns that), always mark
     // non-realtime, and keep a fixed block size — variable last-block sizes
@@ -115,7 +119,32 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
             block.copyFrom (ch, 0, inputBuffer, ch, offset, currentBlock);
 
         midi.clear();
-        plugin.processBlock (block, midi);
+        if (! options.bypassPlugin)
+        {
+            const float wetMix = juce::jlimit (0.0f, 1.0f, options.mixAmount);
+            const bool blendDry = wetMix < 1.0f;
+            juce::AudioBuffer<float> dryBlock;
+            if (blendDry)
+            {
+                dryBlock.setSize (processChannels, currentBlock, false, false, true);
+                for (int ch = 0; ch < processChannels; ++ch)
+                    dryBlock.copyFrom (ch, 0, block, ch, 0, currentBlock);
+            }
+
+            plugin.processBlock (block, midi);
+
+            if (blendDry)
+            {
+                const float dryMix = 1.0f - wetMix;
+                for (int ch = 0; ch < processChannels; ++ch)
+                {
+                    auto* wet = block.getWritePointer (ch);
+                    const auto* dry = dryBlock.getReadPointer (ch);
+                    for (int i = 0; i < currentBlock; ++i)
+                        wet[i] = dry[i] * dryMix + wet[i] * wetMix;
+                }
+            }
+        }
 
         if (currentBlock == blockSize)
         {
@@ -130,35 +159,39 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
         }
     }
 
-    int consecutiveSilentSamples = 0;
-    int tailSamplesRendered = 0;
-    bool tailSilenceReached = false;
-
-    while (tailSamplesRendered < maxTailSamples)
+    // Dry-thru has no reverb tail; skip the silence-hold loop.
+    if (! options.bypassPlugin)
     {
-        block.clear();
-        midi.clear();
-        plugin.processBlock (block, midi);
-        AudioBufferUtils::appendBlock (outputBuffer, block);
+        int consecutiveSilentSamples = 0;
+        int tailSamplesRendered = 0;
+        bool tailSilenceReached = false;
 
-        tailSamplesRendered += blockSize;
-
-        if (AudioBufferUtils::blockPeak (block) < silenceThreshold)
-            consecutiveSilentSamples += blockSize;
-        else
-            consecutiveSilentSamples = 0;
-
-        if (consecutiveSilentSamples >= tailSilenceSamples)
+        while (tailSamplesRendered < maxTailSamples)
         {
-            tailSilenceReached = true;
-            break;
-        }
-    }
+            block.clear();
+            midi.clear();
+            plugin.processBlock (block, midi);
+            AudioBufferUtils::appendBlock (outputBuffer, block);
 
-    if (tailSilenceReached && consecutiveSilentSamples > 0)
-    {
-        const int newLength = juce::jmax (0, outputBuffer.getNumSamples() - consecutiveSilentSamples);
-        outputBuffer.setSize (processChannels, newLength, true, true, true);
+            tailSamplesRendered += blockSize;
+
+            if (AudioBufferUtils::blockPeak (block) < silenceThreshold)
+                consecutiveSilentSamples += blockSize;
+            else
+                consecutiveSilentSamples = 0;
+
+            if (consecutiveSilentSamples >= tailSilenceSamples)
+            {
+                tailSilenceReached = true;
+                break;
+            }
+        }
+
+        if (tailSilenceReached && consecutiveSilentSamples > 0)
+        {
+            const int newLength = juce::jmax (0, outputBuffer.getNumSamples() - consecutiveSilentSamples);
+            outputBuffer.setSize (processChannels, newLength, true, true, true);
+        }
     }
 
     plugin.suspendProcessing (wasSuspended);

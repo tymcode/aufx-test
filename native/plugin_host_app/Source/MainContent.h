@@ -37,6 +37,9 @@ public:
     void rescanPlugins();
     void rescanSourceClips();
     void openCaptureTestCase();
+    void togglePlayback();
+    /** True when a text field (or other text input target) has keyboard focus. */
+    static bool isEditableFieldFocused();
     /** Apply a session snapshot's clip/preset/sysex into the live host (Load Testcase). */
     bool loadTestCase (const SessionSnapshotRef& snapshot, juce::String& error);
     /** Call after the host window is on-screen so AU Cocoa UIs can attach to an NSWindow. */
@@ -70,9 +73,7 @@ private:
     bool loadExternalSourceClip (const juce::File& file, juce::String& error);
     void startPlayback();
     void stopPlayback();
-    void togglePlayback();
     void resetPluginToDefaults();
-    static bool isEditableFieldFocused();
     using juce::Component::keyPressed;
     bool keyPressed (const juce::KeyPress& key, juce::Component*) override;
     void buttonClicked (juce::Button* button) override;

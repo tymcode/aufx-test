@@ -19,6 +19,7 @@ output/
 tmp/
 test-results/
 sessions/
+calibration/
 native/build/
 native/plugin_host_app/build/
 native/**/plugin_renderer_artefacts/

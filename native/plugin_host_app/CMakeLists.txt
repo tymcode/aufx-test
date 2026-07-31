@@ -72,6 +72,9 @@ target_sources(plugin_host_app
         Source/SourceClipLibrary.cpp
         Source/CapturePipeline.cpp
         Source/NoiseFloorCalibration.cpp
+        Source/LevelSweepCalibration.cpp
+        Source/LevelMetrics.cpp
+        Source/LevelMetersWindow.cpp
         Source/TestCaseCapture.cpp
         Source/TestCaseLoader.cpp
         Source/PluginAudioEngine.cpp

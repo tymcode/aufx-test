@@ -55,7 +55,7 @@ pip install -e ".[dev]"
 Confirm: `python -c "import ssl; print(ssl.OPENSSL_VERSION)"` must succeed before `pip install`.
 ## Configure plugins
 
-Edit `host.config.json` at the project root for the repo-rooted workflow. The toolbar dropdown is seeded from this list; use **Plugins → Add Plugin…** / **More plugins…** to pick from the AU cache and append entries.
+Edit `host.config.json` at the project root for the repo-rooted workflow. The toolbar dropdown is seeded from this list; use **Plugins → Add Plugin…** / **More plugins…** to pick from the AU cache and append entries. **Plugins → Rescan Audio Units…** (`Cmd+R`) refreshes the AU cache; **Rescan Source Clips** (`Cmd+Shift+R`) reloads fixture WAVs.
 
 ```json
 {
@@ -151,16 +151,40 @@ You do **not** need a working venv just to run the host UI.## Using the app
 2. **Preset** — pick a `.aupreset` from that plugin’s `presets_dir`, click **Load**.
 3. **Save as** — enter a name and click **Save** to write a new `.aupreset` into the presets folder (it appears in the dropdown). Enable **Replace existing** to overwrite a preset of the same name.
 4. **Fixture** — pick an input WAV (`fixtures/guitar.wav`, etc.).
-5. **Play** — loop the fixture through the plugin to system audio until Stop. Space bar toggles play/stop (unless a text field has focus).
+5. **Play** — loop the fixture through the plugin to system audio until Stop. Space bar toggles play/stop (unless a text field has focus), including while **Level Meters** is focused.
 6. **Stop** — stop playback.
 7. **Test Role** — whether this is a `golden` reference (expects match), `broken` reference (expects mismatch) or `suspect`, which currently behaves the same as `broken`
-8. **Capture Test Case** — saves:
+8. **Capture Test Case** (`Cmd+T`) — saves:
   - current plugin state as `.aupreset`
   - offline reference render from a one-shot playback of the fixture WAV (same tail logic as CI)
   - snapshot entry in the configured session (e.g. `sessions/DEEPZ exploration/session.json`) including the entered description and test role
   - optional **Generate report** (default on): runs `aufx-test compare --root … --write-report` for the new snapshot when capture succeeds (`python_cli` in `host.config.json` must point at `.venv/bin/aufx-test`)
 
 Tweak the plugin UI between captures. Each capture creates a new snapshot you can promote and export.
+
+## Hardware Audio Setup
+
+**Plugins → Hardware Audio Setup…** configures the CoreAudio insert loop (send / return / monitor), buffer size, and latency.
+
+- **Auto-detect** — plays `fixtures/impulse.wav` five times through the send pair, averages the correlation-peak latencies (and peak loop gain). Put the hardware box on a dry/bypass program first.
+- **Test** — plays the current source clip out the send pair so you can verify routing and levels (software effect is muted while the dialog is open).
+
+## Level Meters
+
+**View → Level Meters** (`Cmd+M`) opens a floating window with live **Send** / **Return** meters for the active path:
+
+- **Use Software** — pre-plugin fixture vs post-plugin (current bypass / mix / preset)
+- **Use Hardware** — insert send pair vs return pair
+
+Live meters show **sample peaks** (per audio block), with smoothed bars for readability, a **sticky peak hold**, and a red **CLIP** badge when any sample reaches 0 dBFS. Click a meter to clear hold and CLIP.
+
+**Level sweep…** prompts for a plot name, plays `fixtures/synth_waves/sine_0db_1ch_5s_48k.wav` at stepped send gains through the **current** path (not dry-thru unless Bypass is on), and writes `<project-root>/calibration/<slug>.json` plus `<slug>.png` when `python_cli` is set.
+
+Each sweep step records **true sample peak**, **RMS**, and **BS.1770-style LUFS** over a **0.75 s settle + 2.5 s analysis window** (hardware records ~4 s per step) so pulsing / modulated effects get a usable read. The plot shows peak, RMS, and LUFS vs commanded send. Capture-time correction from the curve is not applied yet.
+
+```bash
+aufx-test calibrate-plot calibration/my_plot.json -o calibration/my_plot.png
+```
 
 ## After capturing
 

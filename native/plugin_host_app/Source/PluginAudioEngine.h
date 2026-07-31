@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <atomic>
+#include <functional>
 #include "HardwareLoopSettings.h"
 #include "HardwareLoopOps.h"
 #include "HostClockMetronome.h"
@@ -93,6 +94,13 @@ public:
     float getSendPeakL() const { return hardwareLoop.getSendPeakL(); }
     float getSendPeakR() const { return hardwareLoop.getSendPeakR(); }
 
+    /** Pre-plugin fixture peaks (after send gain) for software-path metering. */
+    float getSoftwareSendPeakL() const { return softwareSendPeakL.load(); }
+    float getSoftwareSendPeakR() const { return softwareSendPeakR.load(); }
+    /** Post-plugin / post-mix-bypass peaks for software-path metering. */
+    float getSoftwareReturnPeakL() const { return softwareReturnPeakL.load(); }
+    float getSoftwareReturnPeakR() const { return softwareReturnPeakR.load(); }
+
     /**
      * When true, fixture audio is still sent to the hardware loop but is not
      * fed into the software plugin (used while Hardware Audio Setup is open).
@@ -101,13 +109,16 @@ public:
     bool isSoftwareEffectMuted() const { return hardwareLoop.isSoftwareEffectMuted(); }
 
     /**
-     * Play impulseFile once through the send pair, record the return, find the
-     * correlation peak, and update latencySamples. Sets measuredLoopGainDb.
+     * Play impulseFile through the send pair several times, average the
+     * correlation-peak latencies, and update latencySamples.
+     * Sets measuredLoopGainDb from the averaged peak loop gain.
+     * Optional onProgress is called before each trial (1-based current / total).
      */
     bool autoDetectLatency (const juce::File& impulseFile,
                             int& outLatencySamples,
                             float& outLoopGainDb,
-                            juce::String& error);
+                            juce::String& error,
+                            std::function<void (int current, int total)> onProgress = {});
 
     /**
      * Send silence through the hardware send pair and measure return noise
@@ -246,6 +257,10 @@ private:
     std::atomic<float> mixAmount { 1.0f };
     std::atomic<float> sendLevelDb { 0.0f };
     std::atomic<float> sendGain { 1.0f };
+    std::atomic<float> softwareSendPeakL { 0.0f };
+    std::atomic<float> softwareSendPeakR { 0.0f };
+    std::atomic<float> softwareReturnPeakL { 0.0f };
+    std::atomic<float> softwareReturnPeakR { 0.0f };
 
     double deviceSampleRate { 44100.0 };
     int deviceBlockSize { 512 };

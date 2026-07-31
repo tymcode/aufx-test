@@ -6,6 +6,7 @@
 #include "PluginAudioEngine.h"
 
 class MainContent;
+class LevelMetersWindow;
 
 class MainWindow : public juce::DocumentWindow,
                    public juce::MenuBarModel,
@@ -26,6 +27,7 @@ public:
     void toggleLightsOutFromMenu();
     void toggleHardwareMode();
     void toggleHardwareModeFromMenu();
+    void toggleLevelMeters();
     void openHardwareAudioSetup();
     void openMidiSetup();
     void refreshHardwareUi();
@@ -35,6 +37,8 @@ private:
     using juce::Component::keyPressed;
 
     bool keyPressed (const juce::KeyPress& key, juce::Component* originatingComponent) override;
+    /** Shared by the main window and Level Meters (space + command shortcuts). */
+    bool handleGlobalKeyPress (const juce::KeyPress& key);
     void syncNativeMenuShortcuts();
 
     enum MenuIds
@@ -48,12 +52,14 @@ private:
         menuLightsOut,
         menuHardwareAudioSetup,
         menuMidiSetup,
-        menuUseHardware
+        menuUseHardware,
+        menuLevelMeters
     };
 
     HostConfig config;
     std::unique_ptr<PluginAudioEngine> engine;
     std::unique_ptr<MainContent> content;
+    std::unique_ptr<LevelMetersWindow> levelMetersWindow;
     juce::KnownPluginList knownPlugins;
     LightsOutManager lightsOut;
 #if JUCE_MAC

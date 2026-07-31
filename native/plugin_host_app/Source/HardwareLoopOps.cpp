@@ -281,9 +281,8 @@ int HardwareLoopOps::findCorrelationPeakLatency (const juce::AudioBuffer<float>&
 {
     // Cross-correlate mono impulse against the mono-summed return, brute-force
     // time domain. O(impulse × lag) is fine here: the impulse is ~2 s and this
-    // runs once per calibration click, not per block.
+    // runs once per trial, not per block.
     // TODO: switch to FFT-based correlation if calibration ever feels slow.
-    // Calibration Boost will call this once per impulse and combine results.
     double bestCorr = -1.0e300;
     int bestLag = 0;
     const int maxLag = recordedSamples - impulseSamples;
@@ -336,8 +335,11 @@ float HardwareLoopOps::measurePeakLoopGainDb (const juce::AudioBuffer<float>& im
 bool HardwareLoopOps::autoDetectLatency (const juce::File& impulseFile,
                                          int& outLatencySamples,
                                          float& outLoopGainDb,
-                                         juce::String& error)
+                                         juce::String& error,
+                                         std::function<void (int current, int total)> onProgress)
 {
+    constexpr int kLatencyDetectTrials = 5;
+
     if (! hardwareSettings.isConfigured())
     {
         error = "Configure a hardware audio device first";
@@ -355,34 +357,6 @@ bool HardwareLoopOps::autoDetectLatency (const juce::File& impulseFile,
     loopPlayBuffer.setSize (2, impulseSamples, false, true, false);
     reader->read (&loopPlayBuffer, 0, impulseSamples, 0, true, true);
 
-    const int recordSamples = impulseSamples + (int) (deviceSampleRate * 2.0) + deviceBlockSize * 4;
-    loopRecordBuffer.setSize (2, recordSamples, false, true, false);
-    loopRecordBuffer.clear();
-    loopPlayPosition = 0;
-    loopRecordPosition = 0;
-    loopRecordCapacity = recordSamples;
-    loopOpFinished.store (false);
-    loopOp.store (LoopOp::calibrate);
-
-    const auto deadline = juce::Time::getMillisecondCounterHiRes() + 8000.0;
-    while (! loopOpFinished.load() && juce::Time::getMillisecondCounterHiRes() < deadline)
-        HostAudioHelpers::pumpMessageThreadMs (10);
-
-    loopOp.store (LoopOp::idle);
-
-    if (! loopOpFinished.load())
-    {
-        error = "Latency detection timed out";
-        return false;
-    }
-
-    const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
-    if (recorded < impulseSamples)
-    {
-        error = "Not enough return audio recorded";
-        return false;
-    }
-
     juce::AudioBuffer<float> impulseMono (1, impulseSamples);
     for (int i = 0; i < impulseSamples; ++i)
     {
@@ -391,14 +365,67 @@ bool HardwareLoopOps::autoDetectLatency (const juce::File& impulseFile,
         impulseMono.setSample (0, i, 0.5f * (l + r));
     }
 
-    const int bestLag = findCorrelationPeakLatency (impulseMono, loopRecordBuffer,
-                                                    recorded, impulseSamples);
-    outLatencySamples = bestLag;
-    outLoopGainDb = measurePeakLoopGainDb (impulseMono, loopRecordBuffer,
-                                           recorded, impulseSamples, bestLag);
+    const int recordSamples = impulseSamples + (int) (deviceSampleRate * 2.0) + deviceBlockSize * 4;
+    loopRecordBuffer.setSize (2, recordSamples, false, true, false);
 
-    hardwareSettings.latencySamples = bestLag;
-    ensureLatencyBufferSize (2, juce::jmax (bestLag + deviceBlockSize * 4, deviceBlockSize * 8));
+    double lagSum = 0.0;
+    double gainLinSum = 0.0;
+
+    for (int trial = 0; trial < kLatencyDetectTrials; ++trial)
+    {
+        if (onProgress)
+            onProgress (trial + 1, kLatencyDetectTrials);
+
+        // Brief settle between trials so ADC / delay-line state from the
+        // previous impulse does not bias the next correlation peak.
+        if (trial > 0)
+            HostAudioHelpers::pumpMessageThreadMs (150);
+
+        loopRecordBuffer.clear();
+        loopPlayPosition = 0;
+        loopRecordPosition = 0;
+        loopRecordCapacity = recordSamples;
+        loopOpFinished.store (false);
+        loopOp.store (LoopOp::calibrate);
+
+        const auto deadline = juce::Time::getMillisecondCounterHiRes() + 8000.0;
+        while (! loopOpFinished.load() && juce::Time::getMillisecondCounterHiRes() < deadline)
+            HostAudioHelpers::pumpMessageThreadMs (10);
+
+        loopOp.store (LoopOp::idle);
+
+        if (! loopOpFinished.load())
+        {
+            error = "Latency detection timed out on trial "
+                    + juce::String (trial + 1) + " of "
+                    + juce::String (kLatencyDetectTrials);
+            return false;
+        }
+
+        const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
+        if (recorded < impulseSamples)
+        {
+            error = "Not enough return audio recorded on trial "
+                    + juce::String (trial + 1) + " of "
+                    + juce::String (kLatencyDetectTrials);
+            return false;
+        }
+
+        const int bestLag = findCorrelationPeakLatency (impulseMono, loopRecordBuffer,
+                                                        recorded, impulseSamples);
+        const float gainDb = measurePeakLoopGainDb (impulseMono, loopRecordBuffer,
+                                                    recorded, impulseSamples, bestLag);
+        lagSum += (double) bestLag;
+        gainLinSum += (double) juce::Decibels::decibelsToGain (gainDb);
+    }
+
+    const int averagedLag = (int) std::lround (lagSum / (double) kLatencyDetectTrials);
+    outLatencySamples = averagedLag;
+    outLoopGainDb = juce::Decibels::gainToDecibels (
+        (float) (gainLinSum / (double) kLatencyDetectTrials), -120.0f);
+
+    hardwareSettings.latencySamples = averagedLag;
+    ensureLatencyBufferSize (2, juce::jmax (averagedLag + deviceBlockSize * 4, deviceBlockSize * 8));
     return true;
 }
 
