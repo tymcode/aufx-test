@@ -55,7 +55,7 @@ public:
     juce::String getMidiOutIdentifier() const;
     juce::String getMidiDumpInIdentifier() const;
     juce::String getMidiSysexModule() const;
-    /** When true (default), measure hardware noise floor before capture. */
+    /** When true (default), measure hardware noise floor and DC before capture. */
     bool getHardwareCaptureCalibrate() const;
     /**
      * Last calibrated silence gate (dBFS). Returns defaultThresholdDb when

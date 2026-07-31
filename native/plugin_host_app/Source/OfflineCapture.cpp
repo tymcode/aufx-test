@@ -70,9 +70,20 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
     const int tailSilenceSamples = (int) std::ceil (options.tailSilenceSeconds * effectiveRate);
     const int maxTailSamples = (int) std::ceil (options.maxTailSeconds * effectiveRate);
 
-    // Match the realtime host: process at the wider of plugin IO / stereo so
-    // multi-bus AUs get allocated channel pointers (null channels in
-    // renderGetInput are a common AU crash when the buffer is too narrow).
+    // Offline on a live plugin instance that also serves the device callback:
+    // never releaseResources here (the engine owns that), always mark
+    // non-realtime, and keep a fixed block size — variable last-block sizes
+    // and a second releaseResources() have crashed AUs (e.g. QDV1) on the
+    // next capture.
+    const bool wasNonRealtime = plugin.isNonRealtime();
+    const bool wasSuspended = plugin.isSuspended();
+    plugin.setNonRealtime (true);
+    plugin.suspendProcessing (false);
+    plugin.prepareToPlay (effectiveRate, blockSize);
+
+    // Channel count must be taken *after* prepareToPlay — bus layouts (and
+    // therefore getTotalNum*Channels) often change then. Undersized buffers
+    // leave null channel pointers that crash AU renderGetInput's memcpy.
     const int processChannels = juce::jmax (2,
                                             plugin.getTotalNumInputChannels(),
                                             plugin.getTotalNumOutputChannels(),
@@ -88,23 +99,14 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
     const int numSamples = inputBuffer.getNumSamples();
     if (numSamples <= 0)
     {
+        plugin.suspendProcessing (wasSuspended);
+        plugin.setNonRealtime (wasNonRealtime);
         error = "Resampled input is empty";
         return false;
     }
 
     if (std::abs (options.inputGainDb) > 1.0e-6f)
         inputBuffer.applyGain (juce::Decibels::decibelsToGain (options.inputGainDb));
-
-    // Offline on a live plugin instance that also serves the device callback:
-    // never releaseResources here (the engine owns that), always mark
-    // non-realtime, and keep a fixed block size — variable last-block sizes
-    // and a second releaseResources() have crashed AUs (e.g. QDV1) on the
-    // next capture.
-    const bool wasNonRealtime = plugin.isNonRealtime();
-    const bool wasSuspended = plugin.isSuspended();
-    plugin.setNonRealtime (true);
-    plugin.suspendProcessing (false);
-    plugin.prepareToPlay (effectiveRate, blockSize);
 
     juce::AudioBuffer<float> outputBuffer (processChannels, 0);
     juce::MidiBuffer midi;
@@ -126,11 +128,14 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
             juce::AudioBuffer<float> dryBlock;
             if (blendDry)
             {
-                dryBlock.setSize (processChannels, currentBlock, false, false, true);
+                dryBlock.setSize (processChannels, blockSize, false, false, true);
+                dryBlock.clear();
                 for (int ch = 0; ch < processChannels; ++ch)
                     dryBlock.copyFrom (ch, 0, block, ch, 0, currentBlock);
             }
 
+            // Always process a full prepared block (silence-padded). Partial
+            // last-block sizes have crashed some AUs in renderGetInput.
             plugin.processBlock (block, midi);
 
             if (blendDry)

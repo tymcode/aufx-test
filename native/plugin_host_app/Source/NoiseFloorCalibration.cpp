@@ -64,11 +64,15 @@ bool NoiseFloorCalibration::measureHardwareReturn (PluginAudioEngine& engine,
 
     float peakDb = -120.0f;
     float rmsDb = -120.0f;
-    if (! engine.measureHardwareNoiseFloor (listenSeconds, peakDb, rmsDb, error))
+    float dcL = 0.0f;
+    float dcR = 0.0f;
+    if (! engine.measureHardwareNoiseFloor (listenSeconds, peakDb, rmsDb, dcL, dcR, error))
         return false;
 
     out.peakDb = (double) peakDb;
     out.rmsDb = (double) rmsDb;
+    out.dcOffsetL = dcL;
+    out.dcOffsetR = dcR;
     out.recommendedSilenceThresholdDb = thresholdFromPeakDb (out.peakDb, marginDb);
     return true;
 }

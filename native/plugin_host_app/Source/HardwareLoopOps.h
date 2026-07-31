@@ -12,9 +12,9 @@
  *
  * Calibration Boost: interactive Level Meters (View menu) owns named
  * level-sweep linearity. Latency auto-detect averages several impulse
- * trials. Still deferred here: DC removal, L/R balance, LUFS gain, and a
- * calibrate→render→compare loop. Keep correlation and peak-based loop
- * gain as private helpers that those features can replace.
+ * trials. Capture Calibrate measures noise floor + DC offset. Still
+ * deferred here: L/R balance, LUFS gain, and a calibrate→render→compare
+ * loop. Keep correlation and peak-based loop gain as private helpers.
  */
 class HardwareLoopOps
 {
@@ -64,16 +64,21 @@ public:
 
     /**
      * Send silence through the send pair and measure return peak/RMS (dBFS)
-     * after latency settle. Used by NoiseFloorCalibration before hardware capture.
+     * after latency settle, plus per-channel mean DC offset. Peak/RMS are
+     * computed after subtracting the measured DC. Used by NoiseFloorCalibration
+     * before hardware capture.
      */
     bool measureReturnNoiseFloor (double listenSeconds,
                                   float& outPeakDb,
                                   float& outRmsDb,
+                                  float& outDcOffsetL,
+                                  float& outDcOffsetR,
                                   juce::String& error);
 
     /**
      * Record the return pair while playing fixtureFile through the send pair.
      * Trims configured latency from the head and extends through silence tail.
+     * Optional dcOffsetL/R (from Calibrate) are subtracted before writing.
      *
      * BLOCKING KLUDGE: this runs on the message thread and pumps the dispatch
      * loop in 10 ms slices while the realtime callback does the actual play/
@@ -105,7 +110,9 @@ public:
                                 juce::String& error,
                                 const std::atomic<bool>* stopRequested = nullptr,
                                 const std::atomic<bool>* abortRequested = nullptr,
-                                double targetDurationSeconds = 0.0);
+                                double targetDurationSeconds = 0.0,
+                                float dcOffsetL = 0.0f,
+                                float dcOffsetR = 0.0f);
 
     // Realtime helpers called from PluginAudioEngine::audioDeviceIOCallbackWithContext:
     void ensureLatencyBufferSize (int numChannels, int capacity);

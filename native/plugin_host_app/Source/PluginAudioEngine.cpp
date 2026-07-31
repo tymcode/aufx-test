@@ -505,9 +505,12 @@ bool PluginAudioEngine::autoDetectLatency (const juce::File& impulseFile,
 bool PluginAudioEngine::measureHardwareNoiseFloor (double listenSeconds,
                                                    float& outPeakDb,
                                                    float& outRmsDb,
+                                                   float& outDcOffsetL,
+                                                   float& outDcOffsetR,
                                                    juce::String& error)
 {
-    return hardwareLoop.measureReturnNoiseFloor (listenSeconds, outPeakDb, outRmsDb, error);
+    return hardwareLoop.measureReturnNoiseFloor (listenSeconds, outPeakDb, outRmsDb,
+                                                 outDcOffsetL, outDcOffsetR, error);
 }
 
 bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
@@ -518,11 +521,14 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
                                                juce::String& error,
                                                const std::atomic<bool>* stopRequested,
                                                const std::atomic<bool>* abortRequested,
-                                               double targetDurationSeconds)
+                                               double targetDurationSeconds,
+                                               float dcOffsetL,
+                                               float dcOffsetR)
 {
     return hardwareLoop.captureHardwareToFile (fixtureFile, outputFile,
                                                tailSilenceSeconds, silenceThresholdDb, maxTailSeconds,
-                                               error, stopRequested, abortRequested, targetDurationSeconds);
+                                               error, stopRequested, abortRequested, targetDurationSeconds,
+                                               dcOffsetL, dcOffsetR);
 }
 
 void PluginAudioEngine::clearOutputChannels (float* const* outputChannelData, int numOutputChannels, int numSamples)

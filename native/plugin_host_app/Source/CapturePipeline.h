@@ -39,7 +39,7 @@ struct CapturePipelineRequest
     CaptureSource source { CaptureSource::plugin };
     juce::File fixtureFile;
     juce::Component* progressParent { nullptr };
-    /** When true, measure hardware noise floor before recording. */
+    /** When true, measure hardware noise floor and DC offset before recording. */
     bool calibrateNoiseFloor { true };
 };
 
@@ -52,6 +52,8 @@ struct CapturePipelineResult
     double softwareDurationSeconds { 0.0 };
     double hardwareSilenceThresholdDb { -60.0 };
     bool calibratedNoiseFloor { false };
+    float dcOffsetL { 0.0f };
+    float dcOffsetR { 0.0f };
 };
 
 /** RAII: restore hardware-mode flag and refresh UI on scope exit. */
@@ -122,7 +124,9 @@ public:
                          double targetDurationSeconds,
                          double silenceThresholdDb,
                          juce::Component* progressParent,
-                         juce::String& error);
+                         juce::String& error,
+                         float dcOffsetL = 0.0f,
+                         float dcOffsetR = 0.0f);
 
     bool dumpHardwareSysex (const juce::File& sysexOut, juce::String& error);
 

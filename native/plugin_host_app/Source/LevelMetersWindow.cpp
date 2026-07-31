@@ -234,8 +234,15 @@ LevelMetersWindow::~LevelMetersWindow()
 void LevelMetersWindow::closeButtonPressed()
 {
     setVisible (false);
-    if (onClosed)
-        onClosed();
+
+    // Do not destroy this window from inside the close-button handler — the
+    // caller (MainWindow) owns us via unique_ptr and resets it in onClosed.
+    // Defer so the stack can unwind first.
+    juce::MessageManager::callAsync ([fn = onClosed]
+    {
+        if (fn)
+            fn();
+    });
 }
 
 bool LevelMetersWindow::keyPressed (const juce::KeyPress& key)

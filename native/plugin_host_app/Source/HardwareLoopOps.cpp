@@ -432,10 +432,14 @@ bool HardwareLoopOps::autoDetectLatency (const juce::File& impulseFile,
 bool HardwareLoopOps::measureReturnNoiseFloor (double listenSeconds,
                                                float& outPeakDb,
                                                float& outRmsDb,
+                                               float& outDcOffsetL,
+                                               float& outDcOffsetR,
                                                juce::String& error)
 {
     outPeakDb = -120.0f;
     outRmsDb = -120.0f;
+    outDcOffsetL = 0.0f;
+    outDcOffsetR = 0.0f;
 
     if (! hardwareSettings.isConfigured())
     {
@@ -496,23 +500,35 @@ bool HardwareLoopOps::measureReturnNoiseFloor (double listenSeconds,
         return false;
     }
 
+    const int channels = juce::jmin (2, loopRecordBuffer.getNumChannels());
+    const int count = end - start;
+    double sum[2] { 0.0, 0.0 };
+
+    for (int i = start; i < end; ++i)
+        for (int ch = 0; ch < channels; ++ch)
+            sum[ch] += (double) loopRecordBuffer.getSample (ch, i);
+
+    outDcOffsetL = (float) (sum[0] / (double) count);
+    outDcOffsetR = channels > 1 ? (float) (sum[1] / (double) count) : outDcOffsetL;
+
     float peak = 0.0f;
     double sumSq = 0.0;
-    int count = 0;
+    int acCount = 0;
     for (int i = start; i < end; ++i)
     {
-        for (int ch = 0; ch < juce::jmin (2, loopRecordBuffer.getNumChannels()); ++ch)
+        for (int ch = 0; ch < channels; ++ch)
         {
-            const float s = std::abs (loopRecordBuffer.getSample (ch, i));
+            const float dc = (ch == 0) ? outDcOffsetL : outDcOffsetR;
+            const float s = std::abs (loopRecordBuffer.getSample (ch, i) - dc);
             peak = juce::jmax (peak, s);
             sumSq += (double) s * (double) s;
-            ++count;
+            ++acCount;
         }
     }
 
     outPeakDb = juce::Decibels::gainToDecibels (peak, -120.0f);
-    outRmsDb = count > 0
-                   ? juce::Decibels::gainToDecibels ((float) std::sqrt (sumSq / (double) count), -120.0f)
+    outRmsDb = acCount > 0
+                   ? juce::Decibels::gainToDecibels ((float) std::sqrt (sumSq / (double) acCount), -120.0f)
                    : -120.0f;
     return true;
 }
@@ -525,7 +541,9 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
                                              juce::String& error,
                                              const std::atomic<bool>* stopRequestedFlag,
                                              const std::atomic<bool>* abortRequestedFlag,
-                                             double targetDurationSeconds)
+                                             double targetDurationSeconds,
+                                             float dcOffsetL,
+                                             float dcOffsetR)
 {
     if (! hardwareSettings.isConfigured())
     {
@@ -736,6 +754,15 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
     juce::AudioBuffer<float> trimmed (2, usable);
     for (int ch = 0; ch < 2; ++ch)
         trimmed.copyFrom (ch, 0, loopRecordBuffer, ch, latency, usable);
+
+    if (dcOffsetL != 0.0f || dcOffsetR != 0.0f)
+    {
+        for (int i = 0; i < usable; ++i)
+        {
+            trimmed.setSample (0, i, trimmed.getSample (0, i) - dcOffsetL);
+            trimmed.setSample (1, i, trimmed.getSample (1, i) - dcOffsetR);
+        }
+    }
 
     outputFile.deleteFile();
     outputFile.getParentDirectory().createDirectory();

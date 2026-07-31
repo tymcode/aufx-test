@@ -122,11 +122,14 @@ public:
 
     /**
      * Send silence through the hardware send pair and measure return noise
-     * floor (peak/RMS dBFS). See NoiseFloorCalibration.
+     * floor (peak/RMS dBFS after DC removal) plus per-channel DC offset.
+     * See NoiseFloorCalibration.
      */
     bool measureHardwareNoiseFloor (double listenSeconds,
                                     float& outPeakDb,
                                     float& outRmsDb,
+                                    float& outDcOffsetL,
+                                    float& outDcOffsetR,
                                     juce::String& error);
 
     /**
@@ -163,7 +166,9 @@ public:
                                 juce::String& error,
                                 const std::atomic<bool>* stopRequested = nullptr,
                                 const std::atomic<bool>* abortRequested = nullptr,
-                                double targetDurationSeconds = 0.0);
+                                double targetDurationSeconds = 0.0,
+                                float dcOffsetL = 0.0f,
+                                float dcOffsetR = 0.0f);
 
     /** Available hardware/virtual MIDI inputs (Audio MIDI Setup style names). */
     juce::Array<juce::MidiDeviceInfo> getMidiInputDevices() const;

@@ -5,12 +5,13 @@
 class PluginAudioEngine;
 
 /**
- * Measure an audio path's noise floor and recommend a silence-detection
- * threshold just above it.
+ * Measure an audio path's noise floor (and DC offset) and recommend a
+ * silence-detection threshold just above the AC floor.
  *
  * Used before hardware capture so reverb-tail auto-stop works when the analog
  * return floor is far below the generic -60 dB default (or above a too-low
- * fixed gate). The analyse() helper is buffer-agnostic for reuse elsewhere.
+ * fixed gate). Measured DC is subtracted from the capture WAV when Calibrate
+ * is enabled. The analyse() helper is buffer-agnostic for reuse elsewhere.
  */
 namespace NoiseFloorCalibration
 {
@@ -30,6 +31,9 @@ namespace NoiseFloorCalibration
         double recommendedSilenceThresholdDb { defaultSilenceThresholdDb };
         double listenSeconds { 0.0 };
         double marginDb { defaultMarginDb };
+        /** Mean DC measured on the silent return (subtract from capture). */
+        float dcOffsetL { 0.0f };
+        float dcOffsetR { 0.0f };
     };
 
     /** peakDb + marginDb, clamped to a practical silence-gate range. */
