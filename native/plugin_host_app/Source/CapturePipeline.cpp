@@ -58,8 +58,18 @@ double CapturePipeline::wavDurationSeconds (const juce::File& wavFile)
     return 0.0;
 }
 
+bool CapturePipeline::saveSoftwarePreset (const juce::File& presetOut, juce::String& error)
+{
+    if (engine.getPlugin() == nullptr)
+    {
+        error = "No plugin loaded";
+        return false;
+    }
+
+    return engine.saveCurrentPreset (presetOut, error);
+}
+
 bool CapturePipeline::renderSoftware (const juce::File& fixtureFile,
-                                      const juce::File& presetOut,
                                       const juce::File& softwareOut,
                                       double& outDurationSeconds,
                                       juce::String& error)
@@ -71,9 +81,6 @@ bool CapturePipeline::renderSoftware (const juce::File& fixtureFile,
         error = "No plugin loaded";
         return false;
     }
-
-    if (! engine.saveCurrentPreset (presetOut, error))
-        return false;
 
     engine.stopFixture();
     engine.stopAudioDevice();
@@ -354,12 +361,23 @@ bool CapturePipeline::run (const CapturePipelineRequest& request,
     {
         modeGuard.showMode (false);
         if (! renderSoftware (request.fixtureFile,
-                              outResult.paths.presetFile,
                               outResult.paths.softwareOutput,
                               outResult.softwareDurationSeconds,
                               error))
             return false;
         outResult.capturedPlugin = true;
+    }
+
+    if (request.captureSoftwareSettings)
+    {
+        if (engine.getPlugin() == nullptr)
+        {
+            error = "No plugin loaded";
+            return false;
+        }
+
+        if (! saveSoftwarePreset (outResult.paths.presetFile, error))
+            return false;
     }
 
     if (wantHardware)
@@ -430,7 +448,10 @@ bool CapturePipeline::run (const CapturePipelineRequest& request,
                               dcOffsetR))
             return false;
         outResult.capturedHardware = true;
+    }
 
+    if (request.captureHardwareSettings)
+    {
         juce::String sysexError;
         if (dumpHardwareSysex (outResult.paths.sysexFile, sysexError))
             outResult.capturedSysex = true;

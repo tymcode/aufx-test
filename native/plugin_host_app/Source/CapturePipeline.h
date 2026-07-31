@@ -41,6 +41,10 @@ struct CapturePipelineRequest
     juce::Component* progressParent { nullptr };
     /** When true, measure hardware noise floor and DC offset before recording. */
     bool calibrateNoiseFloor { true };
+    /** Save a .aupreset from the live plugin state (not the last loaded file). */
+    bool captureSoftwareSettings { true };
+    /** Request a hardware sysex patch dump after audio capture. */
+    bool captureHardwareSettings { true };
 };
 
 struct CapturePipelineResult
@@ -114,10 +118,12 @@ public:
               juce::String& error);
 
     bool renderSoftware (const juce::File& fixtureFile,
-                         const juce::File& presetOut,
                          const juce::File& softwareOut,
                          double& outDurationSeconds,
                          juce::String& error);
+
+    /** Write a .aupreset from the live plugin state into presetOut. */
+    bool saveSoftwarePreset (const juce::File& presetOut, juce::String& error);
 
     bool recordHardware (const juce::File& fixtureFile,
                          const juce::File& hardwareOut,

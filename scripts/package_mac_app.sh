@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
-# Build and package AU Effects Explorer as a shareable Mac .app zip.
+# Build and package AU Effects Explorer as a shareable universal Mac .app zip.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="${BUILD_DIR:-$ROOT/native/build}"
+BUILD_DIR="${BUILD_DIR:-$ROOT/native/build-universal}"
 DIST_DIR="${DIST_DIR:-$ROOT/dist}"
 APP_NAME="AU Effects Explorer"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
+VERSION_FILE="$ROOT/native/plugin_host_app/VERSION"
+GEN_DIR="$BUILD_DIR/plugin_host_app/generated"
 
-echo "==> Configuring Release build"
+echo "==> Bumping build number in VERSION"
+mkdir -p "$GEN_DIR"
+cmake \
+  -DAUFX_VERSION_FILE="$VERSION_FILE" \
+  -DAUFX_GEN_DIR="$GEN_DIR" \
+  -DAUFX_BUMP_VERSION=ON \
+  -P "$ROOT/native/plugin_host_app/cmake/BumpVersion.cmake"
+
+echo "==> Configuring universal Release build (arm64 + x86_64)"
 cmake -S "$ROOT/native" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
   -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
 
 echo "==> Building plugin_host_app"
@@ -31,6 +42,24 @@ ditto --norsrc --noextattr "$APP_SRC" "$DIST_DIR/${APP_NAME}.app"
 # Strip any remaining xattrs; they break codesign and create AppleDouble `._*` in zips.
 xattr -cr "$DIST_DIR/${APP_NAME}.app"
 find "$DIST_DIR/${APP_NAME}.app" -name '._*' -delete
+
+BIN="$DIST_DIR/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
+if [[ ! -x "$BIN" ]]; then
+  echo "error: missing app binary at $BIN" >&2
+  exit 1
+fi
+
+echo "==> Verifying universal binary"
+LIPO_INFO="$(lipo -info "$BIN" 2>&1 || true)"
+echo "    $LIPO_INFO"
+if ! echo "$LIPO_INFO" | grep -q 'arm64'; then
+  echo "error: packaged binary is missing arm64" >&2
+  exit 1
+fi
+if ! echo "$LIPO_INFO" | grep -q 'x86_64'; then
+  echo "error: packaged binary is missing x86_64" >&2
+  exit 1
+fi
 
 echo "==> Codesigning (identity: $CODESIGN_IDENTITY)"
 codesign --force --deep --sign "$CODESIGN_IDENTITY" "$DIST_DIR/${APP_NAME}.app"
@@ -58,7 +87,6 @@ codesign --verify --deep --strict "$VERIFY_DIR/${APP_NAME}.app"
 rm -rf "$VERIFY_DIR"
 echo "    zip round-trip OK"
 
-VERSION_FILE="$ROOT/native/plugin_host_app/VERSION"
 if [[ -f "$VERSION_FILE" ]]; then
   SEMVER="$(sed -n '1p' "$VERSION_FILE" | tr -d '[:space:]')"
   BUILD="$(sed -n '2p' "$VERSION_FILE" | tr -d '[:space:]')"
@@ -68,11 +96,8 @@ fi
 
 echo
 echo "Binary info:"
-BIN="$DIST_DIR/${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
-if [[ -x "$BIN" ]]; then
-  lipo -info "$BIN" 2>/dev/null || true
-  otool -l "$BIN" 2>/dev/null | awk '/minos/{print "minos",$2; exit}'
-fi
+lipo -info "$BIN" 2>/dev/null || true
+otool -l "$BIN" 2>/dev/null | awk '/minos/{print "minos",$2; exit}'
 
 echo
 echo "Packaged: $ZIP_PATH"
@@ -82,7 +107,7 @@ echo "  1. Unzip the archive (do not run from inside the zip)."
 echo "  2. Clear quarantine if needed: xattr -cr \"AU Effects Explorer.app\""
 echo "  3. Right-click the app → Open (first launch), or:"
 echo "     System Settings → Privacy & Security → Open Anyway"
-echo "  4. This build is arm64 and requires macOS 13+."
+echo "  4. This build is universal (arm64 + x86_64) and requires macOS 13+."
 echo "  5. Audio Units must already be installed under"
 echo "     /Library/Audio/Plug-Ins/Components/ (or ~/Library/...)."
 echo "  See docs/mac-app-distribution.md for settings and system plist keys."

@@ -234,6 +234,20 @@ bool HostPreferences::getCaptureGenerateReport() const
     return true;
 }
 
+bool HostPreferences::getCaptureSoftwareSettings() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getBoolValue (keyCaptureSoftwareSettings, true);
+    return true;
+}
+
+bool HostPreferences::getCaptureHardwareSettings() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getBoolValue (keyCaptureHardwareSettings, true);
+    return true;
+}
+
 double HostPreferences::getHardwareCaptureSilenceThresholdDb (double defaultThresholdDb) const
 {
     if (auto* s = const_cast<HostPreferences*> (this)->settings())
@@ -296,6 +310,24 @@ void HostPreferences::setCaptureGenerateReport (bool shouldGenerate)
     }
 }
 
+void HostPreferences::setCaptureSoftwareSettings (bool shouldCapture)
+{
+    if (auto* s = settings())
+    {
+        s->setValue (keyCaptureSoftwareSettings, shouldCapture);
+        s->saveIfNeeded();
+    }
+}
+
+void HostPreferences::setCaptureHardwareSettings (bool shouldCapture)
+{
+    if (auto* s = settings())
+    {
+        s->setValue (keyCaptureHardwareSettings, shouldCapture);
+        s->saveIfNeeded();
+    }
+}
+
 void HostPreferences::setHardwareCaptureSilenceThresholdDb (double thresholdDb)
 {
     if (auto* s = settings())
@@ -320,11 +352,17 @@ void HostPreferences::clearPrefs()
         s->removeValue (keyHwReturnR);
         s->removeValue (keyHwMonitorL);
         s->removeValue (keyHwMonitorR);
+        s->removeValue (keyHwMonitorOutputDevice);
         s->removeValue (keyHwBufferSize);
         s->removeValue (keyHwLatencySamples);
         s->removeValue (keyMidiOutIdentifier);
         s->removeValue (keyMidiDumpInIdentifier);
         s->removeValue (keyMidiSysexModule);
+        s->removeValue (keyHardwareCaptureCalibrate);
+        s->removeValue (keyHardwareCaptureSilenceThresholdDb);
+        s->removeValue (keyCaptureGenerateReport);
+        s->removeValue (keyCaptureSoftwareSettings);
+        s->removeValue (keyCaptureHardwareSettings);
         s->saveIfNeeded();
     }
 }

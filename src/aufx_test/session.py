@@ -227,11 +227,37 @@ class ExperimentSession:
         self.updated_at = _utc_now()
         return self.snapshot_to_test_setup(snap)
 
-    def snapshot_to_test_setup(self, snap: StateSnapshot) -> TestSetup:
+    def _portable_path(self, path: str | None) -> str | None:
+        """Prefer repo- or home-relative paths so exports work on other machines."""
+        if path is None:
+            return None
+        resolved = self.resolve_path(path)
+        roots: list[Path] = []
+        # sessions/<slug>/ → repo root is parent of sessions_root
+        if self.root_dir.name == "sessions" or self.root_dir.as_posix().endswith("/sessions"):
+            roots.append(self.root_dir.parent.resolve())
+        roots.append(Path.cwd().resolve())
+        for root in roots:
+            try:
+                return str(resolved.relative_to(root))
+            except ValueError:
+                continue
+        home = Path.home().resolve()
+        try:
+            return "~/" + str(resolved.relative_to(home)).replace("\\", "/")
+        except ValueError:
+            return str(resolved)
+
+    def snapshot_to_test_setup(self, snap: StateSnapshot, *, portable: bool = False) -> TestSetup:
         thresholds = ComparisonThresholds(**snap.thresholds) if snap.thresholds else ComparisonThresholds()
-        input_path = str(self.resolve_path(snap.input_audio))
-        output_path = str(self.resolve_path(snap.output_audio))
-        preset_path = str(self.resolve_path(snap.preset_file)) if snap.preset_file else None
+        if portable:
+            input_path = self._portable_path(snap.input_audio) or ""
+            output_path = self._portable_path(snap.output_audio) or ""
+            preset_path = self._portable_path(snap.preset_file)
+        else:
+            input_path = str(self.resolve_path(snap.input_audio))
+            output_path = str(self.resolve_path(snap.output_audio))
+            preset_path = str(self.resolve_path(snap.preset_file)) if snap.preset_file else None
         return TestSetup(
             name=snap.test_name or slugify(snap.name),
             plugin_path=self.plugin_path,
@@ -245,8 +271,12 @@ class ExperimentSession:
             expect_match=snap.expect_match,
         )
 
-    def promoted_setups(self) -> list[TestSetup]:
-        return [self.snapshot_to_test_setup(s) for s in self.snapshots if s.promoted]
+    def promoted_setups(self, *, portable: bool = False) -> list[TestSetup]:
+        return [
+            self.snapshot_to_test_setup(s, portable=portable)
+            for s in self.snapshots
+            if s.promoted
+        ]
 
     def import_goldens(
         self,

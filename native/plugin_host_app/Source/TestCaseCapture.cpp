@@ -3,6 +3,79 @@
 #include "SessionSnap.h"
 #include "Utf8.h"
 
+namespace
+{
+    /** Two-column options row for Capture Test Case. */
+    class CaptureOptionsPanel : public juce::Component
+    {
+    public:
+        CaptureOptionsPanel()
+        {
+            calibrateToggle.setButtonText ("Calibrate");
+            calibrateToggle.setTooltip (
+                utf8 ("Before recording: measure the hardware noise floor (for silence detection) "
+                      "and subtract DC offset from the capture. Turn off to reuse the last silence "
+                      "gate if levels are unchanged (DC removal is skipped when off)."));
+            addAndMakeVisible (calibrateToggle);
+
+            reportToggle.setButtonText ("Generate report");
+            reportToggle.setTooltip (
+                "After a successful capture, run aufx-test compare with --write-report "
+                "for this snapshot (JSON, plots, and HTML in the stem folder).");
+            addAndMakeVisible (reportToggle);
+
+            settingsHeading.setText ("Capture settings:", juce::dontSendNotification);
+            settingsHeading.setJustificationType (juce::Justification::centredLeft);
+            settingsHeading.setColour (juce::Label::textColourId, juce::Colours::white.withAlpha (0.9f));
+            addAndMakeVisible (settingsHeading);
+
+            softwareSettingsToggle.setButtonText ("Software");
+            softwareSettingsToggle.setTooltip (
+                "Save a .aupreset from the plugin's current settings "
+                "(not the most recently loaded preset file).");
+            addAndMakeVisible (softwareSettingsToggle);
+
+            hardwareSettingsToggle.setButtonText ("Hardware");
+            hardwareSettingsToggle.setTooltip (
+                "Request a MIDI sysex patch dump from the hardware device "
+                "(requires MIDI out in MIDI Setup).");
+            addAndMakeVisible (hardwareSettingsToggle);
+
+            setSize (440, 78);
+        }
+
+        void resized() override
+        {
+            auto area = getLocalBounds();
+            auto left = area.removeFromLeft (area.getWidth() / 2).reduced (0, 2);
+            auto right = area.reduced (8, 2);
+
+            calibrateToggle.setBounds (left.removeFromTop (24));
+            left.removeFromTop (4);
+            reportToggle.setBounds (left.removeFromTop (24));
+
+            settingsHeading.setBounds (right.removeFromTop (20));
+            softwareSettingsToggle.setBounds (right.removeFromTop (24));
+            right.removeFromTop (2);
+            hardwareSettingsToggle.setBounds (right.removeFromTop (24));
+        }
+
+        void setHardwareSettingsAvailable (bool available, bool preferredOn)
+        {
+            hardwareSettingsToggle.setEnabled (available);
+            hardwareSettingsToggle.setAlpha (available ? 1.0f : 0.45f);
+            hardwareSettingsToggle.setToggleState (available && preferredOn,
+                                                   juce::dontSendNotification);
+        }
+
+        juce::ToggleButton calibrateToggle;
+        juce::ToggleButton reportToggle;
+        juce::Label settingsHeading;
+        juce::ToggleButton softwareSettingsToggle;
+        juce::ToggleButton hardwareSettingsToggle;
+    };
+}
+
 TestCaseCapture::TestCaseCapture (PluginAudioEngine& audioEngine,
                                   HostConfig& hostConfig,
                                   StatusFn statusFn,
@@ -52,56 +125,54 @@ void TestCaseCapture::prompt (juce::Component* parent,
         roleBox->setSelectedItemIndex (juce::jlimit (0, 2, lastCaptureRoleIndex),
                                        juce::dontSendNotification);
 
-    auto* calibrateToggle = new juce::ToggleButton();
-    // AlertWindow paints getName() as a heading above custom components — keep
-    // the name empty and put the label only on the checkbox itself.
-    calibrateToggle->setName ({});
-    calibrateToggle->setButtonText ("Calibrate");
-    const bool storedCalibrate = HostPreferences::get().getHardwareCaptureCalibrate();
-    calibrateToggle->setTooltip (
-        utf8 ("Before recording: measure the hardware noise floor (for silence detection) "
-              "and subtract DC offset from the capture. Turn off to reuse the last silence "
-              "gate if levels are unchanged (DC removal is skipped when off)."));
-    calibrateToggle->setSize (280, 24);
-    aw->addCustomComponent (calibrateToggle);
+    auto* options = new CaptureOptionsPanel();
+    // AlertWindow paints getName() as a heading above custom components.
+    options->setName ({});
+    aw->addCustomComponent (options);
 
-    auto* reportToggle = new juce::ToggleButton();
-    reportToggle->setName ({});
-    reportToggle->setButtonText ("Generate report");
+    const bool storedCalibrate = HostPreferences::get().getHardwareCaptureCalibrate();
     const bool storedGenerateReport = HostPreferences::get().getCaptureGenerateReport();
-    reportToggle->setToggleState (storedGenerateReport, juce::dontSendNotification);
-    reportToggle->setTooltip (
-        "After a successful capture, run aufx-test compare with --write-report "
-        "for this snapshot (JSON, plots, and HTML in the stem folder).");
-    reportToggle->setSize (280, 24);
-    aw->addCustomComponent (reportToggle);
+    const bool storedSoftwareSettings = HostPreferences::get().getCaptureSoftwareSettings();
+    const bool storedHardwareSettings = HostPreferences::get().getCaptureHardwareSettings();
+    const bool midiConfigured = HostPreferences::get().getMidiOutIdentifier().isNotEmpty();
+
+    options->reportToggle.setToggleState (storedGenerateReport, juce::dontSendNotification);
+    options->softwareSettingsToggle.setToggleState (storedSoftwareSettings, juce::dontSendNotification);
+    options->setHardwareSettingsAvailable (midiConfigured, storedHardwareSettings);
 
     // Heap so the modal callback and combo onChange share the same remembered state.
     auto calibrateState = std::make_shared<bool> (storedCalibrate);
+    auto hardwareSettingsState = std::make_shared<bool> (storedHardwareSettings && midiConfigured);
 
-    auto syncCalibrateForSource = [calibrateToggle, calibrateState] (int sourceIndex)
+    auto syncCalibrateForSource = [options, calibrateState] (int sourceIndex)
     {
         const bool hardwareCapture = sourceIndex == 1 || sourceIndex == 2;
         if (hardwareCapture)
         {
-            calibrateToggle->setEnabled (true);
-            calibrateToggle->setAlpha (1.0f);
-            calibrateToggle->setToggleState (*calibrateState, juce::dontSendNotification);
+            options->calibrateToggle.setEnabled (true);
+            options->calibrateToggle.setAlpha (1.0f);
+            options->calibrateToggle.setToggleState (*calibrateState, juce::dontSendNotification);
         }
         else
         {
-            if (calibrateToggle->isEnabled())
-                *calibrateState = calibrateToggle->getToggleState();
-            calibrateToggle->setEnabled (false);
-            calibrateToggle->setAlpha (0.45f);
-            calibrateToggle->setToggleState (false, juce::dontSendNotification);
+            if (options->calibrateToggle.isEnabled())
+                *calibrateState = options->calibrateToggle.getToggleState();
+            options->calibrateToggle.setEnabled (false);
+            options->calibrateToggle.setAlpha (0.45f);
+            options->calibrateToggle.setToggleState (false, juce::dontSendNotification);
         }
     };
 
-    calibrateToggle->onClick = [calibrateToggle, calibrateState]
+    options->calibrateToggle.onClick = [options, calibrateState]
     {
-        if (calibrateToggle->isEnabled())
-            *calibrateState = calibrateToggle->getToggleState();
+        if (options->calibrateToggle.isEnabled())
+            *calibrateState = options->calibrateToggle.getToggleState();
+    };
+
+    options->hardwareSettingsToggle.onClick = [options, hardwareSettingsState]
+    {
+        if (options->hardwareSettingsToggle.isEnabled())
+            *hardwareSettingsState = options->hardwareSettingsToggle.getToggleState();
     };
 
     if (auto* sourceBox = aw->getComboBoxComponent ("source"))
@@ -125,7 +196,7 @@ void TestCaseCapture::prompt (juce::Component* parent,
     aw->enterModalState (true,
                          juce::ModalCallbackFunction::create (
                              [safeParent = juce::Component::SafePointer<juce::Component> (parent),
-                              capture = this, aw, calibrateToggle, calibrateState, reportToggle,
+                              capture = this, aw, options, calibrateState, hardwareSettingsState,
                               &sourceClips, &fixtureBox] (int result)
                              {
                                  std::unique_ptr<juce::AlertWindow> dialog (aw);
@@ -146,15 +217,30 @@ void TestCaseCapture::prompt (juce::Component* parent,
                                  bool calibrate = false;
                                  if (hardwareCapture)
                                  {
-                                     calibrate = calibrateToggle->isEnabled()
-                                                     ? calibrateToggle->getToggleState()
+                                     calibrate = options->calibrateToggle.isEnabled()
+                                                     ? options->calibrateToggle.getToggleState()
                                                      : *calibrateState;
                                      *calibrateState = calibrate;
                                      HostPreferences::get().setHardwareCaptureCalibrate (calibrate);
                                  }
 
-                                 const bool generateReport = reportToggle->getToggleState();
+                                 const bool generateReport = options->reportToggle.getToggleState();
                                  HostPreferences::get().setCaptureGenerateReport (generateReport);
+
+                                 const bool captureSoftwareSettings =
+                                     options->softwareSettingsToggle.getToggleState();
+                                 HostPreferences::get().setCaptureSoftwareSettings (captureSoftwareSettings);
+
+                                 bool captureHardwareSettings = false;
+                                 if (options->hardwareSettingsToggle.isEnabled())
+                                 {
+                                     captureHardwareSettings = options->hardwareSettingsToggle.getToggleState();
+                                     *hardwareSettingsState = captureHardwareSettings;
+                                 }
+                                 HostPreferences::get().setCaptureHardwareSettings (
+                                     options->hardwareSettingsToggle.isEnabled()
+                                         ? captureHardwareSettings
+                                         : *hardwareSettingsState);
 
                                  capture->lastCaptureDescription = description;
                                  capture->lastCaptureRoleIndex = roleIndex;
@@ -163,7 +249,9 @@ void TestCaseCapture::prompt (juce::Component* parent,
 
                                  const auto fixtureFile = sourceClips.getSelectedFile (fixtureBox);
                                  capture->capture (description, roleIndex, sourceIndex, calibrate,
-                                                   generateReport, fixtureFile, safeParent.getComponent());
+                                                   generateReport, captureSoftwareSettings,
+                                                   captureHardwareSettings, fixtureFile,
+                                                   safeParent.getComponent());
                              }),
                          true);
 }
@@ -171,6 +259,8 @@ void TestCaseCapture::prompt (juce::Component* parent,
 void TestCaseCapture::capture (const juce::String& snapshotName, int roleIndex, int sourceIndex,
                                bool calibrateNoiseFloor,
                                bool generateReport,
+                               bool captureSoftwareSettings,
+                               bool captureHardwareSettings,
                                const juce::File& fixtureFile,
                                juce::Component* progressParent)
 {
@@ -193,6 +283,8 @@ void TestCaseCapture::capture (const juce::String& snapshotName, int roleIndex, 
     request.fixtureFile = fixtureFile;
     request.progressParent = progressParent;
     request.calibrateNoiseFloor = calibrateNoiseFloor;
+    request.captureSoftwareSettings = captureSoftwareSettings;
+    request.captureHardwareSettings = captureHardwareSettings;
 
     CapturePipelineResult result;
     juce::String error;
@@ -209,16 +301,13 @@ void TestCaseCapture::capture (const juce::String& snapshotName, int roleIndex, 
     snap.sourceClipName = request.fixtureFile.getFileNameWithoutExtension();
     snap.inputFile = request.fixtureFile;
     if (result.capturedPlugin)
-    {
         snap.outputFile = result.paths.softwareOutput;
+    if (result.paths.presetFile.existsAsFile())
         snap.presetFile = result.paths.presetFile;
-    }
     if (result.capturedHardware)
-    {
         snap.hardwareOutputFile = result.paths.hardwareOutput;
-        if (result.capturedSysex)
-            snap.sysexFile = result.paths.sysexFile;
-    }
+    if (result.capturedSysex)
+        snap.sysexFile = result.paths.sysexFile;
     snap.pluginPath = getCurrentPlugin().identifierForLoad();
     snap.notes = "Captured from AU Effects Explorer";
 

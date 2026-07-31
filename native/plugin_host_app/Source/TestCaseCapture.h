@@ -37,6 +37,8 @@ public:
     void capture (const juce::String& snapshotName, int roleIndex, int sourceIndex,
                   bool calibrateNoiseFloor,
                   bool generateReport,
+                  bool captureSoftwareSettings,
+                  bool captureHardwareSettings,
                   const juce::File& fixtureFile,
                   juce::Component* progressParent);
 

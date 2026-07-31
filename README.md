@@ -16,29 +16,26 @@ Compare plugin output against reference waveforms using objective, repeatable me
 
 ## Install
 
-Use a current Homebrew Python (not an old pyenv build). pyenv 3.9.x on Apple Silicon often breaks after OpenSSL upgrades (`ssl` module missing → pip TLS errors and ancient pip that cannot do `pyproject.toml` editable installs).
+**Requirements:** macOS 13+, Xcode Command Line Tools, CMake ≥ 3.22, Python ≥ 3.10 (with a working `ssl` module).
 
 ```bash
-# Prefer an explicit Homebrew interpreter
-/opt/homebrew/opt/python@3.13/bin/python3.13 -m venv .venv
-# or: /opt/homebrew/bin/python3 -m venv .venv
-
-source .venv/bin/activate
-python -m pip install -U pip
-pip install -e ".[dev]"
+git clone --recurse-submodules <repo-url> aufx-test
+cd aufx-test
+./scripts/bootstrap.sh
 ```
 
-If `source .venv/bin/activate` or `pip` fails with SSL / permission errors:
+That initializes the pinned JUCE submodule (`native/JUCE` @ 8.0.14), creates `.venv`, installs the Python package, seeds `host.config.json` if missing, and builds `plugin_renderer` + **AU Effects Explorer**.
+
+Manual alternative (Apple Silicon Homebrew example):
 
 ```bash
-rm -rf .venv
 /opt/homebrew/opt/python@3.13/bin/python3.13 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 pip install -e ".[dev]"
 ```
 
-Check you are not on a broken pyenv shim: `which python` should point at `.venv/bin/python`, and `python -c "import ssl; print(ssl.OPENSSL_VERSION)"` should succeed.
+If `source .venv/bin/activate` or `pip` fails with SSL / permission errors, recreate the venv with a current Homebrew Python (not an old pyenv 3.9.x build). Check: `which python` should point at `.venv/bin/python`, and `python -c "import ssl; print(ssl.OPENSSL_VERSION)"` should succeed.
 ## Quick start
 
 ```python
@@ -72,11 +69,7 @@ See [docs/ci-integration.md](docs/ci-integration.md) for build-pipeline integrat
 Experiment in the **AU Effects Explorer** host, or capture from a DAW:
 
 ```bash
-# Build the native host (no Python required to launch)
-cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
-cmake --build native/build --target plugin_host_app
-
-# Recommended: open the app with the repo config
+# After ./scripts/bootstrap.sh (or build plugin_host_app yourself)
 APP="native/build/plugin_host_app/plugin_host_app_artefacts/Release/AU Effects Explorer.app"
 open "$APP" --args --config "$(pwd)/host.config.json" --project-root "$(pwd)"
 
@@ -100,18 +93,18 @@ aufx-test session export-presets "MyEffect" -o share/with-developer/
 
 Headless replay uses `SubprocessPluginHost` with the JUCE `plugin_renderer` CLI and `.aupreset` state blobs.
 
-Build the renderer:
-
-```bash
-git submodule add https://github.com/juce-framework/JUCE.git native/JUCE
-cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
-cmake --build native/build --target plugin_renderer
-cmake --build native/build --target plugin_host_app
-```
-
 See [native/README.md](native/README.md) and [docs/plugin-renderer.md](docs/plugin-renderer.md).
 
 See [docs/manual-exploration.md](docs/manual-exploration.md) for the full workflow.
+
+### Share a Mac build
+
+```bash
+./scripts/package_mac_app.sh
+# → dist/AU-Effects-Explorer-macOS.zip  (universal arm64 + x86_64, macOS 13+)
+```
+
+See [docs/mac-app-distribution.md](docs/mac-app-distribution.md).
 
 ## Running tests
 

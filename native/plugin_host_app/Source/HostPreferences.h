@@ -30,6 +30,8 @@ public:
     static constexpr const char* keyHardwareCaptureCalibrate = "hardwareCaptureCalibrate";
     static constexpr const char* keyHardwareCaptureSilenceThresholdDb = "hardwareCaptureSilenceThresholdDb";
     static constexpr const char* keyCaptureGenerateReport = "captureGenerateReport";
+    static constexpr const char* keyCaptureSoftwareSettings = "captureSoftwareSettings";
+    static constexpr const char* keyCaptureHardwareSettings = "captureHardwareSettings";
     static constexpr int defaultPluginScanTimeoutMs = 15000;
     static constexpr int minPluginScanTimeoutMs = 5000;
     static constexpr int maxPluginScanTimeoutMs = 300000;
@@ -64,6 +66,10 @@ public:
     double getHardwareCaptureSilenceThresholdDb (double defaultThresholdDb = -60.0) const;
     /** When true (default), run aufx-test compare --write-report after capture. */
     bool getCaptureGenerateReport() const;
+    /** When true (default), save a .aupreset from the live plugin state. */
+    bool getCaptureSoftwareSettings() const;
+    /** When true (default), request a hardware sysex patch dump. */
+    bool getCaptureHardwareSettings() const;
     void setExplorationDataRootPref (const juce::String& path);
     void setConfigPathPref (const juce::String& path);
     void setAllowInstrumentAudioInput (bool allow);
@@ -75,6 +81,8 @@ public:
     void setHardwareCaptureCalibrate (bool shouldCalibrate);
     void setHardwareCaptureSilenceThresholdDb (double thresholdDb);
     void setCaptureGenerateReport (bool shouldGenerate);
+    void setCaptureSoftwareSettings (bool shouldCapture);
+    void setCaptureHardwareSettings (bool shouldCapture);
     void clearPrefs();
 
     /** Read org-level defaults from /Library/Preferences (macOS). */

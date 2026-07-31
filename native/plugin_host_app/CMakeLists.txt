@@ -103,7 +103,7 @@ target_sources(plugin_host_app
 set_source_files_properties("${AUFX_GEN_DIR}/AppVersion.cpp" "${AUFX_GEN_DIR}/AppVersion.h"
     PROPERTIES GENERATED TRUE)
 
-# Bump build number before compiling the host (PRE_BUILD is unreliable on Make/Ninja).
+# Regenerate AppVersion.h/.cpp from VERSION (does not increment; packaging bumps).
 add_custom_target(plugin_host_app_version
     COMMAND ${CMAKE_COMMAND}
         -DAUFX_VERSION_FILE=${AUFX_VERSION_FILE}
@@ -112,7 +112,7 @@ add_custom_target(plugin_host_app_version
     BYPRODUCTS
         ${AUFX_GEN_DIR}/AppVersion.h
         ${AUFX_GEN_DIR}/AppVersion.cpp
-    COMMENT "Bumping AU Effects Explorer build number"
+    COMMENT "Generating AU Effects Explorer version headers"
     VERBATIM)
 add_dependencies(plugin_host_app plugin_host_app_version)
 
