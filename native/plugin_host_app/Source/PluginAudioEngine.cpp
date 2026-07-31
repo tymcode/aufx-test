@@ -495,17 +495,22 @@ void PluginAudioEngine::setHardwareMode (bool shouldUseHardware)
 bool PluginAudioEngine::autoDetectLatency (const juce::File& impulseFile,
                                            int& outLatencySamples,
                                            float& outLoopGainDb,
-                                           juce::String& error)
+                                           juce::String& error,
+                                           std::function<void (int current, int total)> onProgress)
 {
-    return hardwareLoop.autoDetectLatency (impulseFile, outLatencySamples, outLoopGainDb, error);
+    return hardwareLoop.autoDetectLatency (impulseFile, outLatencySamples, outLoopGainDb,
+                                           error, std::move (onProgress));
 }
 
 bool PluginAudioEngine::measureHardwareNoiseFloor (double listenSeconds,
                                                    float& outPeakDb,
                                                    float& outRmsDb,
+                                                   float& outDcOffsetL,
+                                                   float& outDcOffsetR,
                                                    juce::String& error)
 {
-    return hardwareLoop.measureReturnNoiseFloor (listenSeconds, outPeakDb, outRmsDb, error);
+    return hardwareLoop.measureReturnNoiseFloor (listenSeconds, outPeakDb, outRmsDb,
+                                                 outDcOffsetL, outDcOffsetR, error);
 }
 
 bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
@@ -516,11 +521,14 @@ bool PluginAudioEngine::captureHardwareToFile (const juce::File& fixtureFile,
                                                juce::String& error,
                                                const std::atomic<bool>* stopRequested,
                                                const std::atomic<bool>* abortRequested,
-                                               double targetDurationSeconds)
+                                               double targetDurationSeconds,
+                                               float dcOffsetL,
+                                               float dcOffsetR)
 {
     return hardwareLoop.captureHardwareToFile (fixtureFile, outputFile,
                                                tailSilenceSeconds, silenceThresholdDb, maxTailSeconds,
-                                               error, stopRequested, abortRequested, targetDurationSeconds);
+                                               error, stopRequested, abortRequested, targetDurationSeconds,
+                                               dcOffsetL, dcOffsetR);
 }
 
 void PluginAudioEngine::clearOutputChannels (float* const* outputChannelData, int numOutputChannels, int numSamples)
@@ -749,16 +757,22 @@ void PluginAudioEngine::applyBypassCrossfade (juce::AudioBuffer<float>& wetBuffe
 /**
  * The realtime render callback. Signal flow per block:
  *
- *   fixture clip --> send gain --+--> [send pair] --> external FX box
- *                                |                        |
- *                                +--> plugin ---+     [return pair]
- *                                               |         |
- *                                               |   latency delay line
- *                                               v         v
+ *   fixture clip --> send gain --+--> plugin ---+--> software monitor
+ *                                |              |
+ *                                |         (hardware mode / setup Test only)
+ *                                +--> [send pair] --> external FX box
+ *                                                         |
+ *                                                     [return pair]
+ *                                                         |
+ *                                                   latency delay line
+ *                                                         v
  *                                     hardware crossfade (sw <-> hw)
  *                                               |
  *                                     monitor pair / monitor FIFO
  *
+ * In Use Software mode the send pair stays silent so the hardware box is not
+ * driven. Hardware mode (and Hardware Audio Setup Test, which mutes the
+ * software effect) drive the send pair with the pre-plugin fixture.
  * Two special "loop ops" (latency calibration and hardware capture) hijack
  * the whole callback: they stream a pre-rendered buffer straight to the send
  * pair and record the raw return, skipping the plugin entirely, so captured
@@ -908,6 +922,8 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
             }
             hardwareLoop.storeSendMeters (peakL, peakR,
                                           (float) std::sqrt (sumSq / (double) juce::jmax (1, numSamples * 2)));
+            softwareSendPeakL.store (peakL);
+            softwareSendPeakR.store (peakR);
         }
 
         juce::AudioBuffer<float> monitorBuffer (2, numSamples);
@@ -920,21 +936,45 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                 monitorBuffer.clear (ch, 0, numSamples);
         }
 
+        {
+            float retL = 0.0f;
+            float retR = 0.0f;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                retL = juce::jmax (retL, std::abs (monitorBuffer.getSample (0, i)));
+                retR = juce::jmax (retR, std::abs (monitorBuffer.getSample (1, i)));
+            }
+            softwareReturnPeakL.store (retL);
+            softwareReturnPeakR.store (retR);
+        }
+
         if (loopConfigured)
         {
             juce::AudioBuffer<float> hardwareMonitor (2, numSamples);
             hardwareLoop.readDelayedReturn (hardwareMonitor, numSamples);
             hardwareLoop.applyMonitorCrossfade (monitorBuffer, hardwareMonitor, numSamples);
 
-            const int sendL = hardwareSettings.sendChannelL;
-            const int sendR = hardwareSettings.sendChannelR;
+            // Only drive the analog send when monitoring hardware (or when
+            // Hardware Audio Setup mutes the plugin for Test). Software mode
+            // must keep the send pair silent so the box is not fed dry audio.
+            const bool driveHardwareSend = hardwareLoop.isHardwareMode()
+                                           || hardwareLoop.isSoftwareEffectMuted();
+            if (driveHardwareSend)
+            {
+                const int sendL = hardwareSettings.sendChannelL;
+                const int sendR = hardwareSettings.sendChannelR;
 
-            if (sendL >= 0 && sendL < numOutputChannels && outputChannelData[sendL] != nullptr)
-                juce::FloatVectorOperations::copy (outputChannelData[sendL],
-                                                   sendBuffer.getReadPointer (0), numSamples);
-            if (sendR >= 0 && sendR < numOutputChannels && outputChannelData[sendR] != nullptr)
-                juce::FloatVectorOperations::copy (outputChannelData[sendR],
-                                                   sendBuffer.getReadPointer (1), numSamples);
+                if (sendL >= 0 && sendL < numOutputChannels && outputChannelData[sendL] != nullptr)
+                    juce::FloatVectorOperations::copy (outputChannelData[sendL],
+                                                       sendBuffer.getReadPointer (0), numSamples);
+                if (sendR >= 0 && sendR < numOutputChannels && outputChannelData[sendR] != nullptr)
+                    juce::FloatVectorOperations::copy (outputChannelData[sendR],
+                                                       sendBuffer.getReadPointer (1), numSamples);
+            }
+            else
+            {
+                hardwareLoop.storeSendMeters (0.0f, 0.0f, 0.0f);
+            }
 
             hardwareLoop.writeMonitorSamples (monitorBuffer, numSamples,
                                               outputChannelData, numOutputChannels, monitorOutput);

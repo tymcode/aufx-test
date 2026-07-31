@@ -3,6 +3,7 @@
  */
 #include "MainWindow.h"
 #include "MainContent.h"
+#include "LevelMetersWindow.h"
 
 #if JUCE_MAC
  #include "LightsOutManager_mac.h"
@@ -56,6 +57,7 @@ MainWindow::MainWindow (HostConfig hostConfig)
 MainWindow::~MainWindow()
 {
     lightsOut.release();
+    levelMetersWindow.reset();
 
 #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (nullptr);
@@ -110,6 +112,44 @@ void MainWindow::toggleHardwareModeFromMenu()
                                   });
 }
 
+void MainWindow::toggleLevelMeters()
+{
+    if (engine == nullptr)
+        return;
+
+    if (levelMetersWindow != nullptr && levelMetersWindow->isVisible())
+    {
+        levelMetersWindow->setVisible (false);
+        levelMetersWindow.reset();
+        menuItemsChanged();
+        syncNativeMenuShortcuts();
+        return;
+    }
+
+    levelMetersWindow = std::make_unique<LevelMetersWindow> (
+        *engine,
+        config.fixturesDir,
+        config.projectRoot.getChildFile ("calibration"),
+        config.pythonCli,
+        [safe = juce::Component::SafePointer<MainWindow> (this)]
+        {
+            if (safe != nullptr)
+            {
+                safe->levelMetersWindow.reset();
+                safe->menuItemsChanged();
+                safe->syncNativeMenuShortcuts();
+            }
+        },
+        [safe = juce::Component::SafePointer<MainWindow> (this)] (const juce::KeyPress& key) -> bool
+        {
+            if (safe == nullptr)
+                return false;
+            return safe->handleGlobalKeyPress (key);
+        });
+    menuItemsChanged();
+    syncNativeMenuShortcuts();
+}
+
 void MainWindow::openHardwareAudioSetup()
 {
     if (auto* mainContent = dynamic_cast<MainContent*> (getContentComponent()))
@@ -144,17 +184,34 @@ void MainWindow::syncNativeMenuShortcuts()
 #if JUCE_MAC
     const bool lightsTicked = lightsOut.isEnabled();
     const bool hwTicked = engine != nullptr && engine->isHardwareMode();
-    juce::Timer::callAfterDelay (0, [lightsTicked, hwTicked]
+    const bool metersTicked = levelMetersWindow != nullptr && levelMetersWindow->isVisible();
+    juce::Timer::callAfterDelay (0, [lightsTicked, hwTicked, metersTicked]
     {
         lightsOutSyncMenuItem (lightsTicked);
         nativeSyncMenuItem ("Use Hardware", "u", true, false, hwTicked, true);
+        nativeSyncMenuItem ("Level Meters", "m", true, false, metersTicked, true);
+        nativeSyncMenuItem ("Capture Test Case...", "t", true, false, false, false);
+        nativeSyncMenuItem ("Rescan Audio Units...", "r", true, false, false, false);
+        nativeSyncMenuItem ("Rescan Source Clips", "r", true, true, false, false);
     });
 #endif
 }
 
-bool MainWindow::keyPressed (const juce::KeyPress& key, juce::Component* originatingComponent)
+bool MainWindow::handleGlobalKeyPress (const juce::KeyPress& key)
 {
-    juce::ignoreUnused (originatingComponent);
+    auto* mainContent = dynamic_cast<MainContent*> (getContentComponent());
+
+    if (key.isKeyCode (juce::KeyPress::spaceKey))
+    {
+        // MainContent also handles Space when the main window is focused; this
+        // path covers Level Meters (and any other forwarder). Skip when typing.
+        if (mainContent != nullptr && ! MainContent::isEditableFieldFocused())
+        {
+            mainContent->togglePlayback();
+            return true;
+        }
+        return false;
+    }
 
     if (key == juce::KeyPress ('l', juce::ModifierKeys::commandModifier, 0))
     {
@@ -168,15 +225,57 @@ bool MainWindow::keyPressed (const juce::KeyPress& key, juce::Component* origina
         return true;
     }
 
+    if (key == juce::KeyPress ('m', juce::ModifierKeys::commandModifier, 0))
+    {
+        toggleLevelMeters();
+        return true;
+    }
+
+    if (key == juce::KeyPress ('t', juce::ModifierKeys::commandModifier, 0))
+    {
+        if (mainContent != nullptr)
+        {
+            mainContent->openCaptureTestCase();
+            return true;
+        }
+        return false;
+    }
+
+    if (key == juce::KeyPress ('r', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0))
+    {
+        if (mainContent != nullptr)
+        {
+            mainContent->rescanSourceClips();
+            return true;
+        }
+        return false;
+    }
+
+    if (key == juce::KeyPress ('r', juce::ModifierKeys::commandModifier, 0))
+    {
+        if (mainContent != nullptr)
+        {
+            mainContent->rescanPlugins();
+            return true;
+        }
+        return false;
+    }
+
     return false;
+}
+
+bool MainWindow::keyPressed (const juce::KeyPress& key, juce::Component* originatingComponent)
+{
+    juce::ignoreUnused (originatingComponent);
+    return handleGlobalKeyPress (key);
 }
 
 juce::StringArray MainWindow::getMenuBarNames()
 {
 #if JUCE_MAC
-    return { "Session", "Plugins" };
+    return { "Session", "View", "Plugins" };
 #else
-    return { "AU Effects Explorer", "Session", "Plugins" };
+    return { "AU Effects Explorer", "Session", "View", "Plugins" };
 #endif
 }
 
@@ -187,7 +286,13 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
 
     auto addSessionItems = [this, &menu]()
     {
-        menu.addItem (menuCaptureTestCase, "Capture Test Case...");
+        {
+            juce::PopupMenu::Item item;
+            item.itemID = menuCaptureTestCase;
+            item.text = "Capture Test Case...";
+            item.shortcutKeyDescription = "Cmd+T";
+            menu.addItem (std::move (item));
+        }
         menu.addSeparator();
         menu.addItem (menuHardwareAudioSetup, "Hardware Audio Setup...");
         menu.addItem (menuMidiSetup, "MIDI Setup...");
@@ -211,16 +316,43 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
         }
     };
 
+    auto addViewItems = [this, &menu]()
+    {
+        juce::PopupMenu::Item item;
+        item.itemID = menuLevelMeters;
+        item.text = "Level Meters";
+        item.isTicked = levelMetersWindow != nullptr && levelMetersWindow->isVisible();
+        item.shortcutKeyDescription = "Cmd+M";
+        menu.addItem (std::move (item));
+    };
+
+    auto addPluginsItems = [&menu]()
+    {
+        menu.addItem (menuAddPlugin, "Add Plugin...");
+        {
+            juce::PopupMenu::Item item;
+            item.itemID = menuRescanPlugins;
+            item.text = "Rescan Audio Units...";
+            item.shortcutKeyDescription = "Cmd+R";
+            menu.addItem (std::move (item));
+        }
+        menu.addSeparator();
+        {
+            juce::PopupMenu::Item item;
+            item.itemID = menuRescanSourceClips;
+            item.text = "Rescan Source Clips";
+            item.shortcutKeyDescription = "Cmd+Shift+R";
+            menu.addItem (std::move (item));
+        }
+    };
+
 #if JUCE_MAC
     if (topLevelMenuIndex == 0)
         addSessionItems();
     else if (topLevelMenuIndex == 1)
-    {
-        menu.addItem (menuAddPlugin, "Add Plugin...");
-        menu.addItem (menuRescanPlugins, "Rescan Audio Units...");
-        menu.addSeparator();
-        menu.addItem (menuRescanSourceClips, "Rescan Source Clips");
-    }
+        addViewItems();
+    else if (topLevelMenuIndex == 2)
+        addPluginsItems();
 #else
     if (topLevelMenuIndex == 0)
     {
@@ -231,12 +363,9 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
     else if (topLevelMenuIndex == 1)
         addSessionItems();
     else if (topLevelMenuIndex == 2)
-    {
-        menu.addItem (menuAddPlugin, "Add Plugin...");
-        menu.addItem (menuRescanPlugins, "Rescan Audio Units...");
-        menu.addSeparator();
-        menu.addItem (menuRescanSourceClips, "Rescan Source Clips");
-    }
+        addViewItems();
+    else if (topLevelMenuIndex == 3)
+        addPluginsItems();
 #endif
 
     return menu;
@@ -266,6 +395,7 @@ void MainWindow::menuItemSelected (int menuItemID, int topLevelMenuIndex)
                                              case menuHardwareAudioSetup:  window->openHardwareAudioSetup(); break;
                                              case menuMidiSetup:           window->openMidiSetup(); break;
                                              case menuUseHardware:         window->toggleHardwareModeFromMenu(); break;
+                                             case menuLevelMeters:         window->toggleLevelMeters(); break;
                                              case menuAddPlugin:           mainContent->openAddPlugin(); break;
                                              case menuRescanPlugins:       mainContent->rescanPlugins(); break;
                                              case menuRescanSourceClips:   mainContent->rescanSourceClips(); break;

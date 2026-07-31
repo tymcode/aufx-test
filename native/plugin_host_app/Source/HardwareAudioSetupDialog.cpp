@@ -10,7 +10,6 @@
  */
 #include "HardwareAudioSetupDialog.h"
 #include "HardwareVuMeters.h"
-#include "HostDialog.h"
 #include "HostPreferences.h"
 #include "Utf8.h"
 
@@ -113,13 +112,17 @@ namespace
             monitorOutputLabel.setText ("Monitor output", juce::dontSendNotification);
             bufferLabel.setText ("Buffer size", juce::dontSendNotification);
             latencyLabel.setText ("Latency (samples)", juce::dontSendNotification);
-            noteLabel.setText ("Auto-detect plays fixtures/impulse.wav. Set the hardware box to a dry/bypass program first.",
+            noteLabel.setText ("Auto-detect plays fixtures/impulse.wav five times and averages the latency. Set the hardware box to a dry/bypass program first.",
                                juce::dontSendNotification);
             noteLabel.setFont (juce::FontOptions (12.0f));
             noteLabel.setColour (juce::Label::textColourId, juce::Colours::grey);
+            testHintLabel.setText ("Click Test to send the selected Source Clip through the hardware loop.",
+                                   juce::dontSendNotification);
+            testHintLabel.setFont (juce::FontOptions (12.0f));
+            testHintLabel.setColour (juce::Label::textColourId, juce::Colours::grey);
 
             for (auto* l : { &deviceLabel, &sendLabel, &returnLabel, &monitorOutputLabel, &monitorLabel,
-                             &bufferLabel, &latencyLabel, &noteLabel, &statusLabel })
+                             &bufferLabel, &latencyLabel, &noteLabel, &statusLabel, &testHintLabel })
                 addAndMakeVisible (l);
 
             for (auto* c : { &deviceBox, &sendBox, &returnBox, &monitorOutputBox, &monitorBox, &bufferBox })
@@ -132,11 +135,8 @@ namespace
             latencyEditor.setInputRestrictions (8, "0123456789");
             latencyEditor.setText ("0");
 
-            testButton.setButtonText ("Test");
             autoDetectButton.setButtonText ("Auto-detect");
-            testButton.addListener (this);
             autoDetectButton.addListener (this);
-            addAndMakeVisible (testButton);
             addAndMakeVisible (autoDetectButton);
             addAndMakeVisible (vuPanel);
 
@@ -173,6 +173,39 @@ namespace
             return s;
         }
 
+        bool isTesting() const { return testing; }
+
+        /** Toggle hardware-loop Test playback. Returns the new testing state. */
+        bool toggleTest()
+        {
+            testing = ! testing;
+
+            if (testing)
+            {
+                auto settings = getSettings();
+                engine.setHardwareLoopSettings (settings);
+                juce::String error;
+                engine.stopAudioDevice();
+                if (! engine.startAudioDevice (error))
+                {
+                    testing = false;
+                    statusLabel.setText ("Could not open device: " + error, juce::dontSendNotification);
+                    return false;
+                }
+
+                engine.playFixture();
+                statusLabel.setText (utf8 ("Sending current source clip to the send pair…"),
+                                     juce::dontSendNotification);
+            }
+            else
+            {
+                engine.stopFixture();
+                statusLabel.setText ("Test stopped", juce::dontSendNotification);
+            }
+
+            return testing;
+        }
+
         void resized() override
         {
             auto area = getLocalBounds().reduced (8);
@@ -195,15 +228,18 @@ namespace
             place (row (28), monitorOutputLabel, monitorOutputBox);
             place (row (28), monitorLabel, monitorBox);
             place (row (28), bufferLabel, bufferBox);
-            place (row (28), latencyLabel, latencyEditor);
 
-            auto buttons = row (28);
-            testButton.setBounds (buttons.removeFromLeft (90));
-            buttons.removeFromLeft (8);
-            autoDetectButton.setBounds (buttons.removeFromLeft (120));
+            {
+                auto r = row (28);
+                latencyLabel.setBounds (r.removeFromLeft (180));
+                autoDetectButton.setBounds (r.removeFromRight (120));
+                r.removeFromRight (8);
+                latencyEditor.setBounds (r);
+            }
 
             noteLabel.setBounds (row (36));
             statusLabel.setBounds (row (36));
+            testHintLabel.setBounds (row (28));
             vuPanel.setBounds (area);
         }
 
@@ -390,37 +426,6 @@ namespace
 
         void buttonClicked (juce::Button* button) override
         {
-            if (button == &testButton)
-            {
-                testing = ! testing;
-                testButton.setButtonText (testing ? "Stop Test" : "Test");
-
-                if (testing)
-                {
-                    auto settings = getSettings();
-                    engine.setHardwareLoopSettings (settings);
-                    juce::String error;
-                    engine.stopAudioDevice();
-                    if (! engine.startAudioDevice (error))
-                    {
-                        testing = false;
-                        testButton.setButtonText ("Test");
-                        statusLabel.setText ("Could not open device: " + error, juce::dontSendNotification);
-                        return;
-                    }
-
-                    engine.playFixture();
-                    statusLabel.setText (utf8 ("Sending current source clip to the send pair…"),
-                                         juce::dontSendNotification);
-                }
-                else
-                {
-                    engine.stopFixture();
-                    statusLabel.setText ("Test stopped", juce::dontSendNotification);
-                }
-                return;
-            }
-
             if (button == &autoDetectButton)
             {
                 const auto impulse = fixturesDir.getChildFile ("impulse.wav");
@@ -441,10 +446,19 @@ namespace
                     return;
                 }
 
-                statusLabel.setText (utf8 ("Detecting latency with impulse.wav…"), juce::dontSendNotification);
+                statusLabel.setText (utf8 ("Detecting latency…"), juce::dontSendNotification);
                 int latency = 0;
                 float gainDb = 0.0f;
-                if (! engine.autoDetectLatency (impulse, latency, gainDb, error))
+                if (! engine.autoDetectLatency (
+                        impulse, latency, gainDb, error,
+                        [this] (int current, int total)
+                        {
+                            statusLabel.setText ("Detecting latency ("
+                                                    + juce::String (current) + "/"
+                                                    + juce::String (total) + utf8 (")…"),
+                                                juce::dontSendNotification);
+                            statusLabel.repaint();
+                        }))
                 {
                     statusLabel.setText ("Auto-detect failed: " + error, juce::dontSendNotification);
                     return;
@@ -468,10 +482,10 @@ namespace
         PluginAudioEngine& engine;
         juce::File fixturesDir;
         juce::Label deviceLabel, sendLabel, returnLabel, monitorOutputLabel, monitorLabel, bufferLabel, latencyLabel;
-        juce::Label noteLabel, statusLabel;
+        juce::Label noteLabel, statusLabel, testHintLabel;
         juce::ComboBox deviceBox, sendBox, returnBox, monitorOutputBox, monitorBox, bufferBox;
         juce::TextEditor latencyEditor;
-        juce::TextButton testButton, autoDetectButton;
+        juce::TextButton autoDetectButton;
         HardwareLoopMeterPanel vuPanel { engine };
         bool testing { false };
     };
@@ -494,13 +508,28 @@ bool showHardwareAudioSetupDialog (PluginAudioEngine& engine,
 
     HardwareAudioSetupPanel panel (engine, fixturesDir);
 
-    const int result = HostDialog::runCustomPanelModal (
-            "Hardware Audio Setup",
-            "Select the CoreAudio interface and stereo pairs for the hardware insert loop.\n"
-            "For screen recording, route Monitor output to your Multi-Output Device "
-            "(or System Default Output).",
-            panel,
-            centreAround);
+    // Test lives on the AlertWindow button row with Save/Cancel. Clicking it
+    // exits the modal loop, so re-enter until Save or Cancel.
+    juce::AlertWindow window ("Hardware Audio Setup",
+                              "Select the interface and stereo pairs to test external hardware.\n",
+                              juce::MessageBoxIconType::NoIcon,
+                              centreAround);
+    window.addCustomComponent (&panel);
+    window.addButton ("Test", 2);
+    window.addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    int result = 0;
+    for (;;)
+    {
+        result = window.runModalLoop();
+        if (result != 2)
+            break;
+
+        panel.toggleTest();
+        if (auto* testBtn = window.getButton (0))
+            testBtn->setButtonText (panel.isTesting() ? "Stop Test" : "Test");
+    }
 
     // Cancel (and any other non-Save exit) must stop a running Test — otherwise
     // the fixture keeps playing through the send pair until the next Save

@@ -1,5 +1,6 @@
 #include "OfflineCapture.h"
 #include "AudioBufferUtils.h"
+#include <cmath>
 
 namespace
 {
@@ -69,9 +70,20 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
     const int tailSilenceSamples = (int) std::ceil (options.tailSilenceSeconds * effectiveRate);
     const int maxTailSamples = (int) std::ceil (options.maxTailSeconds * effectiveRate);
 
-    // Match the realtime host: process at the wider of plugin IO / stereo so
-    // multi-bus AUs get allocated channel pointers (null channels in
-    // renderGetInput are a common AU crash when the buffer is too narrow).
+    // Offline on a live plugin instance that also serves the device callback:
+    // never releaseResources here (the engine owns that), always mark
+    // non-realtime, and keep a fixed block size — variable last-block sizes
+    // and a second releaseResources() have crashed AUs (e.g. QDV1) on the
+    // next capture.
+    const bool wasNonRealtime = plugin.isNonRealtime();
+    const bool wasSuspended = plugin.isSuspended();
+    plugin.setNonRealtime (true);
+    plugin.suspendProcessing (false);
+    plugin.prepareToPlay (effectiveRate, blockSize);
+
+    // Channel count must be taken *after* prepareToPlay — bus layouts (and
+    // therefore getTotalNum*Channels) often change then. Undersized buffers
+    // leave null channel pointers that crash AU renderGetInput's memcpy.
     const int processChannels = juce::jmax (2,
                                             plugin.getTotalNumInputChannels(),
                                             plugin.getTotalNumOutputChannels(),
@@ -87,20 +99,14 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
     const int numSamples = inputBuffer.getNumSamples();
     if (numSamples <= 0)
     {
+        plugin.suspendProcessing (wasSuspended);
+        plugin.setNonRealtime (wasNonRealtime);
         error = "Resampled input is empty";
         return false;
     }
 
-    // Offline on a live plugin instance that also serves the device callback:
-    // never releaseResources here (the engine owns that), always mark
-    // non-realtime, and keep a fixed block size — variable last-block sizes
-    // and a second releaseResources() have crashed AUs (e.g. QDV1) on the
-    // next capture.
-    const bool wasNonRealtime = plugin.isNonRealtime();
-    const bool wasSuspended = plugin.isSuspended();
-    plugin.setNonRealtime (true);
-    plugin.suspendProcessing (false);
-    plugin.prepareToPlay (effectiveRate, blockSize);
+    if (std::abs (options.inputGainDb) > 1.0e-6f)
+        inputBuffer.applyGain (juce::Decibels::decibelsToGain (options.inputGainDb));
 
     juce::AudioBuffer<float> outputBuffer (processChannels, 0);
     juce::MidiBuffer midi;
@@ -115,7 +121,35 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
             block.copyFrom (ch, 0, inputBuffer, ch, offset, currentBlock);
 
         midi.clear();
-        plugin.processBlock (block, midi);
+        if (! options.bypassPlugin)
+        {
+            const float wetMix = juce::jlimit (0.0f, 1.0f, options.mixAmount);
+            const bool blendDry = wetMix < 1.0f;
+            juce::AudioBuffer<float> dryBlock;
+            if (blendDry)
+            {
+                dryBlock.setSize (processChannels, blockSize, false, false, true);
+                dryBlock.clear();
+                for (int ch = 0; ch < processChannels; ++ch)
+                    dryBlock.copyFrom (ch, 0, block, ch, 0, currentBlock);
+            }
+
+            // Always process a full prepared block (silence-padded). Partial
+            // last-block sizes have crashed some AUs in renderGetInput.
+            plugin.processBlock (block, midi);
+
+            if (blendDry)
+            {
+                const float dryMix = 1.0f - wetMix;
+                for (int ch = 0; ch < processChannels; ++ch)
+                {
+                    auto* wet = block.getWritePointer (ch);
+                    const auto* dry = dryBlock.getReadPointer (ch);
+                    for (int i = 0; i < currentBlock; ++i)
+                        wet[i] = dry[i] * dryMix + wet[i] * wetMix;
+                }
+            }
+        }
 
         if (currentBlock == blockSize)
         {
@@ -130,35 +164,39 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
         }
     }
 
-    int consecutiveSilentSamples = 0;
-    int tailSamplesRendered = 0;
-    bool tailSilenceReached = false;
-
-    while (tailSamplesRendered < maxTailSamples)
+    // Dry-thru has no reverb tail; skip the silence-hold loop.
+    if (! options.bypassPlugin)
     {
-        block.clear();
-        midi.clear();
-        plugin.processBlock (block, midi);
-        AudioBufferUtils::appendBlock (outputBuffer, block);
+        int consecutiveSilentSamples = 0;
+        int tailSamplesRendered = 0;
+        bool tailSilenceReached = false;
 
-        tailSamplesRendered += blockSize;
-
-        if (AudioBufferUtils::blockPeak (block) < silenceThreshold)
-            consecutiveSilentSamples += blockSize;
-        else
-            consecutiveSilentSamples = 0;
-
-        if (consecutiveSilentSamples >= tailSilenceSamples)
+        while (tailSamplesRendered < maxTailSamples)
         {
-            tailSilenceReached = true;
-            break;
-        }
-    }
+            block.clear();
+            midi.clear();
+            plugin.processBlock (block, midi);
+            AudioBufferUtils::appendBlock (outputBuffer, block);
 
-    if (tailSilenceReached && consecutiveSilentSamples > 0)
-    {
-        const int newLength = juce::jmax (0, outputBuffer.getNumSamples() - consecutiveSilentSamples);
-        outputBuffer.setSize (processChannels, newLength, true, true, true);
+            tailSamplesRendered += blockSize;
+
+            if (AudioBufferUtils::blockPeak (block) < silenceThreshold)
+                consecutiveSilentSamples += blockSize;
+            else
+                consecutiveSilentSamples = 0;
+
+            if (consecutiveSilentSamples >= tailSilenceSamples)
+            {
+                tailSilenceReached = true;
+                break;
+            }
+        }
+
+        if (tailSilenceReached && consecutiveSilentSamples > 0)
+        {
+            const int newLength = juce::jmax (0, outputBuffer.getNumSamples() - consecutiveSilentSamples);
+            outputBuffer.setSize (processChannels, newLength, true, true, true);
+        }
     }
 
     plugin.suspendProcessing (wasSuspended);

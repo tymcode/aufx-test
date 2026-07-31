@@ -59,8 +59,9 @@ void TestCaseCapture::prompt (juce::Component* parent,
     calibrateToggle->setButtonText ("Calibrate");
     const bool storedCalibrate = HostPreferences::get().getHardwareCaptureCalibrate();
     calibrateToggle->setTooltip (
-        utf8 ("Measure the hardware noise floor before recording so silence detection "
-              "can end reverb tails. Turn off to reuse the last gate if levels are unchanged."));
+        utf8 ("Before recording: measure the hardware noise floor (for silence detection) "
+              "and subtract DC offset from the capture. Turn off to reuse the last silence "
+              "gate if levels are unchanged (DC removal is skipped when off)."));
     calibrateToggle->setSize (280, 24);
     aw->addCustomComponent (calibrateToggle);
 
@@ -236,7 +237,12 @@ void TestCaseCapture::capture (const juce::String& snapshotName, int roleIndex, 
 
     juce::String status = "Captured test case: " + snapshotName;
     if (result.calibratedNoiseFloor)
-        status += " (silence gate " + juce::String (result.hardwareSilenceThresholdDb, 1) + " dBFS)";
+    {
+        status += " (silence gate " + juce::String (result.hardwareSilenceThresholdDb, 1) + " dBFS";
+        if (result.dcOffsetL != 0.0f || result.dcOffsetR != 0.0f)
+            status += ", DC removed";
+        status += ")";
+    }
     setStatus (status, false);
 
     if (generateReport)

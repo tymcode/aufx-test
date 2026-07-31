@@ -107,7 +107,9 @@ bool CapturePipeline::recordHardware (const juce::File& fixtureFile,
                                       double targetDurationSeconds,
                                       double silenceThresholdDb,
                                       juce::Component* progressParent,
-                                      juce::String& error)
+                                      juce::String& error,
+                                      float dcOffsetL,
+                                      float dcOffsetR)
 {
     if (! engine.hasHardwareLoopConfigured())
     {
@@ -238,7 +240,8 @@ bool CapturePipeline::recordHardware (const juce::File& fixtureFile,
     panel.grabKeyboardFocus();
 
     const bool ok = engine.captureHardwareToFile (fixtureFile, hardwareOut, 1.0, silenceThresholdDb, 120.0, error,
-                                                  &stopRequested, &abortRequested, targetDurationSeconds);
+                                                  &stopRequested, &abortRequested, targetDurationSeconds,
+                                                  dcOffsetL, dcOffsetR);
     panel.stop();
     panel.message.setText (utf8 ("Finishing…"), juce::dontSendNotification);
     progress.exitModalState (0);
@@ -371,11 +374,13 @@ bool CapturePipeline::run (const CapturePipelineRequest& request,
 
         double silenceThresholdDb = HostPreferences::get().getHardwareCaptureSilenceThresholdDb (
             NoiseFloorCalibration::defaultSilenceThresholdDb);
+        float dcOffsetL = 0.0f;
+        float dcOffsetR = 0.0f;
 
         if (request.calibrateNoiseFloor)
         {
             juce::AlertWindow calibrating ("Calibrating",
-                                           utf8 ("Measuring hardware noise floor…"),
+                                           utf8 ("Measuring noise floor and DC offset…"),
                                            juce::MessageBoxIconType::NoIcon,
                                            request.progressParent);
             calibrating.setAlwaysOnTop (true);
@@ -396,11 +401,19 @@ bool CapturePipeline::run (const CapturePipelineRequest& request,
             }
 
             silenceThresholdDb = floorResult.recommendedSilenceThresholdDb;
+            dcOffsetL = floorResult.dcOffsetL;
+            dcOffsetR = floorResult.dcOffsetR;
             HostPreferences::get().setHardwareCaptureSilenceThresholdDb (silenceThresholdDb);
             outResult.calibratedNoiseFloor = true;
+            outResult.dcOffsetL = dcOffsetL;
+            outResult.dcOffsetR = dcOffsetR;
             HostLog::info ("Hardware noise floor "
                            + juce::String (floorResult.peakDb, 1)
-                           + " dBFS peak → silence gate "
+                           + " dBFS peak (DC L "
+                           + juce::String (dcOffsetL, 5)
+                           + " R "
+                           + juce::String (dcOffsetR, 5)
+                           + ") → silence gate "
                            + juce::String (silenceThresholdDb, 1)
                            + " dBFS");
         }
@@ -412,7 +425,9 @@ bool CapturePipeline::run (const CapturePipelineRequest& request,
                               hardwareTargetSeconds,
                               silenceThresholdDb,
                               request.progressParent,
-                              error))
+                              error,
+                              dcOffsetL,
+                              dcOffsetR))
             return false;
         outResult.capturedHardware = true;
 

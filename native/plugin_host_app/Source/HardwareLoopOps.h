@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <atomic>
+#include <functional>
 #include "HardwareLoopSettings.h"
 #include "MonitorOutputBridge.h"
 
@@ -9,10 +10,11 @@
  * Hardware insert loop: latency delay line, monitor crossfade, and
  * message-thread loop ops (calibrate / capture).
  *
- * Calibration Boost (planned, not yet implemented) will extend this unit:
- * multi-impulse latency, DC removal, L/R balance, LUFS gain, and a
- * calibrate→render→compare loop. Keep single-impulse correlation and
- * peak-based loop gain as private helpers that those features can replace.
+ * Calibration Boost: interactive Level Meters (View menu) owns named
+ * level-sweep linearity. Latency auto-detect averages several impulse
+ * trials. Capture Calibrate measures noise floor + DC offset. Still
+ * deferred here: L/R balance, LUFS gain, and a calibrate→render→compare
+ * loop. Keep correlation and peak-based loop gain as private helpers.
  */
 class HardwareLoopOps
 {
@@ -48,26 +50,35 @@ public:
     bool isSoftwareEffectMuted() const { return softwareEffectMuted.load(); }
 
     /**
-     * Play impulseFile once through the send pair, record the return, find the
-     * correlation peak, and update latencySamples. Sets measuredLoopGainDb.
+     * Play impulseFile through the send pair several times, average the
+     * correlation-peak latencies (and peak loop gains), and update
+     * latencySamples. Sets measuredLoopGainDb from the averaged gain.
+     * Optional onProgress is called on the message thread before each trial
+     * with 1-based current and total trial counts.
      */
     bool autoDetectLatency (const juce::File& impulseFile,
                             int& outLatencySamples,
                             float& outLoopGainDb,
-                            juce::String& error);
+                            juce::String& error,
+                            std::function<void (int current, int total)> onProgress = {});
 
     /**
      * Send silence through the send pair and measure return peak/RMS (dBFS)
-     * after latency settle. Used by NoiseFloorCalibration before hardware capture.
+     * after latency settle, plus per-channel mean DC offset. Peak/RMS are
+     * computed after subtracting the measured DC. Used by NoiseFloorCalibration
+     * before hardware capture.
      */
     bool measureReturnNoiseFloor (double listenSeconds,
                                   float& outPeakDb,
                                   float& outRmsDb,
+                                  float& outDcOffsetL,
+                                  float& outDcOffsetR,
                                   juce::String& error);
 
     /**
      * Record the return pair while playing fixtureFile through the send pair.
      * Trims configured latency from the head and extends through silence tail.
+     * Optional dcOffsetL/R (from Calibrate) are subtracted before writing.
      *
      * BLOCKING KLUDGE: this runs on the message thread and pumps the dispatch
      * loop in 10 ms slices while the realtime callback does the actual play/
@@ -99,7 +110,9 @@ public:
                                 juce::String& error,
                                 const std::atomic<bool>* stopRequested = nullptr,
                                 const std::atomic<bool>* abortRequested = nullptr,
-                                double targetDurationSeconds = 0.0);
+                                double targetDurationSeconds = 0.0,
+                                float dcOffsetL = 0.0f,
+                                float dcOffsetR = 0.0f);
 
     // Realtime helpers called from PluginAudioEngine::audioDeviceIOCallbackWithContext:
     void ensureLatencyBufferSize (int numChannels, int capacity);
@@ -130,7 +143,7 @@ public:
     void prepareForAudioDevice (int fadeLengthSamples);
 
 private:
-    /** Single-impulse correlation peak. Calibration Boost will call this N times. */
+    /** Correlation peak for one impulse trial. */
     static int findCorrelationPeakLatency (const juce::AudioBuffer<float>& impulseMono,
                                            const juce::AudioBuffer<float>& recorded,
                                            int recordedSamples,
