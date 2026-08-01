@@ -1,0 +1,5 @@
+# Point clangd at the CMake-generated compilation database so JUCE module
+# defines and include paths resolve (without this, GUI types like ComboBox
+# appear missing and cascade into bogus "incomplete type void" errors).
+CompileFlags:
+  CompilationDatabase: native/build

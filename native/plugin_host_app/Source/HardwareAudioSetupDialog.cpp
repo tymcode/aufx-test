@@ -97,7 +97,6 @@ namespace
     }
 
     class HardwareAudioSetupPanel : public juce::Component,
-                                    private juce::Timer,
                                     private juce::ComboBox::Listener,
                                     private juce::Button::Listener
     {
@@ -147,7 +146,6 @@ namespace
             applySettingsToControls (engine.getHardwareLoopSettings());
             updateMonitorPairEnabled();
             setSize (560, 590);
-            startTimerHz (12);
         }
 
         HardwareLoopSettings getSettings() const
@@ -305,8 +303,9 @@ namespace
             // Saved device is not currently present (e.g. the Multi-Output
             // Device only exists on the user's studio machine). Keep it
             // selectable rather than silently dropping the preference.
-            monitorOutputBox.addItem (s.monitorOutputDeviceName, monitorOutputBox.getNumItems() + 3);
-            monitorOutputBox.setSelectedId (monitorOutputBox.getNumItems(), juce::dontSendNotification);
+            const int itemId = monitorOutputBox.getNumItems() + 3;
+            monitorOutputBox.addItem (s.monitorOutputDeviceName, itemId);
+            monitorOutputBox.setSelectedId (itemId, juce::dontSendNotification);
         }
 
         void populateDevices()
@@ -324,11 +323,15 @@ namespace
                 if (type == nullptr)
                     continue;
                 type->scanForDevices();
-                for (const auto& name : type->getDeviceNames (false))
-                    if (! names.contains (name))
-                        names.add (name);
+                // Include both input and output device names so duplex interfaces
+                // that only advertise on one side still appear in the picker.
+                for (const bool wantInput : { false, true })
+                    for (const auto& name : type->getDeviceNames (wantInput))
+                        if (! names.contains (name))
+                            names.add (name);
             }
 
+            names.sort (true);
             for (int i = 0; i < names.size(); ++i)
                 deviceBox.addItem (names[i], i + 1);
         }
@@ -473,12 +476,6 @@ namespace
             }
         }
 
-        void timerCallback() override
-        {
-            // VU panel has its own timer; keep this for future status updates.
-            juce::ignoreUnused (testing);
-        }
-
         PluginAudioEngine& engine;
         juce::File fixturesDir;
         juce::Label deviceLabel, sendLabel, returnLabel, monitorOutputLabel, monitorLabel, bufferLabel, latencyLabel;
@@ -505,6 +502,11 @@ bool showHardwareAudioSetupDialog (PluginAudioEngine& engine,
         PluginAudioEngine& e;
         ~UnmuteOnExit() { e.setSoftwareEffectMuted (false); }
     } unmute { engine };
+
+    // Test / Auto-detect apply UI settings to the engine live. Snapshot so
+    // Cancel can restore the previous configuration instead of leaving a
+    // half-edited device setup active for the rest of the session.
+    const auto settingsBeforeDialog = engine.getHardwareLoopSettings();
 
     HardwareAudioSetupPanel panel (engine, fixturesDir);
 
@@ -537,7 +539,13 @@ bool showHardwareAudioSetupDialog (PluginAudioEngine& engine,
     engine.stopFixture();
 
     if (result != 1)
+    {
+        engine.setHardwareLoopSettings (settingsBeforeDialog);
+        juce::String error;
+        engine.stopAudioDevice();
+        engine.startAudioDevice (error); // best-effort restore; ignore failure on cancel
         return false;
+    }
 
     const auto settings = panel.getSettings();
     HostPreferences::get().setHardwareLoopSettings (settings);
