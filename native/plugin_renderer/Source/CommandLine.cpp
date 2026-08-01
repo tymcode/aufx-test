@@ -34,6 +34,16 @@ bool CommandLineOptions::parse (const juce::StringArray& args, juce::String& err
             if (++i >= args.size()) { error = "Missing value for --preset"; return false; }
             presetPath = juce::File (args[i]);
         }
+        else if (arg == "--save-preset")
+        {
+            if (++i >= args.size()) { error = "Missing value for --save-preset"; return false; }
+            savePresetPath = juce::File (args[i]);
+        }
+        else if (arg == "--program")
+        {
+            if (++i >= args.size()) { error = "Missing value for --program"; return false; }
+            programIndex = args[i].getIntValue();
+        }
         else if (arg == "--param")
         {
             if (++i >= args.size()) { error = "Missing value for --param"; return false; }
@@ -71,6 +81,10 @@ bool CommandLineOptions::parse (const juce::StringArray& args, juce::String& err
         else if (arg == "--dump-parameters")
         {
             dumpParameters = true;
+        }
+        else if (arg == "--list-programs")
+        {
+            listPrograms = true;
         }
         else if (arg == "--format")
         {
@@ -170,6 +184,39 @@ bool CommandLineOptions::validateForDump (juce::String& error) const
     }
 
     if (presetPath.existsAsFile() == false && presetPath.getFullPathName().isNotEmpty())
+    {
+        error = "Preset not found: " + presetPath.getFullPathName();
+        return false;
+    }
+
+    return true;
+}
+
+bool CommandLineOptions::validateForSavePreset (juce::String& error) const
+{
+    if (pluginRef.trim().isEmpty())
+    {
+        error = "Missing --plugin";
+        return false;
+    }
+
+    if (! pluginRef.startsWithIgnoreCase ("AudioUnit:"))
+    {
+        const juce::File pluginPath (pluginRef);
+        if (! pluginPath.exists())
+        {
+            error = "Plugin not found: " + pluginPath.getFullPathName();
+            return false;
+        }
+    }
+
+    if (savePresetPath.getFullPathName().isEmpty())
+    {
+        error = "Missing --save-preset path";
+        return false;
+    }
+
+    if (presetPath.getFullPathName().isNotEmpty() && ! presetPath.existsAsFile())
     {
         error = "Preset not found: " + presetPath.getFullPathName();
         return false;

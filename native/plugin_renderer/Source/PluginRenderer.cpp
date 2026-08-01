@@ -1,5 +1,6 @@
 #include "PluginRenderer.h"
 #include "AUpresetLoader.h"
+#include "AUpresetSaver.h"
 #include "AudioBufferUtils.h"
 #include "ParameterHelpers.h"
 
@@ -198,13 +199,25 @@ int PluginRenderer::run (const CommandLineOptions& options)
 {
     juce::String error;
 
-    if (options.dumpParameters)
+    if (options.listPrograms || options.dumpParameters
+        || options.savePresetPath.getFullPathName().isNotEmpty())
     {
-        CommandLineOptions dumpOptions = options;
-        if (! dumpOptions.validateForDump (error))
+        if (options.savePresetPath.getFullPathName().isNotEmpty())
         {
-            std::cerr << error << std::endl;
-            return 1;
+            if (! options.validateForSavePreset (error))
+            {
+                std::cerr << error << std::endl;
+                return 1;
+            }
+        }
+        else
+        {
+            CommandLineOptions dumpOptions = options;
+            if (! dumpOptions.validateForDump (error))
+            {
+                std::cerr << error << std::endl;
+                return 1;
+            }
         }
 
         auto plugin = loadPlugin (options.pluginRef, 44100.0, options.blockSize, error);
@@ -223,8 +236,55 @@ int PluginRenderer::run (const CommandLineOptions& options)
             }
         }
 
-        const auto json = ParameterHelpers::dumpParametersJson (*plugin);
-        std::cout << json << std::endl;
+        if (options.programIndex >= 0)
+        {
+            const int n = plugin->getNumPrograms();
+            if (options.programIndex >= n)
+            {
+                std::cerr << "Program index " << options.programIndex
+                          << " out of range (0.." << juce::jmax (0, n - 1) << ")" << std::endl;
+                return 1;
+            }
+            plugin->setCurrentProgram (options.programIndex);
+        }
+
+        ParameterHelpers::applyOverrides (*plugin, options.paramOverrides, error);
+        if (error.isNotEmpty())
+        {
+            std::cerr << error << std::endl;
+            return 1;
+        }
+
+        if (options.listPrograms)
+        {
+            const int n = plugin->getNumPrograms();
+            std::cout << "programs: " << n << std::endl;
+            for (int i = 0; i < n; ++i)
+                std::cout << i << '\t' << plugin->getProgramName (i) << std::endl;
+            if (! options.dumpParameters && options.savePresetPath.getFullPathName().isEmpty())
+                return 0;
+        }
+
+        if (options.dumpParameters)
+        {
+            const auto json = ParameterHelpers::dumpParametersJson (*plugin);
+            std::cout << json << std::endl;
+            if (options.savePresetPath.getFullPathName().isEmpty())
+                return 0;
+        }
+
+        if (options.savePresetPath.getFullPathName().isNotEmpty())
+        {
+            juce::MemoryBlock state;
+            plugin->getStateInformation (state);
+            if (! AUpresetSaver::saveStateBytes (options.savePresetPath, state, error))
+            {
+                std::cerr << error << std::endl;
+                return 1;
+            }
+            std::cout << "Wrote " << options.savePresetPath.getFullPathName() << std::endl;
+        }
+
         return 0;
     }
 
@@ -255,6 +315,18 @@ int PluginRenderer::run (const CommandLineOptions& options)
     {
         std::cerr << error << std::endl;
         return 1;
+    }
+
+    if (options.programIndex >= 0)
+    {
+        const int n = plugin->getNumPrograms();
+        if (options.programIndex >= n)
+        {
+            std::cerr << "Program index " << options.programIndex
+                      << " out of range (0.." << juce::jmax (0, n - 1) << ")" << std::endl;
+            return 1;
+        }
+        plugin->setCurrentProgram (options.programIndex);
     }
 
     ParameterHelpers::applyOverrides (*plugin, options.paramOverrides, error);

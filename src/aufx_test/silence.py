@@ -85,6 +85,38 @@ def measure_silence_regions(
     return regions
 
 
+def leading_silence_samples(
+    waveform: Waveform,
+    *,
+    threshold_db: float = -60.0,
+) -> int:
+    """Return how many leading samples sit below ``threshold_db`` (peak, any channel)."""
+    if waveform.num_samples == 0:
+        return 0
+    threshold_linear = 10 ** (threshold_db / 20)
+    amp = np.max(np.abs(waveform.data), axis=1)
+    above = np.where(amp >= threshold_linear)[0]
+    if len(above) == 0:
+        return waveform.num_samples
+    return int(above[0])
+
+
+def trim_leading_silence(
+    waveform: Waveform,
+    *,
+    threshold_db: float = -60.0,
+) -> Waveform:
+    """Drop samples before the first peak at or above ``threshold_db``.
+
+    Fully silent waveforms are returned unchanged so callers never get an
+    empty buffer. Matches the −60 dB onset trim used for deepz goldens.
+    """
+    start = leading_silence_samples(waveform, threshold_db=threshold_db)
+    if start <= 0 or start >= waveform.num_samples:
+        return waveform
+    return waveform.with_data(waveform.data[start:])
+
+
 def _window_amplitude(window: np.ndarray, metric: str) -> float:
     if metric == "rms":
         return float(np.sqrt(np.mean(window**2)))

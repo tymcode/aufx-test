@@ -106,6 +106,42 @@ See [docs/manual-exploration.md](docs/manual-exploration.md) for the full workfl
 
 See [docs/mac-app-distribution.md](docs/mac-app-distribution.md).
 
+### Batch golden compares (`compares/<device>/`)
+
+Layout::
+
+```
+compares/deepz/
+  dry/{Source}.wav
+  presets/au/{NN}-{Preset Name}.aupreset
+  goldens/{Source}-{NN}-{Preset-Slug}.wav
+```
+
+Render each dry source through the preset embedded in the golden filename, compare to the golden, and write per-fail reports:
+
+```bash
+# Discover runnable cases (skips goldens whose preset is missing)
+aufx-test compare-batch compares/deepz --list
+
+# Full batch against DEEP/Z from host.config.json
+aufx-test compare-batch compares/deepz --plugin-id deep_z
+
+# Subset + smoke
+aufx-test compare-batch compares/deepz --plugin-id deep_z --filter 'Vocals-*.wav' --limit 3
+```
+
+By default each render feeds **1.5 s of silence** after loading the preset so the
+plugin can finish transitioning from the previous effect; that lead-in is trimmed
+from the capture before compare (`--settle-seconds 0` to disable). Leading silence
+on actuals (−60 dB peak) is also stripped before compare so captures line up with
+onset-trimmed goldens.
+
+Outputs under `test-results/deepz/` (override with `--results-root`):
+
+- `actuals/` — rendered WAVs
+- `fails/<case>/` — mismatch report (audio, plots, `mismatch.json`) per failure
+- `summary.json`, `report.html`
+
 ## Running tests
 
 ```bash
@@ -132,11 +168,13 @@ src/aufx_test/
   explore.py        # Interactive capture REPL
   testgen.py        # Export sessions to pytest
   subprocess_host.py
+  compare_batch.py  # dry→preset→golden batch compares
   graphing.py       # Matplotlib visualization
   host.py           # PluginHost protocol
 native/
   plugin_renderer/  # JUCE headless CLI (see native/README.md)
   CMakeLists.txt
+compares/           # Per-device dry / presets / goldens trees
 tests/
 fixtures/
 docs/

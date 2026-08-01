@@ -12,6 +12,7 @@ from ..comparison import ComparisonThresholds, compare_waveforms
 from ..graphing import plot_comparison, plot_difference_metrics
 from ..reporting import band_analysis, write_compare_html_report
 from ..session import ExperimentSession, StateSnapshot
+from ..silence import trim_leading_silence
 from .session_loader import _load_session
 
 
@@ -135,6 +136,17 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     elif compare_mode == "dry_vs_hardware":
         hw_wave = actual
         source_wave = expected if source_wave is None else source_wave
+
+    # Software captures often start with residual silence after preset settle /
+    # plugin latency. Strip it so compares line up with onset-trimmed goldens.
+    # Persist the trim so the on-disk capture matches what was scored.
+    if compare_mode in ("file_pair", "dry_vs_software"):
+        trimmed = trim_leading_silence(actual)
+        if trimmed.num_samples != actual.num_samples:
+            trimmed.to_file(actual_path)
+            actual = trimmed
+            if compare_mode == "dry_vs_software":
+                sw_wave = actual
 
     if gated:
         result = compare_waveforms(actual, expected, thresholds=thresholds)

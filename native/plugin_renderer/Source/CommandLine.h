@@ -19,6 +19,8 @@ struct CommandLineOptions
     juce::File inputPath;
     juce::File outputPath;
     juce::File presetPath;
+    juce::File savePresetPath;
+    int programIndex = -1; // -1 = leave unchanged
     std::vector<std::pair<juce::String, juce::String>> paramOverrides;
     double sampleRate = 0.0;
     int blockSize = 512;
@@ -26,9 +28,11 @@ struct CommandLineOptions
     double silenceThresholdDb = -60.0;
     double maxTailSeconds = 120.0;
     bool dumpParameters = false;
+    bool listPrograms = false;
     bool jsonOutput = false;
 
     bool parse (const juce::StringArray& args, juce::String& error);
     bool validateForRender (juce::String& error) const;
     bool validateForDump (juce::String& error) const;
+    bool validateForSavePreset (juce::String& error) const;
 };

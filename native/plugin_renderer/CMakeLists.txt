@@ -29,10 +29,13 @@ target_link_libraries(plugin_renderer
         juce::juce_recommended_warning_flags)
 
 if(APPLE)
-    target_sources(plugin_renderer PRIVATE Source/AUpresetLoader_mac.mm)
+    target_sources(plugin_renderer PRIVATE
+        Source/AUpresetLoader_mac.mm
+        Source/AUpresetSaver_mac.mm)
     target_link_libraries(plugin_renderer PRIVATE "-framework Foundation")
 else()
     target_compile_definitions(plugin_renderer PRIVATE JUCE_PLUGIN_RENDERER_NO_MAC_PRESET=1)
+    target_sources(plugin_renderer PRIVATE Source/AUpresetSaver.cpp)
 endif()
 
 juce_generate_juce_header(plugin_renderer)
