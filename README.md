@@ -1,8 +1,74 @@
 # aufx-test
 
-Automated audio test framework for AU / FX (VST/AU) audio effects plugins.
+This is a test framework for Audio Unit effects plugins. Created primarily to test AU emulations of hardware effects units, it has two parts, an application and command line tools. 
+*AU Effects Explorer* is a host app with hardware-in-loop support for manual testing that can generate testcases for defect reporting and test automation.`aufx-test` has a set of functions for use in CI and to manage a `pytest` framework for running regression tests.
 
-Compare plugin output against reference waveforms using objective, repeatable metrics — not bit-for-bit equality. Designed for Python-first workflows with a path toward CI integration.
+## AU Effects Explorer
+This host app is designed to compare audio processing between software and hardware.  It is also an efficient way to manually test plugins in general, providing required MIDI and DAW functions without the complexities of a DAW.
+
+When you select a plugin, you are said to begin an *exploration session*. Understanding that will help understand the folder structure for exported artifacts.
+
+### Features
+* Hosting of arbitrary AU plugins
+* mock DAW features such as a playhead (for testing BPM-based time divisions)
+* A variety of canned source clips in the `fixtures` directory, for repeatability
+* Host bypass, input gain, and mix controls
+* Support for MIDI controllers
+* Hardware-in-Loop integration for external equipment with easy switching between hardware and software
+* Send/Return level metering with peak/RMS/LUFS clip indicators
+* Save/Load .aupresets to capture and restore plugin state
+* Experimental support for Receive/Transmit sysex for test setup (Quadrasynth only for now)
+* Capture testcase data to add to automation. Captured testcases collect all required artifacts to reproduce the bug and perform regression testing; the folders can be zipped and shared with the developer or attached to a bug report.
+* Testcases can be categorized as golden or broken so that the test framework knows whether to pass or fail a match.
+* Create report comparing software results against hardware (or dry vs wet)
+* A variety of calibration features for levels and latency compensation
+* Lights Out mode blacks out the background for recording screencaps. Monitoring supports Multi-Output Devices with loopbacks to ensure that the audio is in the screencap  
+
+Compare plugin output against reference waveforms using objective, repeatable metrics — not bit-for-bit equality. Designed for a flow from manual exploration to automated testing with a path toward CI integration.
+
+### Requirements
+AU Effects Explorer is universal (arm64 + x86_64) and requires macOS 13+.
+
+### Install
+Download prebuilt executable from Releases.
+Currently it is self-signed so Mac Gatekeeper will try to prevent you from running it.  
+1. Clear quarantine if needed: `xattr -cr "AU Effects Explorer.app"`
+2. Right-click the app → Open (first launch), or:
+     System Settings → Privacy & Security → Open Anyway
+
+
+### Basic Use
+At first launch it will scan for installed AU plugins. To keep the tool's plugin list fast and efficient to use, you must choose which of the scanned plugins appear in it.  You can add or remove them from the list as needed, and rescan when new plugins are installed.
+
+When the plugin loads, select a "Source Clip" to loop into the plugin and click Begin.
+
+To support testing and using MIDI functions like MIDI Learn, select **MIDI Setup** from the Mac menu bar to enable your selected controllers. To use hardware-in-loop features, select **Hardware Audio Setup** from the Mac menu bar and specify the send and return ports, as well as setting buffer size and determining latency.
+
+When you get a setup that is working correctly, and you want your test automation to make sure that it continues to work right when a build changes, select the Capture Test Case menu item and mark it as "golden".  When you find a case where it's misbehaving, capture the test case and mark it "broken", and you can use automated testing to flag if the plugin continues to sound like that in future builds. In either case it will reveal a folder in the finder containing test artifacts that will be required for setting up automated testing.  You can provide this folder with your bug report; it will contain all the artifacts needed to reproduce the issue, as well as a spectrographic analysis report.
+
+If you've used Capture Test Case and want to include a testcase in automated testing, use `aufx-test`, described below.
+
+### `aufx-test` command-line tool
+
+After `./scripts/bootstrap.sh` (or `pip install -e .`), the CLI covers compare, capture, session management, and host launch:
+
+| Command | What it does |
+|---------|----------------|
+| `aufx-test compare` | Score one actual WAV vs a golden (or, with `--root`, a session snapshot: HW vs SW, or dry vs wet). Optional plots / HTML via `--write-report`. |
+| `aufx-test compare-batch` | Render every dry×preset named by goldens under `compares/<device>/`, compare to those goldens, write `actuals/`, `fails/`, `summary.json`, `report.html`. One plugin per run (`--plugin-id` / `--plugin`). |
+| `aufx-test host` | Launch **AU Effects Explorer** with `--config` / `--project-root`. |
+| `aufx-test explore` | Legacy interactive REPL to build a session after bouncing in a DAW. |
+| `aufx-test session new` | Create an empty exploration session. |
+| `aufx-test session snap` | Add a snapshot non-interactively (input / bounce / `.aupreset`). |
+| `aufx-test session show` | List sessions or print one session’s snapshots. |
+| `aufx-test session promote` | Mark a snapshot for automation (optional thresholds / `--negative` for broken cases). |
+| `aufx-test session export` | Emit pytest (or JSON) for promoted setups → typically `tests/generated/`. |
+| `aufx-test session export-presets` | Bundle `.aupreset` files + manifest for sharing with a plugin developer. |
+| `aufx-test session import-goldens` | Import external golden triplets into a session. |
+| `aufx-test calibrate-plot` | Plot a level-sweep calibration JSON to PNG. |
+
+Typical host → automation flow: capture in Explorer → `session promote` → `session export` → `pytest`. For factory-preset golden trees, use `compare-batch` (see below).
+
 
 ## Features
 
@@ -19,7 +85,7 @@ Compare plugin output against reference waveforms using objective, repeatable me
 **Requirements:** macOS 13+, Xcode Command Line Tools, CMake ≥ 3.22, Python ≥ 3.10 (with a working `ssl` module).
 
 ```bash
-git clone --recurse-submodules <repo-url> aufx-test
+git clone --recurse-submodules https://github.com/tymcode/aufx-test.git
 cd aufx-test
 ./scripts/bootstrap.sh
 ```
@@ -43,24 +109,24 @@ from aufx_test import Waveform, compare_waveforms, capture_before_after
 from aufx_test.graphing import plot_comparison
 
 # Load input and reference
-input_wav = Waveform.from_file("fixtures/sine_440hz.wav")
-reference = Waveform.from_file("fixtures/expected_output.wav")
+input_wav = Waveform.from_file("fixtures/synth_waves/sine.wav")
+reference = Waveform.from_file("path/to/golden_or_bounce.wav")
 
 # Capture before/after a parameter change (via your plugin host)
-before, after = capture_before_after(
+pair = capture_before_after(
     lambda: render_plugin(input_wav),  # your host integration
     adjust_controls={"mix": 0.5},
 )
 
-result = compare_waveforms(after, reference, snr_db_min=30.0)
+result = compare_waveforms(pair.after, reference, snr_db_min=30.0)
 assert result.passed, result.summary()
 
-plot_comparison(before, after, reference, save_path="output/comparison.png")
+plot_comparison(pair.before, pair.after, reference, save_path="output/comparison.png")
 ```
 
-## Plugin host integration (future)
+## Plugin host integration
 
-The `PluginHost` protocol in `aufx_test.host` defines the interface for driving a real VST/AU. Implement it with your preferred headless host (e.g. a small JUCE command-line renderer, [pluginval](https://github.com/Tracktion/pluginval), or a custom tool) and pass it to the capture helpers.
+The `PluginHost` protocol in `aufx_test.host` is the interface for driving a real AU. The built-in implementation is `SubprocessPluginHost`, which shells out to the JUCE `plugin_renderer` CLI with `.aupreset` state. Use that for headless replay, or implement the protocol with another host if needed.
 
 See [docs/ci-integration.md](docs/ci-integration.md) for build-pipeline integration notes.
 
@@ -104,14 +170,14 @@ See [docs/manual-exploration.md](docs/manual-exploration.md) for the full workfl
 # → dist/AU-Effects-Explorer-macOS.zip  (universal arm64 + x86_64, macOS 13+)
 ```
 
-See [docs/mac-app-distribution.md](docs/mac-app-distribution.md).
+See also [native/README.md](native/README.md).
 
 ### Batch golden compares (`compares/<device>/`)
 
-Layout::
+Layout:
 
 ```
-compares/deepz/
+compares/{plugin ID}/
   dry/{Source}.wav
   presets/au/{NN}-{Preset Name}.aupreset
   goldens/{Source}-{NN}-{Preset-Slug}.wav
@@ -172,7 +238,9 @@ src/aufx_test/
   graphing.py       # Matplotlib visualization
   host.py           # PluginHost protocol
 native/
+  plugin_host_app/  # AU Effects Explorer (GUI host)
   plugin_renderer/  # JUCE headless CLI (see native/README.md)
+  JUCE/             # pinned JUCE submodule
   CMakeLists.txt
 compares/           # Per-device dry / presets / goldens trees
 tests/

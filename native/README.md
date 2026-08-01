@@ -93,7 +93,7 @@ See [docs/plugin-renderer.md](../docs/plugin-renderer.md) for the full CLI contr
 ./scripts/package_mac_app.sh
 ```
 
-Produces a **universal** (`arm64` + `x86_64`) zip under `dist/`. See [docs/mac-app-distribution.md](../docs/mac-app-distribution.md).
+Produces a **universal** (`arm64` + `x86_64`) zip under `dist/`.
 
 ## Wire into Python tests
 

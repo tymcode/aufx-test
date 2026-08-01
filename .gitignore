@@ -55,6 +55,10 @@ compares/deepz/goldens/*
 # Local DEEP/Z probe scripts (keep on disk; not shipped)
 scripts/probe_deepz_*.swift
 
+# Draft / personal notes (not shipped)
+docs/mac-app-distribution.md
+docs/merge-notes-refactor.md
+
 # Re-assert after negation rules that re-include preset trees
 .DS_Store
 **/.DS_Store

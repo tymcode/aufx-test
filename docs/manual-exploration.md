@@ -108,7 +108,7 @@ Or run the binary directly:
 
 After packaging, the same flags work with `dist/AU Effects Explorer.app`.
 
-Without `--project-root` / `--config`, the app uses its exploration data folder (default `~/Library/Application Support/AU Effects Explorer/`) — see [mac-app-distribution.md](mac-app-distribution.md).
+Without `--project-root` / `--config`, the app uses its exploration data folder (default `~/Library/Application Support/AU Effects Explorer/`).
 
 ### Optional Python wrapper
 
