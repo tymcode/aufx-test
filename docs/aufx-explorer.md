@@ -6,27 +6,27 @@ When you select a plugin you begin an *exploration session*. Captures land under
 
 ## Features
 
-* Hosting of arbitrary Audio Unit effects
-* Mock DAW features: host playhead, BPM, MIDI clock, and metronome click (for tempo-synced plugins)
-* Canned **Source Clips** under `fixtures/` (plus drop-in externals)
-* Host **Bypass**, **Send** level (−120 dB mute … +6 dB), and **Mix** (dry/wet)
-* MIDI controller ports and MIDI Learn–friendly routing
-* Hardware-in-loop insert (send / return / monitor) with easy switching between hardware and software (`Cmd+U`)
-* Send/Return level metering (sample peak, sticky hold, CLIP) and optional LUFS/RMS level sweeps
-* Save / Load `.aupreset` state; drag-and-drop import into the plugin’s presets folder
-* Experimental sysex dump / restore for test setup (**Alesis Quadraverb** only for now)
-* **Capture Test Case** — packages artifacts for regression and bug reports (golden / broken / suspect)
-* Optional HTML compare report after capture (software vs hardware, or dry vs wet)
-* Calibration: insert latency auto-detect, noise-floor / DC for hardware capture, level-sweep plots
-* **Lights Out** mode for screencaps; monitor path supports Multi-Output Devices / loopbacks so audio is in the recording
+- Hosting of arbitrary Audio Unit effects
+- Mock DAW features: host playhead, BPM, MIDI clock, and metronome click (for tempo-synced plugins)
+- Canned **Source Clips** under `fixtures/` (plus drop-in externals)
+- Host **Bypass**, **Send** level (−120 dB mute … +6 dB), and **Mix** (dry/wet)
+- MIDI controller ports and MIDI Learn–friendly routing
+- Hardware-in-loop insert (send / return / monitor) with easy switching between hardware and software (`Cmd+U`)
+- Send/Return level metering (sample peak, sticky hold, CLIP) and optional LUFS/RMS level sweeps
+- Save / Load `.aupreset` state; drag-and-drop import into the plugin’s presets folder
+- Experimental sysex dump / restore for test setup (**Alesis Quadraverb** only for now)
+- **Capture Test Case** — packages artifacts for regression and bug reports (golden / broken / suspect)
+- Optional HTML compare report after capture (software vs hardware, or dry vs wet)
+- Calibration: insert latency auto-detect, noise-floor / DC for hardware capture, level-sweep plots
+- **Lights Out** mode for screencaps; monitor path supports Multi-Output Devices / loopbacks so audio is in the recording
 
 Compares use objective metrics (SNR, correlation, etc.)—not bit-for-bit equality. Typical flow: explore in the app → capture → `aufx-test session promote` / `export` → `pytest`, or batch goldens with `aufx-test compare-batch`.
 
 ## Requirements
 
-* macOS 13+
-* Universal build (`arm64` + `x86_64`)
-* Audio Units installed under `/Library/Audio/Plug-Ins/Components/` or `~/Library/Audio/Plug-Ins/Components/`
+- macOS 13+
+- Universal build (`arm64` + `x86_64`)
+- Audio Units installed under `/Library/Audio/Plug-Ins/Components/` or `~/Library/Audio/Plug-Ins/Components/`
 
 ## Install (GitHub Releases)
 
@@ -119,35 +119,39 @@ Paths may be absolute, `~/…`, or relative to the project root. `default_preset
 └────────────────────────────────────────────────────────────┘
 ```
 
-| Control | Purpose |
-|---------|---------|
-| **Plugin** | Entries from `host.config.json`; **More plugins…** opens Add Plugin |
-| **Preset** / **Load** / **Save as** | Soft path: load/save `.aupreset` under that plugin’s `presets_dir` |
-| **HW State** / **Send** | Hardware mode: pick a `.syx` dump and transmit (Quadraverb) |
-| **Source Clip** | Fixture WAV (grouped by folder under `fixtures/`); **Loaded** for externals |
-| **Begin** / **Stop** | Play the clip through the current path (loop or one-shot) |
-| **Loop** | Loop vs one-shot |
-| **Bypass** | Dry thru the host (disabled in Use Hardware mode) |
-| **Send** | Input level to the effect path (−120 dB … +6 dB) |
-| **Mix** | Dry/wet percent |
-| **MIDI Sources** | Enable control-surface / Learn ports (Audio MIDI Setup names) |
-| **Host Clock** | Drive host playhead + MIDI clock for tempo-based plugins |
-| **BPM** | Tempo (20–999); Return or focus-lost applies |
-| **Click** | Metronome click on quarter notes (LED still flashes when Host Clock is on) |
+
+| Control                             | Purpose                                                                                                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Plugin**                          | Entries from `host.config.json`; **More plugins…** opens Add Plugin dialog to specify which canned plugin you want in the list            |
+| **Preset** / **Load** / **Save as** | Soft path: load/save the plugin's current state as an `.aupreset` under that plugin’s `presets_dir.`                                      |
+| **HW State** / **Send**             | Hardware mode: pick a `.syx` dump and transmit to the device configured in *MIDI Setup*                                                   |
+| **Source Clip**                     | A set up test tones and program types to use as fixture audio in testing. (grouped by folder under `fixtures/`); **Loaded** for externals |
+| **Begin** / **Stop**                | Play the clip through the current path (loop or one-shot)                                                                                 |
+| **Loop icon button**                | Loop vs one-shot                                                                                                                          |
+| **Bypass**                          | Dry thru the host (disabled in Use Hardware mode)                                                                                         |
+| **Send**                            | Input level to the effect path (−120 dB … +6 dB)                                                                                          |
+| **Mix**                             | Dry/wet percent                                                                                                                           |
+| **MIDI Sources**                    | Enable control surface / Learn ports (devices from the MacOS Audio MIDI Setup)                                                            |
+| **Host Clock**                      | Drive host playhead + MIDI clock for testing tempo-based parameters                                                                       |
+| **BPM**                             | Tempo (20–999); Press Return or leave the field to apply the change                                                                       |
+| **Metronome LED button**            | Metronome LED flashes on quarter notes when Host Clock is on; click it to toggle emitting an audible click                                |
+
 
 Drag `.aupreset` files or folders onto the window to import into the current plugin’s presets folder (confirm replace if needed).
 
 ### Keyboard shortcuts
 
-| Shortcut | Action |
-|----------|--------|
-| **Space** | Begin / Stop |
-| **Cmd+T** | Capture Test Case… |
-| **Cmd+U** | Use Hardware (toggle) |
-| **Cmd+M** | Level Meters window |
-| **Cmd+L** | Lights Out |
-| **Cmd+R** | Rescan Audio Units… |
-| **Cmd+Shift+R** | Rescan Source Clips |
+
+| Shortcut        | Action                                                                  |
+| --------------- | ----------------------------------------------------------------------- |
+| **Space**       | Begin / Stop                                                            |
+| **Cmd+T**       | Capture Test Case…                                                      |
+| **Cmd+U**       | Use Hardware (toggle)                                                   |
+| **Cmd+M**       | Level Meters window                                                     |
+| **Cmd+L**       | Lights Out mode blacks out the background                               |
+| **Cmd+R**       | Rescan Audio Units…                                                     |
+| **Cmd+Shift+R** | Rescan Source Clips to use source clips added to the `fixtures` folder. |
+
 
 ## Setup dialogs
 
@@ -155,9 +159,9 @@ Drag `.aupreset` files or folders onto the window to import into the current plu
 
 Choose ports for the device under test and which sysex module to use:
 
-* **Device MIDI Out (to hardware)**
-* **Dump MIDI In (from hardware)** — added alongside other MIDI Sources (does not replace them)
-* **Sysex module** — currently **Alesis Quadraverb**
+- **Device MIDI Out (to hardware)**
+- **Dump MIDI In (from hardware)** — added alongside other MIDI Sources (does not replace them)
+- **Sysex module** — currently **Alesis Quadraverb**
 
 Required for Capture **Hardware** sysex dumps and for **HW State → Send**.
 
@@ -165,42 +169,46 @@ Required for Capture **Hardware** sysex dumps and for **HW State → Send**.
 
 Configures the CoreAudio insert loop. Software processing is muted while this dialog is open so you hear the raw loop.
 
-| Control | Purpose |
-|---------|---------|
-| **Audio Interface** | Duplex device for send/return |
-| **Send pair** | Stereo outs to the hardware |
-| **Return pair** | Stereo ins from the hardware |
-| **Monitor output** | Interface monitor pair, system default output, or a separate device (e.g. Multi-Output for screencaps) |
-| **Monitor pair** | Speakers on the interface (when using interface monitor) |
-| **Buffer size** | Device buffer |
-| **Latency (samples)** | Manual trim, or **Auto-detect** |
-| **Auto-detect** | Plays `fixtures/impulse.wav` five times through the send, averages correlation-peak latency (and reports loop gain). Put the hardware on a dry/bypass program first. |
-| **Test** / **Stop Test** | Sends the current Source Clip through the loop so you can check routing and levels; live Send/Return VU meters update in the panel |
-| **Save** / **Cancel** | Cancel restores the previous loop settings |
+
+| Control                  | Purpose                                                                                                                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Audio Interface**      | Duplex device for send/return                                                                                                                                        |
+| **Send pair**            | Stereo outs to the hardware, or **None Selected**                                                                                                                    |
+| **Return pair**          | Stereo ins from the hardware, or **None Selected**                                                                                                                   |
+| **Monitor output**       | Interface monitor pair, system default output, or a separate device (e.g. Multi-Output Devices with loopback for screencaps)                                         |
+| **Monitor pair**         | Speakers on the interface (when using interface monitor)                                                                                                             |
+| **Buffer size**          | Device buffer (disabled when send/return are None)                                                                                                                   |
+| **Latency (samples)**    | Manual trim, or **Auto-detect** (disabled when send/return are None)                                                                                                 |
+| **Auto-detect**          | Plays `fixtures/impulse.wav` five times through the send, averages correlation-peak latency (and reports loop gain). Put the hardware on a dry/bypass program first. |
+| **Test** / **Stop Test** | Sends the current Source Clip through the loop so you can check routing and levels; live Send/Return VU meters update in the panel                                   |
+| **Save** / **Cancel**    | Cancel restores the previous loop settings                                                                                                                           |
+
+
+Choosing **None Selected** on either send or return clears both, removes the hardware-loop block from preferences, and turns off **Use Hardware**. Buffer size, latency, Auto-detect, and Test stay disabled until both pairs are set again.
 
 ### Settings… (Apple menu)
 
-* Exploration data folder (Choose / Reveal)
-* Optional config file override
-* **Allow input to virtual instruments** (off by default—some AUs crash with unused input buses)
-* Plugin scan timeout
-* List of skipped AUs (crashed/hung) with **Retry selected**
+- Exploration data folder (Choose / Reveal)
+- Optional config file override
+- **Allow input to virtual instruments** (off by default—some AUs crash with unused input buses). Can be used to provide inputs to samplers or sidechains. It's not very reliable, though, because it's a strange application.
+- Plugin scan timeout: Some plugins take a while to be scanned because they're crashed or something; some take a while just because they do. This timeout sets the amount of time before the scanner gives up on a plugin and adds it to a failed list.
+- List of skipped AUs (crashed/hung) with **Retry selected**
 
 Folder/config overrides need a relaunch.
 
 ### Add Plugin… / Rescan (Plugins menu)
 
-* **Add Plugin…** — multi-select from the AU cache (Search by name/manufacturer). Empty cache → run **Rescan Audio Units…** first.
-* **Rescan Audio Units…** (`Cmd+R`) — rebuilds the AU cache.
-* **Rescan Source Clips** (`Cmd+Shift+R`) — reloads `fixtures/` into the Source Clip menu (useful after dropping new WAVs into the tree).
+- **Add Plugin…** — Adds plugins to the dropdown in the main app window.  Equivalent to selecting **More Plugins** from the dropdown. multi-select from the AU list that was built during the AU scan. Search filter by name/manufacturer.
+- **Rescan Audio Units…** (`Cmd+R`) — rebuilds the AU cache. Use after installing new plugins.  (Not new builds of cached plugins.)
+- **Rescan Source Clips** (`Cmd+Shift+R`) — reloads `fixtures/` into the Source Clip menu (useful after dropping new WAVs into the tree).
 
 ## Use Hardware (`Cmd+U`)
 
 When the insert loop is configured, **Session → Use Hardware** switches monitoring and metering to the hardware path:
 
-* Plugin editor is replaced by inline Send/Return meters
-* Bypass is disabled; preset **Save** is replaced by **HW State** / **Send**
-* Level Meters window (if open) follows the same path
+- Plugin editor is replaced by inline Send/Return meters
+- Bypass is disabled; preset **Save** is replaced by **HW State** / **Send**
+- Level Meters window (if open) follows the same path
 
 Toggle again to return to software.
 
@@ -208,30 +216,37 @@ Toggle again to return to software.
 
 Dialog fields:
 
-| Field | Options |
-|-------|---------|
-| **Description** | Free text (becomes part of the snapshot identity) |
-| **Type** | `golden` (expect match), `broken` / `suspect` (expect mismatch; suspect currently same as broken) |
-| **Capture** | **Rendered plugin** \| **Hardware** \| **Both** |
 
-**Capture settings**
+| Field           | Options                                                                                                    |
+| --------------- | ---------------------------------------------------------------------------------------------------------- |
+| **Description** | Free text (becomes part of the snapshot identity)                                                          |
+| **Type**        | `golden` (expect match), `broken` / `suspect` (expect mismatch; suspect currently same as broken)          |
+| **Capture**     | Rendered plugin, Hardware, or Both. Hardware / Both are disabled until Hardware Audio Setup is configured. |
 
-* **Software** — write a `.aupreset` from the *live* plugin state (not merely the last loaded file)
-* **Hardware** — request a sysex dump (dimmed unless MIDI Out is set)
+
+**When capturing:**
+
+- **Software** — Runs currently selected **Source Clip** through the plugin and captures the results.  
+- **Hardware** —Runs the currently selected **Source Clip** through the external hardware and captures the results. Recording will be automatically stopped after:
+  - The length of the software capture, if selected, or
+  - The sound drops to the noise floor of the device, or
+  - 60 seconds, by default.
 
 **Options**
 
-* **Generate report** (default on) — after a successful capture, runs `aufx-test compare --root … --write-report` for the new snapshot (`python_cli` must point at `.venv/bin/aufx-test`)
-* **Calibrate** (Hardware / Both; default on) — measure return noise floor for the silence gate and subtract DC offset from the hardware WAV before write
+- **Generate report** (default on): after a successful capture, runs `aufx-test compare --root … --write-report` for the new snapshot (`python_cli` must point at `.venv/bin/aufx-test`)
+- **Calibrate** (if Hardware or Both is selected; default on): measure return noise floor for the silence gate and subtract DC offset from the hardware WAV before write
+- **Capture settings → Hardware**:  If Hardware is selected under **Capture settings…**, it requests a sysex dump of the current device settings (if configured in **MIDI Setup**).
+- **Capture settings → Software:** If Software is selected under **Capture settings…**, it writes an `.aupreset` from the *live* plugin state (not merely the last loaded file).
 
 What gets written under `sessions/<session>/artifacts/<stem>/`:
 
-* `<stem>_input.wav` (source clip copy when applicable)
-* Software: `<stem>_output_<gld|sus|bkn>.wav`
-* Hardware: `<stem>_output_hw_<gld|sus|bkn>.wav`
-* `<stem>.aupreset` when Software settings is on
-* `<stem>.syx` when Hardware settings sysex succeeds
-* Compare artifacts (`compare_report.html`, plots, JSON) when Generate report succeeds
+- `<stem>_input.wav` (a copy of the Source Clip)
+- Software: `<stem>_output_<gld|sus|bkn>.wav (The WAV rendered through the plugin)`
+- Hardware: `<stem>_output_hw_<gld|sus|bkn>.wav (The WAV captured from the hardware loop)`
+- `<stem>.aupreset` when selected in Capture settings
+- `<stem>.syx` when selected in Capture settings and receiving Hardware settings sysex succeeds
+- Compare artifacts (`compare_report.html`, plots, JSON) when **Generate report** is selected
 
 Hardware capture continues until the return falls silent (gate), you press **Stop**, or a safety limit—so long reverb tails are kept. Lights Out turns off automatically after a successful capture.
 
@@ -239,11 +254,13 @@ Hardware capture continues until the return falls silent (gate), you press **Sto
 
 Three related but separate tools:
 
-| Tool | Where | What |
-|------|--------|------|
-| **Auto-detect** latency | Hardware Audio Setup | Impulse ×5 → latency samples + loop gain |
-| **Calibrate** (noise floor / DC) | Capture Test Case (HW/Both) | Sets silence gate above the return floor; optional DC subtract |
-| **Level sweep…** | Level Meters window | Stepped send gains through the *current* path; writes `calibration/<slug>.json` (+ PNG if `python_cli` is set) |
+
+| Tool                             | Where                       | What                                                                                                                             |
+| -------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| **Auto-detect** latency          | Hardware Audio Setup        | Impulse ×5 → latency samples + loop gain                                                                                         |
+| **Calibrate** (noise floor / DC) | Capture Test Case (HW/Both) | Sets silence gate above the return noise floor; DC offset correction                                                             |
+| **Level sweep…**                 | Level Meters window         | Stepped send gains through the *current* path; plots send vs. return to `calibration/<slug>.json` (+ PNG if `python_cli` is set) |
+
 
 Level sweep uses `fixtures/synth_waves/sine_0db_1ch_5s_48k.wav` and records sample peak, RMS, and BS.1770-style LUFS per step. Re-plot later with:
 
@@ -261,23 +278,23 @@ Blacks out every display behind the host, keeps the app on top, and hides the Do
 
 ## Presets (`.aupreset`)
 
-* **Load** — apply a file from the plugin’s `presets_dir`
-* **Save as** + **Save** — write the live plugin state; **Replace existing** overwrites the same name
-* Drag-and-drop `.aupreset` onto the main window to import
-* Capture with **Software** settings on always saves live state into the snapshot folder
+- **Load** — apply a file from the plugin’s `presets_dir`
+- **Save as** + **Save** — write the live plugin state; **Replace existing** overwrites the same name
+- Drag-and-drop `.aupreset` onto the main window to import
+- Capture with **Software** settings on always saves live state into the snapshot folder
 
-## Sysex (Alesis Quadraverb)
+## Sysex
 
-Experimental. Configure **MIDI Setup** with Out / Dump In and module **Alesis Quadraverb**.
+Experimental, limited to devices in the **Sysex Module** dropdown in **MIDI Settings**. 
 
-* **Capture** with **Hardware** settings on → dump to `<stem>.syx`
-* **Use Hardware** → choose **HW State** and **Send** to restore a dump to the unit
+- **Capture** with **Hardware** settings on → dump to `<stem>.syx`
+- **Use Hardware** → choose **HW State** and **Send** to restore a dump to the unit
 
 Other modules are not registered yet.
 
 ## Host clock, tempo, and transport
 
-Enable **Host Clock** so tempo-synced AUs see a playhead (4/4, BPM, PPQ). Set **BPM**, optionally **Click**. External MIDI Start/Stop (and common surface mappings) can Begin/Stop the Source Clip and drive the host clock when enabled.
+Enable **Host Clock** so tempo-synced parameters like Delay Time see a DAW playhead (4/4, BPM, PPQ). Set **BPM**, optionally click the metronom light to hear a quarter-note **Click**. External MIDI Start/Stop (and common surface mappings) can Begin/Stop the Source Clip and drive the host clock when enabled.
 
 ## After capturing — promote, export, compare
 
@@ -305,16 +322,18 @@ Headless CI replay uses `plugin_renderer` + `SubprocessPluginHost` with the capt
 
 ## Troubleshooting
 
-| Problem | Fix |
-|---------|-----|
-| Gatekeeper blocks the app | `xattr -cr "AU Effects Explorer.app"`; Right-click → Open |
-| `aufx-test: command not found` | Activate `.venv` or use `.venv/bin/aufx-test`; GUI does not require Python |
-| Plugin host app not found | Build from source (below) or install from Releases |
-| Config / plugin path errors | Edit `host.config.json`; check `path` / AU id |
-| No presets in dropdown | Set `presets_dir` for that plugin |
-| Generate report / calibrate PNG skipped | Set `python_cli` to `.venv/bin/aufx-test` |
-| Need logs | `sessions/plugin_host_<hash>.log` |
-| No audio on Begin | Check macOS output device; confirm Hardware Audio Setup / Use Hardware path |
+
+| Problem                                 | Fix                                                                         |
+| --------------------------------------- | --------------------------------------------------------------------------- |
+| Gatekeeper blocks the app               | `xattr -cr "AU Effects Explorer.app"`; Right-click → Open                   |
+| `aufx-test: command not found`          | Activate `.venv` or use `.venv/bin/aufx-test` (CLI / reports only; hosting does not need Python) |
+| Plugin host app not found               | Build from source (below) or install from Releases                          |
+| Config / plugin path errors             | Edit `host.config.json`; check `path` / AU id                               |
+| No presets in dropdown                  | Set `presets_dir` for that plugin                                           |
+| Generate report / calibrate PNG skipped | Set `python_cli` to `.venv/bin/aufx-test`                                   |
+| Need logs                               | `sessions/plugin_host_<hash>.log`                                           |
+| No audio on Begin                       | Check macOS output device; confirm Hardware Audio Setup / Use Hardware path |
+
 
 ## Legacy: `aufx-test explore` REPL
 
@@ -326,14 +345,16 @@ aufx-test explore \
   --plugin "/Library/Audio/Plug-Ins/Components/TemeculaDSPDEEPZ.component"
 ```
 
-| | **explore REPL** | **Explorer + `aufx-test compare`** |
-|--|------------------|-------------------------------------|
-| Capture | Manual bounce + interactive prompts | In-app Capture Test Case (`Cmd+T`) |
-| Hearing / HIL | Not in the REPL | Full hardware loop, meters, Test, Calibrate |
-| Scoring a snapshot | Not its job | `aufx-test compare --root sessions <session> <snapshot> [--write-report]` |
-| Automation export | Via session promote/export after snaps exist | Same promote/export path after GUI captures |
 
-Prefer **AU Effects Explorer** for day-to-day work. Use **explore** only when you already have external bounces and want a scripted session without launching the app. To *evaluate* captures, use **`aufx-test compare`** (with `--root` for session snapshots)—there is no `session compare` subcommand.
+|                    | **explore REPL**                             | **Explorer +** `aufx-test compare`                                        |
+| ------------------ | -------------------------------------------- | ------------------------------------------------------------------------- |
+| Capture            | Manual bounce + interactive prompts          | In-app Capture Test Case (`Cmd+T`)                                        |
+| Hearing / HIL      | Not in the REPL                              | Full hardware loop, meters, Test, Calibrate                               |
+| Scoring a snapshot | Not its job                                  | `aufx-test compare --root sessions <session> <snapshot> [--write-report]` |
+| Automation export  | Via session promote/export after snaps exist | Same promote/export path after GUI captures                               |
+
+
+Prefer **AU Effects Explorer** for day-to-day work. Use **explore** only when you already have external bounces and want a scripted session without launching the app. To *evaluate* captures, use `aufx-test compare` (with `--root` for session snapshots)—there is no `session compare` subcommand.
 
 Non-interactive snaps without either GUI or REPL:
 
@@ -346,13 +367,13 @@ aufx-test session snap "MyEffect" "half mix" \
 
 ## Building from source
 
-Python is **not** required to build or run the host UI.
+Python is **not** required to build or run the host UI itself. Optional features that shell out to the CLI — **Generate report** after Capture Test Case, and level-sweep PNG plots — need a venv plus `python_cli` in `host.config.json` (typically `.venv/bin/aufx-test`).
 
 ```bash
 git clone --recurse-submodules https://github.com/tymcode/aufx-test.git
 cd aufx-test
 
-# One-shot: JUCE submodule, venv (optional for CLI), Release builds
+# One-shot: JUCE submodule, venv (optional for CLI / reports), Release builds
 ./scripts/bootstrap.sh
 
 # Or host only:

@@ -27,6 +27,9 @@ struct HardwareLoopSettings
     bool isConfigured() const { return deviceName.isNotEmpty(); }
     bool usesSeparateMonitorOutput() const { return monitorOutputDeviceName.isNotEmpty(); }
 
+    /** Cleared settings used when the user picks "None Selected" for send/return. */
+    static HardwareLoopSettings unconfigured() { return {}; }
+
     static juce::String channelPairLabel (int left, int right)
     {
         return juce::String (left + 1) + "-" + juce::String (right + 1);

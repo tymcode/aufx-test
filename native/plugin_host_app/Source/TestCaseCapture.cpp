@@ -130,19 +130,22 @@ void TestCaseCapture::prompt (juce::Component* parent,
     options->setName ({});
     aw->addCustomComponent (options);
 
+    const bool hardwareConfigured = engine.hasHardwareLoopConfigured();
     const bool storedCalibrate = HostPreferences::get().getHardwareCaptureCalibrate();
     const bool storedGenerateReport = HostPreferences::get().getCaptureGenerateReport();
     const bool storedSoftwareSettings = HostPreferences::get().getCaptureSoftwareSettings();
     const bool storedHardwareSettings = HostPreferences::get().getCaptureHardwareSettings();
     const bool midiConfigured = HostPreferences::get().getMidiOutIdentifier().isNotEmpty();
+    // Sysex dump only makes sense with a configured insert loop + MIDI out.
+    const bool hardwareSettingsAvailable = hardwareConfigured && midiConfigured;
 
     options->reportToggle.setToggleState (storedGenerateReport, juce::dontSendNotification);
     options->softwareSettingsToggle.setToggleState (storedSoftwareSettings, juce::dontSendNotification);
-    options->setHardwareSettingsAvailable (midiConfigured, storedHardwareSettings);
+    options->setHardwareSettingsAvailable (hardwareSettingsAvailable, storedHardwareSettings);
 
     // Heap so the modal callback and combo onChange share the same remembered state.
     auto calibrateState = std::make_shared<bool> (storedCalibrate);
-    auto hardwareSettingsState = std::make_shared<bool> (storedHardwareSettings && midiConfigured);
+    auto hardwareSettingsState = std::make_shared<bool> (storedHardwareSettings && hardwareSettingsAvailable);
 
     auto syncCalibrateForSource = [options, calibrateState] (int sourceIndex)
     {
@@ -177,17 +180,24 @@ void TestCaseCapture::prompt (juce::Component* parent,
 
     if (auto* sourceBox = aw->getComboBoxComponent ("source"))
     {
-        sourceBox->setSelectedItemIndex (juce::jlimit (0, 2, lastCaptureSourceIndex),
-                                         juce::dontSendNotification);
+        // AlertWindow addComboBox uses 1-based item IDs: 1 software, 2 Hardware, 3 Both.
+        sourceBox->setItemEnabled (2, hardwareConfigured);
+        sourceBox->setItemEnabled (3, hardwareConfigured);
+
+        int sourceIndex = juce::jlimit (0, 2, lastCaptureSourceIndex);
+        if (! hardwareConfigured && sourceIndex != 0)
+            sourceIndex = 0;
+
+        sourceBox->setSelectedItemIndex (sourceIndex, juce::dontSendNotification);
         sourceBox->onChange = [sourceBox, syncCalibrateForSource]
         {
             syncCalibrateForSource (juce::jmax (0, sourceBox->getSelectedItemIndex()));
         };
-        syncCalibrateForSource (juce::jmax (0, sourceBox->getSelectedItemIndex()));
+        syncCalibrateForSource (sourceIndex);
     }
     else
     {
-        syncCalibrateForSource (lastCaptureSourceIndex);
+        syncCalibrateForSource (hardwareConfigured ? lastCaptureSourceIndex : 0);
     }
 
     aw->addButton ("Capture", 1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -273,6 +283,12 @@ void TestCaseCapture::capture (const juce::String& snapshotName, int roleIndex, 
     if (! fixtureFile.existsAsFile())
     {
         setStatus ("Select a source clip before capturing", true);
+        return;
+    }
+
+    if ((sourceIndex == 1 || sourceIndex == 2) && ! engine.hasHardwareLoopConfigured())
+    {
+        setStatus ("Configure Hardware Audio Setup before capturing hardware", true);
         return;
     }
 

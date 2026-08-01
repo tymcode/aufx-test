@@ -154,6 +154,12 @@ void MainWindow::openHardwareAudioSetup()
 {
     if (auto* mainContent = dynamic_cast<MainContent*> (getContentComponent()))
         mainContent->openHardwareAudioSetup();
+
+    // Save may clear the loop (None Selected) and exit Use Hardware — refresh
+    // the preset/HW chrome and the Session menu tick/enable state.
+    refreshHardwareUi();
+    menuItemsChanged();
+    syncNativeMenuShortcuts();
 }
 
 void MainWindow::openMidiSetup()
