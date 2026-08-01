@@ -1,0 +1,12 @@
+{
+  "configurations": [
+    {
+      "name": "AU Effects Explorer",
+      "compileCommands": "${workspaceFolder}/native/build/compile_commands.json",
+      "intelliSenseMode": "macos-clang-arm64",
+      "cStandard": "c17",
+      "cppStandard": "c++17"
+    }
+  ],
+  "version": 4
+}

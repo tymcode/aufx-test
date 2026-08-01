@@ -19,7 +19,7 @@ from .host_app import default_config_path, default_host_app_bin, launch_host_app
 from .paths import unique_output_path
 from .session import ExperimentSession, StateSnapshot, TestSetup
 from .signal_ops import invert_phase, sum_signals
-from .silence import SilenceRegion, distance_from_silence, measure_silence_regions
+from .silence import SilenceRegion, distance_from_silence, measure_silence_regions, trim_leading_silence
 from .spectrum import DEFAULT_BANDS, FrequencyBand, analysis_bands, band_amplitude_over_time
 from .subprocess_host import RendererError, SubprocessPluginHost
 from .testgen import export_setups_json, export_test_module
@@ -66,6 +66,7 @@ __all__ = [
     "measure_silence_regions",
     "run_explore",
     "sum_signals",
+    "trim_leading_silence",
     "unique_output_path",
     "validate_aupreset",
 ]

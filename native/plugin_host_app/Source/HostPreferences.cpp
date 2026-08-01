@@ -178,11 +178,25 @@ void HostPreferences::setHardwareLoopSettings (const HardwareLoopSettings& setti
 {
     if (auto* s = this->settings())
     {
-        if (settings.deviceName.isEmpty())
+        // "None Selected" / unconfigured: drop the whole hardware-loop block so
+        // Use Hardware stays disabled and nothing stale survives a relaunch.
+        if (! settings.isConfigured())
+        {
             s->removeValue (keyHwDeviceName);
-        else
-            s->setValue (keyHwDeviceName, settings.deviceName);
+            s->removeValue (keyHwSendL);
+            s->removeValue (keyHwSendR);
+            s->removeValue (keyHwReturnL);
+            s->removeValue (keyHwReturnR);
+            s->removeValue (keyHwMonitorL);
+            s->removeValue (keyHwMonitorR);
+            s->removeValue (keyHwMonitorOutputDevice);
+            s->removeValue (keyHwBufferSize);
+            s->removeValue (keyHwLatencySamples);
+            s->saveIfNeeded();
+            return;
+        }
 
+        s->setValue (keyHwDeviceName, settings.deviceName);
         s->setValue (keyHwSendL, settings.sendChannelL);
         s->setValue (keyHwSendR, settings.sendChannelR);
         s->setValue (keyHwReturnL, settings.returnChannelL);

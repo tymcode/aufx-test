@@ -77,6 +77,7 @@ def test_write_html_report_links_mismatch_artifacts(sine_mono, sample_rate, tmp_
         expected=sine_mono,
         result=result,
         input_audio=sine_mono,
+        thresholds=ComparisonThresholds(),
     )
 
     output = write_html_report(
@@ -94,3 +95,6 @@ def test_write_html_report_links_mismatch_artifacts(sine_mono, sample_rate, tmp_
     assert "share_case" in html
     assert "share_case/actual.wav" in html
     assert "share_case/waveform.png" in html
+    assert "metric-ok" in html or "metric-bad" in html
+    assert "pill passed" in html
+    assert "pill failed" in html

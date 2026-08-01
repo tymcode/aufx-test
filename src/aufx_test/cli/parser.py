@@ -8,6 +8,7 @@ from pathlib import Path
 from .. import __version__
 from .calibrate_plot import add_calibrate_plot_parser
 from .compare import _cmd_compare
+from .compare_batch import add_compare_batch_parser
 from .explore_host import _cmd_explore, _cmd_host
 from .session_cmds import (
     _cmd_session_export,
@@ -76,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--json", action="store_true", help="Print metrics as JSON")
     compare.set_defaults(func=_cmd_compare)
 
+    add_compare_batch_parser(sub)
     add_calibrate_plot_parser(sub)
 
     explore = sub.add_parser("explore", help="Interactive manual exploration session")

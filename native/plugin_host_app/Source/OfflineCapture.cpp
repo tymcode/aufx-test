@@ -199,6 +199,9 @@ bool OfflineCapture::renderPluginToFile (juce::AudioPluginInstance& plugin,
         }
     }
 
+    // Align software captures with onset-trimmed goldens / compares.
+    AudioBufferUtils::trimLeadingSilence (outputBuffer, silenceThreshold);
+
     plugin.suspendProcessing (wasSuspended);
     plugin.setNonRealtime (wasNonRealtime);
 

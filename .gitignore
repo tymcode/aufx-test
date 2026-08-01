@@ -37,3 +37,28 @@ plugin-scan-last-run.txt
 plugin-scan-in-progress.txt
 host.config.json
 native/build-universal/
+
+# Session-exported pytest modules (regenerate with `aufx-test session export`)
+tests/generated/
+
+# Compare trees: keep the deepz example presets (+ READMEs) only
+compares/*
+!compares/deepz/
+compares/deepz/*
+!compares/deepz/README.md
+!compares/deepz/presets/
+!compares/deepz/presets/**
+!compares/deepz/goldens/
+compares/deepz/goldens/*
+!compares/deepz/goldens/README.md
+
+# Local DEEP/Z probe scripts (keep on disk; not shipped)
+scripts/probe_deepz_*.swift
+
+# Draft / personal notes (not shipped)
+docs/mac-app-distribution.md
+docs/merge-notes-refactor.md
+
+# Re-assert after negation rules that re-include preset trees
+.DS_Store
+**/.DS_Store

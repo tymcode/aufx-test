@@ -18,7 +18,69 @@ from .comparison import (
     compare_waveforms,
 )
 from .graphing import plot_difference_metrics, plot_waveforms
+from .silence import trim_leading_silence
 from .spectrum import analysis_bands, band_amplitude_over_time, band_amplitude_to_db
+
+
+def _metric_status_class(
+    kind: str,
+    value: float,
+    thresholds: dict[str, Any] | None,
+    *,
+    gated: bool = True,
+) -> str:
+    """Return ``metric-ok`` / ``metric-bad`` CSS class, or empty when ungated."""
+    if not gated or not thresholds:
+        return ""
+    if kind == "correlation":
+        return "metric-ok" if value >= float(thresholds.get("correlation_min", 0.0)) else "metric-bad"
+    if kind == "snr_db":
+        return "metric-ok" if value >= float(thresholds.get("snr_db_min", 0.0)) else "metric-bad"
+    if kind == "rms_error":
+        return "metric-ok" if value <= float(thresholds.get("rms_error_max", 0.0)) else "metric-bad"
+    if kind == "spectral_distance":
+        return (
+            "metric-ok"
+            if value <= float(thresholds.get("spectral_distance_max", 0.0))
+            else "metric-bad"
+        )
+    return ""
+
+
+def _metrics_pills_html(
+    metrics: dict[str, Any],
+    thresholds: dict[str, Any] | None = None,
+    *,
+    gated: bool = True,
+    include_spectral: bool = True,
+) -> str:
+    """Render metric value pills with optional pass/fail tinting."""
+    correlation = float(metrics.get("correlation", 0.0))
+    snr_db = float(metrics.get("snr_db", 0.0))
+    rms_error = float(metrics.get("rms_error", 0.0))
+    lag = int(metrics.get("alignment_lag_samples", 0))
+    pills = [
+        (
+            f'<span class="{_metric_status_class("correlation", correlation, thresholds, gated=gated)}">'
+            f"Correlation <strong>{correlation:.4f}</strong></span>"
+        ),
+        (
+            f'<span class="{_metric_status_class("snr_db", snr_db, thresholds, gated=gated)}">'
+            f"SNR <strong>{snr_db:.2f} dB</strong></span>"
+        ),
+        (
+            f'<span class="{_metric_status_class("rms_error", rms_error, thresholds, gated=gated)}">'
+            f"RMS error <strong>{rms_error:.6f}</strong></span>"
+        ),
+    ]
+    if include_spectral:
+        spectral = float(metrics.get("spectral_distance", 0.0))
+        pills.append(
+            f'<span class="{_metric_status_class("spectral_distance", spectral, thresholds, gated=gated)}">'
+            f"Spectral distance <strong>{spectral:.6f}</strong></span>"
+        )
+    pills.append(f"<span>Lag <strong>{lag} samples</strong></span>")
+    return "".join(pills)
 
 
 def compare_for_test(
@@ -28,13 +90,20 @@ def compare_for_test(
     thresholds: ComparisonThresholds | None = None,
     allow_extra_actual_tail: bool = True,
     max_alignment_samples: int = 64,
+    trim_actual_leading_silence: bool = True,
 ) -> ComparisonResult:
     """Compare waveforms with test-friendly length handling.
 
     When ``allow_extra_actual_tail`` is true (default), a longer actual render
     is trimmed to the reference length before scoring. Imported goldens may
     have truncated reverb tails; extra actual tail is not treated as a failure.
+
+    When ``trim_actual_leading_silence`` is true (default), leading silence on
+    the actual is removed (−60 dB peak) so captures line up with onset-trimmed
+    goldens.
     """
+    if trim_actual_leading_silence:
+        actual = trim_leading_silence(actual)
     return compare_waveforms(
         actual,
         expected,
@@ -243,6 +312,7 @@ def write_html_report(
             continue
         metadata = json.loads(metadata_path.read_text())
         metrics = metadata.get("metrics", {})
+        thresholds = metadata.get("thresholds", {}) or {}
         lengths = metadata.get("lengths", {})
         failures = "".join(f"<li>{escape(str(item))}</li>" for item in metadata.get("failures", []))
         setup = metadata.get("setup", {})
@@ -281,12 +351,7 @@ def write_html_report(
             <section class="case">
               <h2>{escape(str(metadata.get("name", report_dir.name)))}</h2>
               {preset_line}
-              <div class="metrics">
-                <span>Correlation <strong>{float(metrics.get("correlation", 0)):.4f}</strong></span>
-                <span>SNR <strong>{float(metrics.get("snr_db", 0)):.2f} dB</strong></span>
-                <span>RMS error <strong>{float(metrics.get("rms_error", 0)):.6f}</strong></span>
-                <span>Lag <strong>{int(metrics.get("alignment_lag_samples", 0))} samples</strong></span>
-              </div>
+              <div class="metrics">{_metrics_pills_html(metrics, thresholds, include_spectral=False)}</div>
               <ul class="failures">{failures}</ul>
               <div class="detail">Actual {lengths.get("actual_seconds", "?")}s ·
                 Expected {lengths.get("expected_seconds", "?")}s ·
@@ -316,11 +381,15 @@ def write_html_report(
     body {{ font: 15px system-ui,sans-serif; max-width:1200px; margin:40px auto; padding:0 24px; }}
     h1 {{ margin-bottom:4px; }} .summary {{ display:flex; gap:12px; margin:24px 0; }}
     .pill,.metrics span {{ padding:8px 12px; border:1px solid #8885; border-radius:8px; }}
+    .pill.passed {{ color:var(--ok); background:#23863622; border-color:#23863688; }}
+    .pill.failed {{ color:var(--bad); background:#cf222e22; border-color:#cf222e88; }}
     .failed,.failures {{ color:var(--bad); }} .passed {{ color:var(--ok); }}
+    .metrics {{ display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }}
+    .metrics span.metric-ok {{ background:#23863633; border-color:#23863699; }}
+    .metrics span.metric-bad {{ background:#cf222e33; border-color:#cf222e99; }}
     table {{ width:100%; border-collapse:collapse; }}
     td,th {{ padding:8px; border-bottom:1px solid #8884; text-align:left; }}
     .case {{ margin:36px 0; padding:22px; border:1px solid #8885; border-radius:12px; }}
-    .metrics {{ display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }}
     .detail {{ color:var(--muted); margin:12px 0; }}
     .audio-grid {{ display:grid; gap:8px; margin:18px 0; }}
     .audio {{ display:grid; grid-template-columns:75px minmax(250px,1fr) 70px; align-items:center; gap:10px; }}
@@ -369,41 +438,8 @@ def write_compare_html_report(
         relative = os.path.relpath(Path(path).resolve(), output.parent)
         return quote(Path(relative).as_posix())
 
-    def metric_status(kind: str, value: float) -> str:
-        """Return CSS class for threshold pass/fail; empty when no gate applies."""
-        if not gated or not thresholds:
-            return ""
-        if kind == "correlation":
-            return "metric-ok" if value >= float(thresholds.get("correlation_min", 0.0)) else "metric-bad"
-        if kind == "snr_db":
-            return "metric-ok" if value >= float(thresholds.get("snr_db_min", 0.0)) else "metric-bad"
-        if kind == "rms_error":
-            return "metric-ok" if value <= float(thresholds.get("rms_error_max", 0.0)) else "metric-bad"
-        if kind == "spectral_distance":
-            return (
-                "metric-ok"
-                if value <= float(thresholds.get("spectral_distance_max", 0.0))
-                else "metric-bad"
-            )
-        return ""
-
     def metrics_html(metrics: dict[str, Any]) -> str:
-        correlation = float(metrics.get("correlation", 0.0))
-        snr_db = float(metrics.get("snr_db", 0.0))
-        rms_error = float(metrics.get("rms_error", 0.0))
-        spectral = float(metrics.get("spectral_distance", 0.0))
-        lag = int(metrics.get("alignment_lag_samples", 0))
-        return (
-            f'<span class="{metric_status("correlation", correlation)}">'
-            f"Correlation <strong>{correlation:.4f}</strong></span>"
-            f'<span class="{metric_status("snr_db", snr_db)}">'
-            f"SNR <strong>{snr_db:.2f} dB</strong></span>"
-            f'<span class="{metric_status("rms_error", rms_error)}">'
-            f"RMS error <strong>{rms_error:.6f}</strong></span>"
-            f'<span class="{metric_status("spectral_distance", spectral)}">'
-            f"Spectral distance <strong>{spectral:.6f}</strong></span>"
-            f"<span>Lag <strong>{lag} samples</strong></span>"
-        )
+        return _metrics_pills_html(metrics, thresholds, gated=gated)
 
     views = comparison_views or []
     if not views:

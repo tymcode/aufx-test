@@ -18,6 +18,8 @@ void HardwareLoopOps::setHardwareLoopSettings (const HardwareLoopSettings& setti
 {
     const juce::ScopedLock lock (processLock);
     hardwareSettings = settings;
+    if (! settings.isConfigured())
+        hardwareMode.store (false);
     ensureLatencyBufferSize (2, juce::jmax (settings.latencySamples + deviceBlockSize * 4,
                                             deviceBlockSize * 8));
 }

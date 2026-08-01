@@ -107,7 +107,7 @@ def launch_host_app(
     if not config_path.is_file():
         raise FileNotFoundError(
             f"Host config not found: {config_path}\n"
-            "Create host.config.json at the project root (see docs/manual-exploration.md)."
+            "Create host.config.json at the project root (see docs/aufx-explorer.md)."
         )
 
     host_bin = Path(host_app_bin) if host_app_bin is not None else default_host_app_bin(root)
