@@ -139,7 +139,7 @@ Experiment in the **AU Effects Explorer** host, or capture from a DAW:
 APP="native/build/plugin_host_app/plugin_host_app_artefacts/Release/AU Effects Explorer.app"
 open "$APP" --args --config "$(pwd)/host.config.json" --project-root "$(pwd)"
 
-# Optional: Python wrapper (needs a working .venv — see docs/manual-exploration.md)
+# Optional: Python wrapper (needs a working .venv — see docs/aufx-explorer.md)
 # source .venv/bin/activate && aufx-test host
 
 # Legacy: terminal REPL after bouncing in a DAW
@@ -161,7 +161,7 @@ Headless replay uses `SubprocessPluginHost` with the JUCE `plugin_renderer` CLI 
 
 See [native/README.md](native/README.md) and [docs/plugin-renderer.md](docs/plugin-renderer.md).
 
-See [docs/manual-exploration.md](docs/manual-exploration.md) for the full workflow.
+See [docs/aufx-explorer.md](docs/aufx-explorer.md) for the full host workflow.
 
 ### Share a Mac build
 

@@ -64,7 +64,7 @@ Optional Python wrapper (requires a working `.venv`):
 aufx-test host
 ```
 
-See [docs/manual-exploration.md](../docs/manual-exploration.md) if venv activation fails with permission errors.
+See [docs/aufx-explorer.md](../docs/aufx-explorer.md) if venv activation fails with permission errors.
 
 ## Usage
 
