@@ -80,6 +80,74 @@ void PresetHardwareState::refreshHardwareModeUi()
     bypassButton.setEnabled (! hw);
 }
 
+void PresetHardwareState::mergeExtraFiles (juce::Array<juce::File>& files, const juce::Array<juce::File>& extras)
+{
+    for (const auto& file : extras)
+        if (file.existsAsFile())
+            files.addIfNotAlreadyThere (file);
+}
+
+juce::File PresetHardwareState::currentExplorationSessionDir() const
+{
+    if (! isValidPluginSelected())
+        return config.sessionsRoot;
+
+    if (config.sessionsRoot == juce::File())
+        return {};
+
+    return config.sessionsRoot.getChildFile (HostConfig::slugify (getCurrentPlugin().sessionName));
+}
+
+juce::File PresetHardwareState::fileChooserStartDir() const
+{
+    const auto sessionDir = currentExplorationSessionDir();
+    if (sessionDir != juce::File())
+    {
+        const auto artifactsDir = sessionDir.getChildFile ("artifacts");
+        if (artifactsDir.isDirectory())
+            return artifactsDir;
+        if (sessionDir.isDirectory())
+        {
+            // Prefer artifacts even on first capture — create if the session exists.
+            artifactsDir.createDirectory();
+            if (artifactsDir.isDirectory())
+                return artifactsDir;
+            return sessionDir;
+        }
+    }
+    if (config.sessionsRoot.isDirectory())
+        return config.sessionsRoot;
+    return juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+}
+
+void PresetHardwareState::appendSelectOtherItem()
+{
+    presetBox.addItem (utf8 ("Select other…"), selectOtherItemId);
+}
+
+void PresetHardwareState::restoreSelectionAfterSelectOtherCancelled()
+{
+    if (lastNonOtherItemId > 0 && lastNonOtherItemId != selectOtherItemId
+        && presetBox.indexOfItemId (lastNonOtherItemId) >= 0)
+    {
+        presetBox.setSelectedId (lastNonOtherItemId, juce::dontSendNotification);
+        return;
+    }
+
+    for (int i = 0; i < presetBox.getNumItems(); ++i)
+    {
+        const int id = presetBox.getItemId (i);
+        if (id != selectOtherItemId)
+        {
+            presetBox.setSelectedId (id, juce::dontSendNotification);
+            lastNonOtherItemId = id;
+            return;
+        }
+    }
+
+    presetBox.setSelectedId (0, juce::dontSendNotification);
+}
+
 void PresetHardwareState::populateHardwareStates()
 {
     presetBox.clear (juce::dontSendNotification);
@@ -88,7 +156,7 @@ void PresetHardwareState::populateHardwareStates()
     if (! isValidPluginSelected())
         return;
 
-    const auto sessionDir = config.sessionsRoot.getChildFile (HostConfig::slugify (getCurrentPlugin().sessionName));
+    const auto sessionDir = currentExplorationSessionDir();
     const auto artifactsDir = sessionDir.getChildFile ("artifacts");
     if (artifactsDir.isDirectory())
     {
@@ -109,13 +177,19 @@ void PresetHardwareState::populateHardwareStates()
         }
     }
 
+    mergeExtraFiles (hardwareStateFiles, extraHardwareStateFiles);
     HostFileUtils::sortFilesByName (hardwareStateFiles, HostFileUtils::SortMode::natural);
 
     for (int i = 0; i < hardwareStateFiles.size(); ++i)
         presetBox.addItem (hardwareStateFiles[i].getFileNameWithoutExtension(), i + 1);
 
-    if (presetBox.getNumItems() > 0)
+    appendSelectOtherItem();
+
+    if (hardwareStateFiles.size() > 0)
+    {
         presetBox.setSelectedItemIndex (0, juce::dontSendNotification);
+        lastNonOtherItemId = presetBox.getSelectedId();
+    }
 }
 
 void PresetHardwareState::sendSelectedHardwareState()
@@ -176,12 +250,14 @@ bool PresetHardwareState::sendHardwareStateFile (const juce::File& sysexFile, ju
 
 void PresetHardwareState::populatePresets()
 {
-    presetBox.clear();
+    presetBox.clear (juce::dontSendNotification);
     presetFiles.clearQuick();
 
     if (! isValidPluginSelected())
     {
         presetBox.addItem ("(no plugin)", 1);
+        lastNonOtherItemId = 1;
+        presetBox.setSelectedId (1, juce::dontSendNotification);
         return;
     }
 
@@ -189,19 +265,45 @@ void PresetHardwareState::populatePresets()
     if (presetsDir != juce::File())
         presetsDir.createDirectory();
 
-    if (! presetsDir.isDirectory())
+    if (presetsDir.isDirectory())
     {
-        presetBox.addItem ("(no presets folder)", 1);
-        return;
+        presetFiles = HostFileUtils::collectFiles (presetsDir, ".aupreset", true);
     }
 
-    presetFiles = HostFileUtils::collectFiles (presetsDir, ".aupreset", true);
+    mergeExtraFiles (presetFiles, extraPresetFiles);
 
     for (int i = 0; i < presetFiles.size(); ++i)
-        presetBox.addItem (presetDisplayPath (presetFiles[i], presetsDir), i + 1);
+    {
+        const auto& file = presetFiles.getReference (i);
+        // Select-other picks outside presets_dir: basename only (no path).
+        const bool showBasenameOnly = ! presetsDir.isDirectory()
+                                      || ! file.isAChildOf (presetsDir);
+        const auto label = showBasenameOnly
+                               ? stripAupresetExtension (file.getFileName())
+                               : presetDisplayPath (file, presetsDir);
+        presetBox.addItem (label, i + 1);
+    }
 
     if (presetFiles.isEmpty())
-        presetBox.addItem ("(no presets found)", 1);
+    {
+        if (! presetsDir.isDirectory())
+            presetBox.addItem ("(no presets folder)", 1);
+        else
+            presetBox.addItem ("(no presets found)", 1);
+    }
+
+    appendSelectOtherItem();
+
+    if (presetFiles.size() > 0)
+    {
+        presetBox.setSelectedItemIndex (0, juce::dontSendNotification);
+        lastNonOtherItemId = presetBox.getSelectedId();
+    }
+    else
+    {
+        lastNonOtherItemId = 1;
+        presetBox.setSelectedId (1, juce::dontSendNotification);
+    }
 }
 
 juce::String PresetHardwareState::stripAupresetExtension (juce::String name)
@@ -332,9 +434,11 @@ void PresetHardwareState::importDroppedAupresets (const juce::StringArray& files
                 if (moreConflictsAhead)
                     dialog.addCustomComponent (&applyToAll);
 
-                dialog.addButton ("Replace", 1, juce::KeyPress (juce::KeyPress::returnKey));
-                dialog.addButton ("Skip", 2);
                 dialog.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                dialog.addButton ("Skip", 2);
+                dialog.addButton ("Replace", 1, juce::KeyPress (juce::KeyPress::returnKey));
+                if (auto* cancel = dialog.getButton ("Cancel"))
+                    cancel->setWantsKeyboardFocus (false);
 
                 const int result = dialog.runModalLoop();
                 if (result == 0)
@@ -428,6 +532,7 @@ void PresetHardwareState::selectPresetInDropdown (const juce::File& presetFile)
             || presetFiles[i].getFullPathName() == presetFile.getFullPathName())
         {
             presetBox.setSelectedItemIndex (i, juce::dontSendNotification);
+            lastNonOtherItemId = presetBox.getSelectedId();
             savePresetNameEditor.setText (presetFile.getFileNameWithoutExtension(),
                                           juce::dontSendNotification);
             return;
@@ -488,6 +593,25 @@ bool PresetHardwareState::loadPresetFile (const juce::File& presetFile, juce::St
 
     if (auto* editor = getPluginEditor())
         editor->repaint();
+
+    // Snapshot / artifact presets may sit outside presets_dir — keep them in the
+    // dropdown so the main window shows the restored basename.
+    bool alreadyListed = false;
+    for (const auto& listed : presetFiles)
+    {
+        if (listed == presetFile
+            || listed.getFullPathName() == presetFile.getFullPathName())
+        {
+            alreadyListed = true;
+            break;
+        }
+    }
+
+    if (! alreadyListed)
+    {
+        extraPresetFiles.addIfNotAlreadyThere (presetFile);
+        populatePresets();
+    }
 
     selectPresetInDropdown (presetFile);
     savePresetNameEditor.setText (presetFile.getFileNameWithoutExtension(),
@@ -614,8 +738,109 @@ void PresetHardwareState::handleLoadButton()
         loadSelectedPreset();
 }
 
+void PresetHardwareState::browseForOtherPreset()
+{
+    auto chooser = std::make_shared<juce::FileChooser> (utf8 ("Select AU preset"),
+                                                        fileChooserStartDir(),
+                                                        "*.aupreset");
+    activeFileChooser = chooser;
+    chooser->launchAsync (juce::FileBrowserComponent::openMode
+                              | juce::FileBrowserComponent::canSelectFiles,
+                          [this, chooser] (const juce::FileChooser& fc)
+                          {
+                              activeFileChooser.reset();
+                              const auto result = fc.getResult();
+                              if (result == juce::File())
+                              {
+                                  restoreSelectionAfterSelectOtherCancelled();
+                                  return;
+                              }
+                              applyChosenPresetFile (result);
+                          });
+}
+
+void PresetHardwareState::browseForOtherHardwareState()
+{
+    auto chooser = std::make_shared<juce::FileChooser> (utf8 ("Select hardware sysex dump"),
+                                                        fileChooserStartDir(),
+                                                        "*.syx");
+    activeFileChooser = chooser;
+    chooser->launchAsync (juce::FileBrowserComponent::openMode
+                              | juce::FileBrowserComponent::canSelectFiles,
+                          [this, chooser] (const juce::FileChooser& fc)
+                          {
+                              activeFileChooser.reset();
+                              const auto result = fc.getResult();
+                              if (result == juce::File())
+                              {
+                                  restoreSelectionAfterSelectOtherCancelled();
+                                  return;
+                              }
+                              applyChosenHardwareStateFile (result);
+                          });
+}
+
+void PresetHardwareState::applyChosenPresetFile (const juce::File& file)
+{
+    if (! file.existsAsFile() || ! file.hasFileExtension (".aupreset"))
+    {
+        setStatus (utf8 ("Selected file is not an .aupreset"), true);
+        restoreSelectionAfterSelectOtherCancelled();
+        return;
+    }
+
+    extraPresetFiles.addIfNotAlreadyThere (file);
+    const auto preferred = file;
+    populatePresets();
+    selectPresetInDropdown (preferred);
+    lastNonOtherItemId = presetBox.getSelectedId();
+    savePresetNameEditor.setText (preferred.getFileNameWithoutExtension(),
+                                  juce::dontSendNotification);
+    setStatus (utf8 ("Selected preset: ") + preferred.getFileNameWithoutExtension(), false);
+}
+
+void PresetHardwareState::applyChosenHardwareStateFile (const juce::File& file)
+{
+    if (! file.existsAsFile() || ! file.hasFileExtension (".syx"))
+    {
+        setStatus (utf8 ("Selected file is not a .syx dump"), true);
+        restoreSelectionAfterSelectOtherCancelled();
+        return;
+    }
+
+    extraHardwareStateFiles.addIfNotAlreadyThere (file);
+    populateHardwareStates();
+
+    for (int i = 0; i < hardwareStateFiles.size(); ++i)
+    {
+        if (hardwareStateFiles[i] == file
+            || hardwareStateFiles[i].getFullPathName() == file.getFullPathName())
+        {
+            presetBox.setSelectedId (i + 1, juce::dontSendNotification);
+            lastNonOtherItemId = i + 1;
+            setStatus (utf8 ("Selected HW state: ") + file.getFileNameWithoutExtension(), false);
+            return;
+        }
+    }
+
+    restoreSelectionAfterSelectOtherCancelled();
+}
+
 void PresetHardwareState::onPresetBoxChanged()
 {
+    const int selectedId = presetBox.getSelectedId();
+    if (selectedId == selectOtherItemId)
+    {
+        if (engine.isHardwareMode())
+            browseForOtherHardwareState();
+        else
+            browseForOtherPreset();
+        return;
+    }
+
+    if (selectedId > 0)
+        lastNonOtherItemId = selectedId;
+
     const auto presetFile = getSelectedPresetFile();
     if (presetFile.exists())
     {

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .aupreset import import_aupreset, validate_aupreset
-from .comparison import ComparisonThresholds
+from .comparison import ComparisonThresholds, thresholds_from_dict
 from .golden_import import GoldenTriplet, discover_golden_triplets
 from .naming import (
     _artifact_subdir,
@@ -249,7 +249,7 @@ class ExperimentSession:
             return str(resolved)
 
     def snapshot_to_test_setup(self, snap: StateSnapshot, *, portable: bool = False) -> TestSetup:
-        thresholds = ComparisonThresholds(**snap.thresholds) if snap.thresholds else ComparisonThresholds()
+        thresholds = thresholds_from_dict(snap.thresholds)
         if portable:
             input_path = self._portable_path(snap.input_audio) or ""
             output_path = self._portable_path(snap.output_audio) or ""

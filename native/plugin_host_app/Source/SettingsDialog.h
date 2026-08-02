@@ -4,56 +4,81 @@
 #include "HostConfig.h"
 
 class SettingsPanel : public juce::Component,
-                      private juce::ListBoxModel
+                      private juce::TextEditor::Listener
 {
 public:
-    explicit SettingsPanel (const HostConfig& config, juce::KnownPluginList* knownPlugins);
+    explicit SettingsPanel (const HostConfig& config);
+    ~SettingsPanel() override;
 
     void resized() override;
 
     juce::File getSelectedDataRoot() const;
     juce::File getSelectedConfigOverride() const;
-    bool getAllowInstrumentAudioInput() const;
-    int getPluginScanTimeoutMs() const;
+    juce::File getSelectedFixturesDir() const;
+    juce::File getSelectedSessionsRoot() const;
+    juce::File getSelectedPythonCli() const;
+    juce::String getSelectedDefaultPluginId (const HostConfig& config) const;
     bool wantsResetToDefaults() const { return resetRequested; }
-    bool didModifyPluginCache() const { return pluginCacheModified; }
 
 private:
-    int getNumRows() override;
-    void paintListBoxItem (int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected) override;
-    void selectedRowsChanged (int lastRowSelected) override;
+    enum class CliTestState
+    {
+        untested,
+        ok,
+        failed
+    };
 
-    void reloadSkippedList();
-    void updateRetryEnabled();
-    void retrySelectedSkippedPlugin();
+    void textEditorTextChanged (juce::TextEditor& editor) override;
+    void textEditorReturnKeyPressed (juce::TextEditor&) override {}
+    void textEditorEscapeKeyPressed (juce::TextEditor&) override {}
+    void textEditorFocusLost (juce::TextEditor&) override {}
 
-    juce::File dataRoot;
-    juce::KnownPluginList* knownPlugins { nullptr };
-    juce::StringArray skippedIds;
+    void updateCliHint();
+    void setCliTestState (CliTestState state);
+    void runCliTest();
+    juce::File expandUserPath (const juce::String& text) const;
+    juce::File inferAufxTestCli() const;
 
     juce::Label dataRootLabel;
     juce::TextEditor dataRootEditor;
-    juce::TextButton chooseDataRootButton { "Choose..." };
-    juce::TextButton revealDataRootButton { "Reveal" };
+    juce::TextButton chooseDataRootButton;
+    juce::TextButton revealDataRootButton;
+
     juce::Label configLabel;
     juce::TextEditor configEditor;
-    juce::TextButton chooseConfigButton { "Choose..." };
-    juce::TextButton clearConfigButton { "Clear" };
-    juce::ToggleButton allowInstrumentInputToggle;
-    juce::Label scanTimeoutLabel;
-    juce::ComboBox scanTimeoutBox;
-    juce::Label skippedHeading;
-    juce::ListBox skippedList { "skipped", this };
-    juce::TextButton retrySkippedButton { "Retry selected" };
-    juce::TextButton resetButton { "Reset to defaults" };
+    juce::TextButton chooseConfigButton;
+    juce::TextButton clearConfigButton;
+
+    juce::Label fixturesLabel;
+    juce::TextEditor fixturesEditor;
+    juce::TextButton chooseFixturesButton;
+    juce::TextButton revealFixturesButton;
+
+    juce::Label sessionsLabel;
+    juce::TextEditor sessionsEditor;
+    juce::TextButton chooseSessionsButton;
+    juce::TextButton revealSessionsButton;
+
+    juce::Label pythonCliLabel;
+    juce::TextEditor pythonCliEditor;
+    juce::TextButton testPythonCliButton;
+    juce::TextButton clearPythonCliButton;
+    juce::Label pythonCliHint;
+    CliTestState cliTestState { CliTestState::untested };
+    juce::String lastTestedCliText;
+
+    juce::Label defaultPluginLabel;
+    juce::ComboBox defaultPluginBox;
+
+    juce::TextButton resetButton;
     bool resetRequested { false };
-    bool pluginCacheModified { false };
 };
 
 /**
- * Shows Settings. When knownPlugins is non-null, skipped-plugin retries update
- * that list (and the on-disk cache) immediately.
+ * Shows Settings. On success, updates exploration prefs and host.config.json
+ * path fields (fixtures, sessions, aufx-test CLI, default_plugin). Folder/config
+ * override still require relaunch. Returns true if the user saved.
  */
 bool showSettingsDialog (HostConfig& config,
-                         juce::KnownPluginList* knownPlugins,
-                         juce::Component* centreAround);
+                         juce::Component* centreAround,
+                         bool* outFixturesChanged = nullptr);

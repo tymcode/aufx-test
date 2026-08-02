@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from .comparison import ComparisonThresholds
+from .comparison import ComparisonThresholds, thresholds_from_dict
 from .naming import _utc_now
 
 
@@ -68,6 +68,6 @@ class TestSetup:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TestSetup:
         thresholds_data = data.pop("thresholds", {})
-        thresholds = ComparisonThresholds(**thresholds_data) if thresholds_data else ComparisonThresholds()
+        thresholds = thresholds_from_dict(thresholds_data)
         allowed = {k: v for k, v in data.items() if k in cls.__dataclass_fields__ and k != "thresholds"}
         return cls(thresholds=thresholds, **allowed)

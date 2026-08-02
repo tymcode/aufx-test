@@ -12,7 +12,7 @@ def test_load_compare_config_missing(tmp_path):
     data = load_compare_config(tmp_path / "missing.json")
     assert data.num_of_bands == 7
     assert data.window_samples == 4096
-    assert data.thresholds.snr_db_min == 30.0
+    assert data.thresholds.correlation_min == 0.95
 
 
 def test_num_of_bands_from_file(tmp_path):
@@ -25,7 +25,6 @@ def test_num_of_bands_from_file(tmp_path):
           "band_high_hz": 10000,
           "window_samples": 2048,
           "thresholds": {
-            "snr_db_min": 25,
             "correlation_min": 0.9,
             "rms_error_max": 0.1,
             "spectral_distance_max": 0.2
@@ -38,7 +37,9 @@ def test_num_of_bands_from_file(tmp_path):
     assert cfg.num_of_bands == 4
     assert cfg.window_samples == 2048
     assert cfg.band_low_hz == 40
-    assert cfg.thresholds.snr_db_min == 25.0
+    assert cfg.thresholds.correlation_min == 0.9
+    assert cfg.thresholds.rms_error_max == 0.1
+    assert cfg.thresholds.spectral_distance_max == 0.2
     bands = analysis_bands(config=cfg)
     assert len(bands) == 4
     assert bands[0].low_hz == 40

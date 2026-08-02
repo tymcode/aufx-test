@@ -38,7 +38,6 @@ def _parse_thresholds(raw: Any) -> ComparisonThresholds:
     if not isinstance(raw, dict):
         return base
     return ComparisonThresholds(
-        snr_db_min=float(raw.get("snr_db_min", base.snr_db_min)),
         correlation_min=float(raw.get("correlation_min", base.correlation_min)),
         rms_error_max=float(raw.get("rms_error_max", base.rms_error_max)),
         spectral_distance_max=float(raw.get("spectral_distance_max", base.spectral_distance_max)),

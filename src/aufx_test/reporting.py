@@ -34,8 +34,6 @@ def _metric_status_class(
         return ""
     if kind == "correlation":
         return "metric-ok" if value >= float(thresholds.get("correlation_min", 0.0)) else "metric-bad"
-    if kind == "snr_db":
-        return "metric-ok" if value >= float(thresholds.get("snr_db_min", 0.0)) else "metric-bad"
     if kind == "rms_error":
         return "metric-ok" if value <= float(thresholds.get("rms_error_max", 0.0)) else "metric-bad"
     if kind == "spectral_distance":
@@ -47,6 +45,15 @@ def _metric_status_class(
     return ""
 
 
+def _format_level_gain_db(value: float) -> str:
+    if not isinstance(value, (int, float)) or value != value:  # NaN
+        return "n/a"
+    if value == float("inf") or value == float("-inf"):
+        return "n/a"
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f} dB"
+
+
 def _metrics_pills_html(
     metrics: dict[str, Any],
     thresholds: dict[str, Any] | None = None,
@@ -56,7 +63,11 @@ def _metrics_pills_html(
 ) -> str:
     """Render metric value pills with optional pass/fail tinting."""
     correlation = float(metrics.get("correlation", 0.0))
-    snr_db = float(metrics.get("snr_db", 0.0))
+    raw_gain = metrics.get("level_gain_db", float("nan"))
+    try:
+        level_gain_db = float(raw_gain)
+    except (TypeError, ValueError):
+        level_gain_db = float("nan")
     rms_error = float(metrics.get("rms_error", 0.0))
     lag = int(metrics.get("alignment_lag_samples", 0))
     pills = [
@@ -64,10 +75,7 @@ def _metrics_pills_html(
             f'<span class="{_metric_status_class("correlation", correlation, thresholds, gated=gated)}">'
             f"Correlation <strong>{correlation:.4f}</strong></span>"
         ),
-        (
-            f'<span class="{_metric_status_class("snr_db", snr_db, thresholds, gated=gated)}">'
-            f"SNR <strong>{snr_db:.2f} dB</strong></span>"
-        ),
+        f"<span>Level <strong>{_format_level_gain_db(level_gain_db)}</strong></span>",
         (
             f'<span class="{_metric_status_class("rms_error", rms_error, thresholds, gated=gated)}">'
             f"RMS error <strong>{rms_error:.6f}</strong></span>"
@@ -531,7 +539,6 @@ def write_compare_html_report(
         thresholds_section = f"""
   <h2>Thresholds</h2>
   <div class="metrics">
-    <span>SNR min <strong>{float(thresholds.get('snr_db_min', 0)):.2f} dB</strong></span>
     <span>Correlation min <strong>{float(thresholds.get('correlation_min', 0)):.4f}</strong></span>
     <span>RMS max <strong>{float(thresholds.get('rms_error_max', 0)):.6f}</strong></span>
     <span>Spectral max <strong>{float(thresholds.get('spectral_distance_max', 0)):.6f}</strong></span>

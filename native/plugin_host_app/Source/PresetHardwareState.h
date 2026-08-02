@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <functional>
+#include <memory>
 #include "HostConfig.h"
 #include "MidiEndpointInfo.h"
 #include "PluginAudioEngine.h"
@@ -60,11 +61,22 @@ public:
     const juce::Array<juce::File>& getHardwareStateFiles() const { return hardwareStateFiles; }
 
 private:
+    static constexpr int selectOtherItemId = 0x0ffe0001;
+
     static juce::String stripAupresetExtension (juce::String name);
     static juce::String presetDisplayPath (const juce::File& file, const juce::File& presetsDir);
     static void collectAupresetFiles (const juce::File& file, juce::Array<juce::File>& out);
+    static void mergeExtraFiles (juce::Array<juce::File>& files, const juce::Array<juce::File>& extras);
 
     juce::File presetFileForName (const juce::String& presetName) const;
+    juce::File currentExplorationSessionDir() const;
+    juce::File fileChooserStartDir() const;
+    void appendSelectOtherItem();
+    void restoreSelectionAfterSelectOtherCancelled();
+    void browseForOtherPreset();
+    void browseForOtherHardwareState();
+    void applyChosenPresetFile (const juce::File& file);
+    void applyChosenHardwareStateFile (const juce::File& file);
     void commitPresetSave (const juce::File& dest, bool replacing);
 
     PluginAudioEngine& engine;
@@ -86,5 +98,9 @@ private:
 
     juce::Array<juce::File> presetFiles;
     juce::Array<juce::File> hardwareStateFiles;
+    juce::Array<juce::File> extraPresetFiles;
+    juce::Array<juce::File> extraHardwareStateFiles;
+    int lastNonOtherItemId { 0 };
+    std::shared_ptr<juce::FileChooser> activeFileChooser;
     juce::ScopedMessageBox replacePresetDialog;
 };

@@ -147,14 +147,18 @@ void TestCaseCapture::prompt (juce::Component* parent,
     auto calibrateState = std::make_shared<bool> (storedCalibrate);
     auto hardwareSettingsState = std::make_shared<bool> (storedHardwareSettings && hardwareSettingsAvailable);
 
-    auto syncCalibrateForSource = [options, calibrateState] (int sourceIndex)
+    auto syncOptionsForSource = [options, calibrateState, hardwareSettingsState,
+                                 hardwareSettingsAvailable] (int sourceIndex)
     {
         const bool hardwareCapture = sourceIndex == 1 || sourceIndex == 2;
+
         if (hardwareCapture)
         {
             options->calibrateToggle.setEnabled (true);
             options->calibrateToggle.setAlpha (1.0f);
             options->calibrateToggle.setToggleState (*calibrateState, juce::dontSendNotification);
+
+            options->setHardwareSettingsAvailable (hardwareSettingsAvailable, *hardwareSettingsState);
         }
         else
         {
@@ -163,6 +167,11 @@ void TestCaseCapture::prompt (juce::Component* parent,
             options->calibrateToggle.setEnabled (false);
             options->calibrateToggle.setAlpha (0.45f);
             options->calibrateToggle.setToggleState (false, juce::dontSendNotification);
+
+            if (options->hardwareSettingsToggle.isEnabled())
+                *hardwareSettingsState = options->hardwareSettingsToggle.getToggleState();
+            // Unselect and dim Hardware when Capture is Rendered plugin only.
+            options->setHardwareSettingsAvailable (false, false);
         }
     };
 
@@ -189,19 +198,33 @@ void TestCaseCapture::prompt (juce::Component* parent,
             sourceIndex = 0;
 
         sourceBox->setSelectedItemIndex (sourceIndex, juce::dontSendNotification);
-        sourceBox->onChange = [sourceBox, syncCalibrateForSource]
+        sourceBox->onChange = [sourceBox, syncOptionsForSource]
         {
-            syncCalibrateForSource (juce::jmax (0, sourceBox->getSelectedItemIndex()));
+            syncOptionsForSource (juce::jmax (0, sourceBox->getSelectedItemIndex()));
         };
-        syncCalibrateForSource (sourceIndex);
+        syncOptionsForSource (sourceIndex);
     }
     else
     {
-        syncCalibrateForSource (hardwareConfigured ? lastCaptureSourceIndex : 0);
+        syncOptionsForSource (hardwareConfigured ? lastCaptureSourceIndex : 0);
     }
 
-    aw->addButton ("Capture", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->addButton ("Capture", 1, juce::KeyPress (juce::KeyPress::returnKey));
+
+    // Cancel is leftmost for layout, but must not steal Return (Button::keyPressed
+    // triggers a click on any focused button). Escape still cancels via shortcut.
+    for (int i = 0; i < aw->getNumChildComponents(); ++i)
+    {
+        if (auto* button = dynamic_cast<juce::TextButton*> (aw->getChildComponent (i)))
+        {
+            if (button->getButtonText() == "Cancel")
+                button->setWantsKeyboardFocus (false);
+        }
+    }
+
+    if (auto* descriptionEditor = aw->getTextEditor ("description"))
+        descriptionEditor->onReturnKey = [aw] { aw->triggerButtonClick ("Capture"); };
 
     aw->enterModalState (true,
                          juce::ModalCallbackFunction::create (

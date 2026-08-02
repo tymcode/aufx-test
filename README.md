@@ -74,7 +74,7 @@ Typical host → automation flow: capture in Explorer → `session promote` → 
 
 - **Waveform capture & comparison** — snapshot audio before/after parameter changes and compare to a reference
 - **Frequency-band analysis** — measure amplitude in configurable bands over time (`compare.config.json`)
-- **Difference metrics** — SNR, correlation, RMS error, spectral distance, and more
+- **Difference metrics** — level gain vs dry/reference, correlation, RMS error, spectral distance, and more
 - **Silence analysis** — distance-from-silence curves and per-channel silence region detection
 - **Signal utilities** — per-channel phase inversion, signal summing
 - **Visualization** — graph any analysis result for quick inspection
@@ -118,7 +118,7 @@ pair = capture_before_after(
     adjust_controls={"mix": 0.5},
 )
 
-result = compare_waveforms(pair.after, reference, snr_db_min=30.0)
+result = compare_waveforms(pair.after, reference, correlation_min=0.95)
 assert result.passed, result.summary()
 
 plot_comparison(pair.before, pair.after, reference, save_path="output/comparison.png")

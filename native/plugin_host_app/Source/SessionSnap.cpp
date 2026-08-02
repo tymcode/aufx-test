@@ -338,3 +338,117 @@ bool SessionSnap::findSnapshot (const juce::File& sessionDir,
     error = "Snapshot not found: " + match;
     return false;
 }
+
+namespace
+{
+    juce::String rewriteAbsoluteSessionPath (const juce::String& path,
+                                             const juce::File& oldRoot,
+                                             const juce::File& newRoot,
+                                             const juce::File& sessionDir)
+    {
+        if (path.isEmpty())
+            return path;
+
+        if (! juce::File::isAbsolutePath (path))
+            return path;
+
+        const juce::File file (path);
+
+        const auto oldPrefix = oldRoot.getFullPathName();
+        auto full = file.getFullPathName();
+
+        juce::File remapped = file;
+        if (full.startsWith (oldPrefix))
+        {
+            auto suffix = full.substring (oldPrefix.length());
+            while (suffix.startsWithChar ('/') || suffix.startsWithChar ('\\'))
+                suffix = suffix.substring (1);
+            remapped = newRoot.getChildFile (suffix);
+        }
+
+        if (remapped.isAChildOf (sessionDir) || remapped == sessionDir)
+            return remapped.getRelativePathFrom (sessionDir).replaceCharacter ('\\', '/');
+
+        return remapped.getFullPathName();
+    }
+
+    void rewriteSnapshotPathProperty (juce::DynamicObject* snap,
+                                      const char* key,
+                                      const juce::File& oldRoot,
+                                      const juce::File& newRoot,
+                                      const juce::File& sessionDir)
+    {
+        if (snap == nullptr)
+            return;
+
+        const auto current = snap->getProperty (key).toString();
+        if (current.isEmpty())
+            return;
+
+        const auto rewritten = rewriteAbsoluteSessionPath (current, oldRoot, newRoot, sessionDir);
+        if (rewritten != current)
+            snap->setProperty (key, rewritten);
+    }
+}
+
+bool SessionSnap::rewritePathsAfterRootMove (const juce::File& oldRoot,
+                                             const juce::File& newRoot,
+                                             juce::String& error)
+{
+    error.clear();
+
+    if (oldRoot == juce::File() || newRoot == juce::File())
+        return true;
+
+    if (oldRoot.getFullPathName() == newRoot.getFullPathName())
+        return true;
+
+    if (! newRoot.isDirectory())
+        return true;
+
+    for (const auto& sessionDir : newRoot.findChildFiles (juce::File::findDirectories, false))
+    {
+        const auto sessionFile = sessionDir.getChildFile ("session.json");
+        if (! sessionFile.existsAsFile())
+            continue;
+
+        juce::var rootVar;
+        juce::String loadError;
+        if (! loadSessionRoot (sessionDir, rootVar, loadError))
+        {
+            error = loadError;
+            return false;
+        }
+
+        auto* root = rootVar.getDynamicObject();
+        if (root == nullptr)
+            continue;
+
+        auto snapshots = root->getProperty ("snapshots");
+        if (! snapshots.isArray())
+            continue;
+
+        for (auto& snapVar : *snapshots.getArray())
+        {
+            if (auto* snap = snapVar.getDynamicObject())
+            {
+                rewriteSnapshotPathProperty (snap, "input_audio", oldRoot, newRoot, sessionDir);
+                rewriteSnapshotPathProperty (snap, "output_audio", oldRoot, newRoot, sessionDir);
+                rewriteSnapshotPathProperty (snap, "output_audio_hw", oldRoot, newRoot, sessionDir);
+                rewriteSnapshotPathProperty (snap, "preset_file", oldRoot, newRoot, sessionDir);
+                rewriteSnapshotPathProperty (snap, "sysex_file", oldRoot, newRoot, sessionDir);
+            }
+        }
+
+        root->setProperty ("snapshots", snapshots);
+        root->setProperty ("updated_at", utcNowIso());
+
+        if (! sessionFile.replaceWithText (juce::JSON::toString (rootVar, true) + "\n"))
+        {
+            error = "Failed to write " + sessionFile.getFullPathName();
+            return false;
+        }
+    }
+
+    return true;
+}

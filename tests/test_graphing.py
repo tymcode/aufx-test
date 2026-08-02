@@ -69,10 +69,10 @@ def test_plot_difference_metrics(sine_mono, output_dir):
         for seg in get_segments():
             # Each hline segment is [[x0, y], [x1, y]].
             hline_ys.append(float(seg[0][1]))
-    assert thresholds.snr_db_min in hline_ys
     assert thresholds.correlation_min in hline_ys
     assert thresholds.rms_error_max in hline_ys
     assert thresholds.spectral_distance_max in hline_ys
+    assert len(hline_ys) == 3
 
 
 def test_plot_distance_from_silence(sine_stereo, output_dir):

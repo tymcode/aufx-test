@@ -16,7 +16,7 @@ from .signal_ops import pad_channels
 class DifferenceMetrics:
     """Repeatable objective measurements between two waveforms."""
 
-    snr_db: float
+    level_gain_db: float
     correlation: float
     rms_error: float
     max_abs_error: float
@@ -26,7 +26,7 @@ class DifferenceMetrics:
 
     def as_dict(self) -> dict[str, float | dict]:
         return {
-            "snr_db": self.snr_db,
+            "level_gain_db": self.level_gain_db,
             "correlation": self.correlation,
             "rms_error": self.rms_error,
             "max_abs_error": self.max_abs_error,
@@ -47,7 +47,7 @@ class ComparisonResult:
     def summary(self) -> str:
         lines = [
             f"passed={self.passed}",
-            f"  snr_db={self.metrics.snr_db:.2f}",
+            f"  level_gain_db={self.metrics.level_gain_db:.2f}",
             f"  correlation={self.metrics.correlation:.4f}",
             f"  rms_error={self.metrics.rms_error:.6f}",
             f"  spectral_distance={self.metrics.spectral_distance:.4f}",
@@ -63,10 +63,21 @@ class ComparisonResult:
 class ComparisonThresholds:
     """Minimum quality gates for automated tests."""
 
-    snr_db_min: float = 30.0
     correlation_min: float = 0.95
     rms_error_max: float = 0.05
     spectral_distance_max: float = 0.15
+
+
+def thresholds_from_dict(data: dict | None) -> ComparisonThresholds:
+    """Build thresholds, ignoring unknown keys (e.g. legacy ``snr_db_min``)."""
+    if not data:
+        return ComparisonThresholds()
+    allowed = {
+        k: float(v)
+        for k, v in data.items()
+        if k in ComparisonThresholds.__dataclass_fields__
+    }
+    return ComparisonThresholds(**allowed)
 
 
 def compute_difference_metrics(
@@ -98,7 +109,7 @@ def compute_difference_metrics(
     e_data = pad_channels(expected_a.data, channels)
 
     channel_metrics: dict[int, dict[str, float]] = {}
-    snrs: list[float] = []
+    gains: list[float] = []
     corrs: list[float] = []
     rmses: list[float] = []
     maxes: list[float] = []
@@ -109,14 +120,17 @@ def compute_difference_metrics(
         e_ch = e_data[:, ch]
         cm = _channel_metrics(a_ch, e_ch, actual_a.sample_rate)
         channel_metrics[ch] = cm
-        snrs.append(cm["snr_db"])
+        gains.append(cm["level_gain_db"])
         corrs.append(cm["correlation"])
         rmses.append(cm["rms_error"])
         maxes.append(cm["max_abs_error"])
         spec_dists.append(cm["spectral_distance"])
 
+    finite_gains = [g for g in gains if np.isfinite(g)]
+    level_gain = float(np.mean(finite_gains)) if finite_gains else float("nan")
+
     return DifferenceMetrics(
-        snr_db=float(np.mean(snrs)),
+        level_gain_db=level_gain,
         correlation=float(np.mean(corrs)),
         rms_error=float(np.mean(rmses)),
         max_abs_error=float(np.max(maxes)),
@@ -131,7 +145,6 @@ def compare_waveforms(
     expected: Waveform,
     *,
     thresholds: ComparisonThresholds | None = None,
-    snr_db_min: float | None = None,
     correlation_min: float | None = None,
     rms_error_max: float | None = None,
     spectral_distance_max: float | None = None,
@@ -154,30 +167,20 @@ def compare_waveforms(
         t = cached_compare_config().thresholds
     else:
         t = thresholds
-    if snr_db_min is not None:
-        t = ComparisonThresholds(
-            snr_db_min=snr_db_min,
-            correlation_min=t.correlation_min,
-            rms_error_max=t.rms_error_max,
-            spectral_distance_max=t.spectral_distance_max,
-        )
     if correlation_min is not None:
         t = ComparisonThresholds(
-            snr_db_min=t.snr_db_min,
             correlation_min=correlation_min,
             rms_error_max=t.rms_error_max,
             spectral_distance_max=t.spectral_distance_max,
         )
     if rms_error_max is not None:
         t = ComparisonThresholds(
-            snr_db_min=t.snr_db_min,
             correlation_min=t.correlation_min,
             rms_error_max=rms_error_max,
             spectral_distance_max=t.spectral_distance_max,
         )
     if spectral_distance_max is not None:
         t = ComparisonThresholds(
-            snr_db_min=t.snr_db_min,
             correlation_min=t.correlation_min,
             rms_error_max=t.rms_error_max,
             spectral_distance_max=spectral_distance_max,
@@ -190,8 +193,6 @@ def compare_waveforms(
         max_alignment_samples=max_alignment_samples,
     )
     failures: list[str] = []
-    if metrics.snr_db < t.snr_db_min:
-        failures.append(f"SNR {metrics.snr_db:.2f} dB < {t.snr_db_min:.2f} dB")
     if metrics.correlation < t.correlation_min:
         failures.append(f"correlation {metrics.correlation:.4f} < {t.correlation_min:.4f}")
     if metrics.rms_error > t.rms_error_max:
@@ -263,15 +264,20 @@ def difference_signal(actual: Waveform, expected: Waveform) -> Waveform:
 
 def _channel_metrics(a: np.ndarray, e: np.ndarray, sample_rate: int) -> dict[str, float]:
     error = a - e
-    signal_power = float(np.mean(e**2))
-    noise_power = float(np.mean(error**2))
-    snr_db = 10.0 * np.log10(signal_power / noise_power) if noise_power > 0 else float("inf")
+    rms_a = float(np.sqrt(np.mean(a**2)))
+    rms_e = float(np.sqrt(np.mean(e**2)))
+    if rms_e > 0.0 and rms_a > 0.0:
+        level_gain_db = float(20.0 * np.log10(rms_a / rms_e))
+    elif rms_e <= 0.0 and rms_a <= 0.0:
+        level_gain_db = 0.0
+    else:
+        level_gain_db = float("nan")
 
     corr_matrix = np.corrcoef(a, e)
     correlation = float(corr_matrix[0, 1]) if not np.isnan(corr_matrix[0, 1]) else 0.0
 
     return {
-        "snr_db": snr_db,
+        "level_gain_db": level_gain_db,
         "correlation": correlation,
         "rms_error": float(np.sqrt(np.mean(error**2))),
         "max_abs_error": float(np.max(np.abs(error))),
@@ -294,4 +300,3 @@ def _spectral_distance(a: np.ndarray, e: np.ndarray, sample_rate: int) -> float:
     spec_a /= norm_a
     spec_e /= norm_e
     return float(np.linalg.norm(spec_a - spec_e) / np.sqrt(len(spec_a)))
-

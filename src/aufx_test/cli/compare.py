@@ -39,10 +39,9 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     clear_compare_config_cache()
     config = load_compare_config(args.compare_config)
     thresholds = config.thresholds
-    if args.snr_min is not None or args.corr_min is not None:
+    if args.corr_min is not None:
         thresholds = ComparisonThresholds(
-            snr_db_min=args.snr_min if args.snr_min is not None else thresholds.snr_db_min,
-            correlation_min=args.corr_min if args.corr_min is not None else thresholds.correlation_min,
+            correlation_min=args.corr_min,
             rms_error_max=thresholds.rms_error_max,
             spectral_distance_max=thresholds.spectral_distance_max,
         )
@@ -183,7 +182,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
             print(f"Informational {compare_mode.replace('_', ' ')} metrics (not gated):")
             m = result.metrics
             print(
-                f"  correlation={m.correlation:.4f}  snr_db={m.snr_db:.2f}  "
+                f"  correlation={m.correlation:.4f}  level_gain_db={m.level_gain_db:.2f}  "
                 f"rms_error={m.rms_error:.6f}  spectral_distance={m.spectral_distance:.6f}"
             )
         print(f"band analysis ({band_summary['num_of_bands']} bands from compare.config):")
