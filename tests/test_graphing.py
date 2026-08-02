@@ -48,6 +48,54 @@ def test_plot_comparison_with_spectrogram_background(sine_mono, output_dir):
     assert (output_dir / "cmp_spec_bg.png").exists()
 
 
+def test_plot_comparison_unequal_lengths_share_time_axis(output_dir, sample_rate):
+    """Shorter clip must not be stretched to the longer clip's duration."""
+    import numpy as np
+    from aufx_test.audio import Waveform
+    import aufx_test.graphing as graphing
+
+    saved = []
+
+    def _keep(fig, save_path, show, *, dpi=150):
+        if save_path is not None:
+            from pathlib import Path
+
+            path = Path(save_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(path, dpi=dpi, bbox_inches="tight")
+        saved.append(fig)
+
+    graphing._save_or_show = _keep
+
+    short = Waveform(
+        data=(0.5 * np.sin(2 * np.pi * 440 * np.arange(sample_rate) / sample_rate))[:, None],
+        sample_rate=sample_rate,
+    )
+    long = Waveform(
+        data=(0.5 * np.sin(2 * np.pi * 220 * np.arange(sample_rate * 3) / sample_rate))[:, None],
+        sample_rate=sample_rate,
+    )
+
+    graphing.plot_comparison(
+        short,
+        long,
+        labels=["short", "long"],
+        spectrogram_background=long,
+        save_path=output_dir / "unequal.png",
+        show=False,
+    )
+    ax = saved[-1].axes[0]
+    xlim = ax.get_xlim()
+    assert xlim[1] == pytest.approx(long.duration_seconds, rel=0.02)
+
+    # Envelope / waveform overlays live on the twin axis when spectrogram is on.
+    wave_ax = saved[-1].axes[1] if len(saved[-1].axes) > 1 else ax
+    ends = sorted(float(np.asarray(line.get_xdata())[-1]) for line in wave_ax.lines)
+    assert ends[0] == pytest.approx(short.duration_seconds, rel=0.05)
+    assert ends[1] == pytest.approx(long.duration_seconds, rel=0.05)
+    assert ends[0] < xlim[1] * 0.5
+
+
 def test_plot_difference_metrics(sine_mono, output_dir):
     from aufx_test.comparison import ComparisonThresholds
 
