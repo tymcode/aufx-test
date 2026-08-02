@@ -33,6 +33,7 @@ public:
     void showHardwareMeters();
     void showPluginEditorArea();
     void openSettings();
+    void openAudioUnitSettings();
     void openAddPlugin();
     void rescanPlugins();
     void rescanSourceClips();

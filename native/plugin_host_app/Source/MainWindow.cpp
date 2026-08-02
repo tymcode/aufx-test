@@ -75,10 +75,22 @@ void MainWindow::closeButtonPressed()
     juce::JUCEApplication::getInstance()->systemRequestedQuit();
 }
 
+void MainWindow::syncLevelMetersForLightsOut()
+{
+    if (levelMetersWindow == nullptr)
+        return;
+
+    const bool lightsOn = lightsOut.isEnabled();
+    levelMetersWindow->setAlwaysOnTop (lightsOn);
+    if (lightsOn)
+        levelMetersWindow->toFront (false);
+}
+
 void MainWindow::toggleLightsOut()
 {
     lightsOut.setHostWindow (this);
     lightsOut.setEnabled (! lightsOut.isEnabled());
+    syncLevelMetersForLightsOut();
     menuItemsChanged();
     syncNativeMenuShortcuts();
 }
@@ -146,6 +158,7 @@ void MainWindow::toggleLevelMeters()
                 return false;
             return safe->handleGlobalKeyPress (key);
         });
+    syncLevelMetersForLightsOut();
     menuItemsChanged();
     syncNativeMenuShortcuts();
 }
@@ -181,6 +194,7 @@ void MainWindow::setLightsOutEnabled (bool shouldEnable)
         return;
 
     lightsOut.setEnabled (shouldEnable);
+    syncLevelMetersForLightsOut();
     menuItemsChanged();
     syncNativeMenuShortcuts();
 }
@@ -335,6 +349,7 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
     auto addPluginsItems = [&menu]()
     {
         menu.addItem (menuAddPlugin, "Add Plugin...");
+        menu.addItem (menuAudioUnitSettings, "Audio Unit Settings...");
         {
             juce::PopupMenu::Item item;
             item.itemID = menuRescanPlugins;
@@ -403,6 +418,7 @@ void MainWindow::menuItemSelected (int menuItemID, int topLevelMenuIndex)
                                              case menuUseHardware:         window->toggleHardwareModeFromMenu(); break;
                                              case menuLevelMeters:         window->toggleLevelMeters(); break;
                                              case menuAddPlugin:           mainContent->openAddPlugin(); break;
+                                             case menuAudioUnitSettings:   mainContent->openAudioUnitSettings(); break;
                                              case menuRescanPlugins:       mainContent->rescanPlugins(); break;
                                              case menuRescanSourceClips:   mainContent->rescanSourceClips(); break;
                                              default: break;

@@ -92,9 +92,9 @@ Edit `host.config.json` at the project root for the repo-rooted workflow. The to
 }
 ```
 
-Paths may be absolute, `~/…`, or relative to the project root. `default_preset` and `python_cli` are optional (`python_cli` is required for **Generate report** and `calibrate-plot` PNG helpers). Each launch appends an 8-character hash to `log_file` (e.g. `sessions/plugin_host_a1b2c3d4.log`).
+Paths may be absolute, `~/…`, or relative to the project root. `default_preset` and the aufx-test CLI path (`python_cli` in JSON) are optional (the CLI is required for **Generate report** and `calibrate-plot` PNG helpers). Each launch appends an 8-character hash to `log_file` (e.g. `sessions/plugin_host_a1b2c3d4.log`).
 
-**Settings…** (Apple menu) can override the exploration data folder and config file path (relaunch to apply folder/config changes).
+**Settings…** (Apple menu) can override the exploration data folder and config file path (relaunch to apply), plus Source Clips Directory, Sessions directory, aufx-test CLI location, and Default plugin (saved immediately to `host.config.json`). Audio Unit hosting prefs live under **Plugins → Audio Unit Settings…**.
 
 ## Basic use
 
@@ -162,6 +162,7 @@ Choose ports for the device under test and which sysex module to use:
 - **Device MIDI Out (to hardware)**
 - **Dump MIDI In (from hardware)** — added alongside other MIDI Sources (does not replace them)
 - **Sysex module** — currently **Alesis Quadraverb**
+- **Default MIDI Controllers** — checklist like the main-window **MIDI Sources** field; saved as `default_midi_input` in `host.config.json` for the next launch. Does **not** change live MIDI Sources enablement.
 
 Required for Capture **Hardware** sysex dumps and for **HW State → Send**.
 
@@ -188,19 +189,21 @@ Choosing **None Selected** on either send or return clears both, removes the har
 
 ### Settings… (Apple menu)
 
-- Exploration data folder (Choose / Reveal)
-- Optional config file override
-- **Allow input to virtual instruments** (off by default—some AUs crash with unused input buses). Can be used to provide inputs to samplers or sidechains. It's not very reliable, though, because it's a strange application.
-- Plugin scan timeout: Some plugins take a while to be scanned because they're crashed or something; some take a while just because they do. This timeout sets the amount of time before the scanner gives up on a plugin and adds it to a failed list.
-- List of skipped AUs (crashed/hung) with **Retry selected**
+- Exploration data folder (Choose / Reveal) — relaunch to apply
+- Optional config file override — relaunch to apply
+- **Source Clips Directory** — sets `fixtures_dir`; moves the current clips collection here, or copies from the app bundle when the previous location was bundled/empty; Source Clip menu rescans immediately
+- **Sessions directory** — sets `sessions_root`; moves existing session folders and rewrites absolute paths in `session.json` so artifact links survive
+- **Location of aufx-test CLI** — sets the executable used for **Generate report** and calibrate PNGs (JSON key `python_cli`). Hint suggests `<repo>/.venv/bin/aufx-test` when exploration / clips / sessions paths look like an aufx-test checkout. **Test** turns green/red/grey; absolute or `~/…` path recommended for Release builds
+- **Default plugin** — sets `default_plugin` (applies on next launch)
 
-Folder/config overrides need a relaunch.
+Folder/config overrides need a relaunch. The other fields write `host.config.json` immediately.
 
-### Add Plugin… / Rescan (Plugins menu)
+### Add Plugin… / Audio Unit Settings / Rescan (Plugins menu)
 
-- **Add Plugin…** — Adds plugins to the dropdown in the main app window.  Equivalent to selecting **More Plugins** from the dropdown. multi-select from the AU list that was built during the AU scan. Search filter by name/manufacturer.
-- **Rescan Audio Units…** (`Cmd+R`) — rebuilds the AU cache. Use after installing new plugins.  (Not new builds of cached plugins.)
-- **Rescan Source Clips** (`Cmd+Shift+R`) — reloads `fixtures/` into the Source Clip menu (useful after dropping new WAVs into the tree).
+- **Add Plugin…** — Adds plugins to the dropdown in the main app window. Equivalent to selecting **More Plugins** from the dropdown. Multi-select from the AU list that was built during the AU scan. Search filter by name/manufacturer.
+- **Audio Unit Settings…** — Allow input to virtual instruments (off by default—some AUs crash with unused input buses); plugin scan timeout; list of skipped AUs (crashed/hung) with **Retry selected**
+- **Rescan Audio Units…** (`Cmd+R`) — rebuilds the AU cache. Use after installing new plugins. (Not new builds of cached plugins.)
+- **Rescan Source Clips** (`Cmd+Shift+R`) — reloads the Source Clips Directory into the Source Clip menu (useful after dropping new WAVs into the tree).
 
 ## Use Hardware (`Cmd+U`)
 
@@ -234,7 +237,7 @@ Dialog fields:
 
 **Options**
 
-- **Generate report** (default on): after a successful capture, runs `aufx-test compare --root … --write-report` for the new snapshot (`python_cli` must point at `.venv/bin/aufx-test`)
+- **Generate report** (default on): after a successful capture, runs `aufx-test compare --root … --write-report` for the new snapshot (Settings **aufx-test CLI** must point at a working `.venv/bin/aufx-test`)
 - **Calibrate** (if Hardware or Both is selected; default on): measure return noise floor for the silence gate and subtract DC offset from the hardware WAV before write
 - **Capture settings → Hardware**:  If Hardware is selected under **Capture settings…**, it requests a sysex dump of the current device settings (if configured in **MIDI Setup**).
 - **Capture settings → Software:** If Software is selected under **Capture settings…**, it writes an `.aupreset` from the *live* plugin state (not merely the last loaded file).
@@ -259,7 +262,7 @@ Three related but separate tools:
 | -------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | **Auto-detect** latency          | Hardware Audio Setup        | Impulse ×5 → latency samples + loop gain                                                                                         |
 | **Calibrate** (noise floor / DC) | Capture Test Case (HW/Both) | Sets silence gate above the return noise floor; DC offset correction                                                             |
-| **Level sweep…**                 | Level Meters window         | Stepped send gains through the *current* path; plots send vs. return to `calibration/<slug>.json` (+ PNG if `python_cli` is set) |
+| **Level sweep…**                 | Level Meters window         | Stepped send gains through the *current* path; plots send vs. return to `calibration/<slug>.json` (+ PNG if aufx-test CLI is set) |
 
 
 Level sweep uses `fixtures/synth_waves/sine_0db_1ch_5s_48k.wav` and records sample peak, RMS, and BS.1770-style LUFS per step. Re-plot later with:
@@ -274,7 +277,7 @@ Floating **Level Meters** window: live **Send** / **Return** sample-peak meters 
 
 ## Lights Out (`Cmd+L`)
 
-Blacks out every display behind the host, keeps the app on top, and hides the Dock / menu bar—useful for screencaps. Prefer a Multi-Output Device that includes your loopback so the recorded video contains the audio. Cleared automatically after Capture Test Case succeeds (or toggle again).
+Blacks out every display behind the host, keeps the app on top, and hides the Dock / menu bar—useful for screencaps. **Level Meters** (`Cmd+M`) stays available above the blackout. Prefer a Multi-Output Device that includes your loopback so the recorded video contains the audio. Cleared automatically after Capture Test Case succeeds (or toggle again).
 
 ## Presets (`.aupreset`)
 
@@ -330,7 +333,7 @@ Headless CI replay uses `plugin_renderer` + `SubprocessPluginHost` with the capt
 | Plugin host app not found               | Build from source (below) or install from Releases                          |
 | Config / plugin path errors             | Edit `host.config.json`; check `path` / AU id                               |
 | No presets in dropdown                  | Set `presets_dir` for that plugin                                           |
-| Generate report / calibrate PNG skipped | Set `python_cli` to `.venv/bin/aufx-test`                                   |
+| Generate report / calibrate PNG skipped | Set aufx-test CLI in Settings (typically `<repo>/.venv/bin/aufx-test`) and use **Test** |
 | Need logs                               | `sessions/plugin_host_<hash>.log`                                           |
 | No audio on Begin                       | Check macOS output device; confirm Hardware Audio Setup / Use Hardware path |
 
@@ -367,7 +370,7 @@ aufx-test session snap "MyEffect" "half mix" \
 
 ## Building from source
 
-Python is **not** required to build or run the host UI itself. Optional features that shell out to the CLI — **Generate report** after Capture Test Case, and level-sweep PNG plots — need a venv plus `python_cli` in `host.config.json` (typically `.venv/bin/aufx-test`).
+Python is **not** required to build or run the host UI itself. Optional features that shell out to the CLI — **Generate report** after Capture Test Case, and level-sweep PNG plots — need a venv plus the aufx-test CLI path in Settings / `host.config.json` (typically `.venv/bin/aufx-test`).
 
 ```bash
 git clone --recurse-submodules https://github.com/tymcode/aufx-test.git

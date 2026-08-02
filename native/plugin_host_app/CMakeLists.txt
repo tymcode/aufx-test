@@ -89,6 +89,7 @@ target_sources(plugin_host_app
         Source/AuPluginScanDialog.cpp
         Source/PluginScannerOOP.cpp
         Source/SettingsDialog.cpp
+        Source/AudioUnitSettingsDialog.cpp
         Source/AddPluginDialog.cpp
         Source/AboutDialog.cpp
         Source/LightsOutManager.cpp

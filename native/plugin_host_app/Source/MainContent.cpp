@@ -8,6 +8,7 @@
 #include "HostPreferences.h"
 #include "MidiSetupDialog.h"
 #include "SettingsDialog.h"
+#include "AudioUnitSettingsDialog.h"
 #include "Utf8.h"
 
 MainContent::MainContent (PluginAudioEngine& audioEngine,
@@ -246,7 +247,7 @@ void MainContent::openHardwareAudioSetup()
 
 void MainContent::openMidiSetup()
 {
-        showMidiSetupDialog (engine, this);
+        showMidiSetupDialog (engine, config, this);
     }
 
 void MainContent::refreshHardwareModeUi()
@@ -283,18 +284,34 @@ void MainContent::showPluginEditorArea()
 
 void MainContent::openSettings()
 {
-        if (showSettingsDialog (config, &knownPlugins, this))
+        bool fixturesChanged = false;
+        if (showSettingsDialog (config, this, &fixturesChanged))
+        {
+            if (fixturesChanged)
+                populateFixtures();
+
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::InfoIcon,
+                utf8 ("Settings saved"),
+                utf8 ("Source Clips, Sessions, aufx-test CLI, and Default plugin were written to host.config.json "
+                      "(Default plugin applies on next launch).\n\n"
+                      "Relaunch AU Effects Explorer for exploration folder / config override changes to take effect.\n\n"
+                      "If you changed the exploration folder, its data (including the AU plugin cache) was moved to the new location."));
+        }
+    }
+
+void MainContent::openAudioUnitSettings()
+{
+        if (showAudioUnitSettingsDialog (config, &knownPlugins, this))
         {
             engine.setAllowInstrumentAudioInput (
                 HostPreferences::get().getAllowInstrumentAudioInput());
 
             juce::AlertWindow::showMessageBoxAsync (
                 juce::MessageBoxIconType::InfoIcon,
-                "Settings saved",
-                "Instrument audio-input preference applies immediately (reload the plugin if an "
-                "instrument was already open).\n\n"
-                "Relaunch AU Effects Explorer for exploration folder / config override changes to take effect.\n\n"
-                "If you changed the exploration folder, its data (including the AU plugin cache) was moved to the new location.");
+                utf8 ("Audio Unit Settings saved"),
+                utf8 ("Instrument audio-input preference applies immediately (reload the plugin if an "
+                      "instrument was already open). Scan timeout applies to the next scan or retry."));
         }
     }
 

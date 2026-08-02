@@ -1,6 +1,9 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "HostConfig.h"
 #include "PluginAudioEngine.h"
 
-bool showMidiSetupDialog (PluginAudioEngine& engine, juce::Component* centreAround);
+bool showMidiSetupDialog (PluginAudioEngine& engine,
+                          HostConfig& config,
+                          juce::Component* centreAround);

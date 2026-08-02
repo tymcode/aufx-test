@@ -115,6 +115,22 @@ public:
                                   const juce::File& to,
                                   juce::String& message);
 
+    /**
+     * Move directory children from `from` into `to` (create `to` if needed).
+     * Existing destination names are left alone. Returns false on hard failure.
+     */
+    bool relocateDirectoryContents (const juce::File& from,
+                                    const juce::File& to,
+                                    juce::String& message);
+
+    /**
+     * Copy directory children from `from` into `to`. Existing destination
+     * names are left alone.
+     */
+    bool copyDirectoryContents (const juce::File& from,
+                                const juce::File& to,
+                                juce::String& message);
+
 private:
     HostPreferences() = default;
 

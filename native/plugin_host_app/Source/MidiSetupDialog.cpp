@@ -1,16 +1,22 @@
 /**
  * MIDI Setup dialog: pick the MIDI out to the device under test, the MIDI in
- * that carries its sysex dumps back, and which sysex module to use.
+ * that carries its sysex dumps back, which sysex module to use, and which
+ * controller ports should be the default MIDI Sources on next launch.
  *
  * The module is an explicit dropdown rather than auto-detected because
  * CoreMIDI metadata identifies the MIDI *interface* (e.g. iConnectMIDI4+ on
  * every port), not the instrument behind it — matching by manufacturer/model
  * picked the wrong module or none at all in practice.
+ *
+ * Default MIDI Controllers only writes host.config.json default_midi_input;
+ * live enablement stays on the main-window MIDI Sources field.
  */
 #include "MidiSetupDialog.h"
+#include "HostChromeControls.h"
 #include "HostDialog.h"
 #include "HostPreferences.h"
 #include "MidiEndpointInfo.h"
+#include "Utf8.h"
 #include "sysex/SysexDeviceRegistry.h"
 
 namespace
@@ -19,23 +25,33 @@ namespace
                            private juce::ComboBox::Listener
     {
     public:
-        explicit MidiSetupPanel (PluginAudioEngine&)
+        MidiSetupPanel (PluginAudioEngine& engineIn, HostConfig& configIn)
+            : engine (engineIn), config (configIn)
         {
-            outLabel.setText ("Device MIDI Out (to hardware)", juce::dontSendNotification);
-            inLabel.setText ("Dump MIDI In (from hardware)", juce::dontSendNotification);
-            moduleLabel.setText ("Sysex module", juce::dontSendNotification);
+            outLabel.setText (utf8 ("Device MIDI Out (to hardware)"), juce::dontSendNotification);
+            inLabel.setText (utf8 ("Dump MIDI In (from hardware)"), juce::dontSendNotification);
+            moduleLabel.setText (utf8 ("Sysex module"), juce::dontSendNotification);
+            controllersLabel.setText (utf8 ("Default MIDI Controllers"), juce::dontSendNotification);
+            controllersHint.setText (utf8 ("Saved as launch defaults; does not change live MIDI Sources."),
+                                     juce::dontSendNotification);
+            controllersHint.setFont (juce::FontOptions (12.0f));
+            controllersHint.setColour (juce::Label::textColourId, juce::Colours::grey);
+
             addAndMakeVisible (outLabel);
             addAndMakeVisible (inLabel);
             addAndMakeVisible (moduleLabel);
+            addAndMakeVisible (controllersLabel);
+            addAndMakeVisible (controllersHint);
             addAndMakeVisible (outBox);
             addAndMakeVisible (inBox);
             addAndMakeVisible (moduleBox);
+            addAndMakeVisible (controllersField);
 
             outBox.addListener (this);
             inBox.addListener (this);
 
             populate();
-            setSize (460, 160);
+            setSize (460, 220);
         }
 
         // Item index 0 in both port boxes is the "(none)" entry, so the
@@ -57,6 +73,16 @@ namespace
             return moduleBox.getText().trim();
         }
 
+        juce::StringArray getDefaultControllerNames() const
+        {
+            juce::StringArray names;
+            const auto selected = controllersField.getSelectedIdentifiers();
+            for (const auto& device : controllerDevices)
+                if (selected.contains (device.identifier))
+                    names.add (device.name);
+            return names;
+        }
+
         void resized() override
         {
             auto area = getLocalBounds().reduced (8);
@@ -76,6 +102,8 @@ namespace
             place (row (28), outLabel, outBox);
             place (row (28), inLabel, inBox);
             place (row (28), moduleLabel, moduleBox);
+            place (row (28), controllersLabel, controllersField);
+            controllersHint.setBounds (row (22).withTrimmedLeft (200));
         }
 
     private:
@@ -83,12 +111,13 @@ namespace
         {
             outInfos = getMidiOutputEndpointInfos();
             inInfos = getMidiInputEndpointInfos();
+            controllerDevices = engine.getMidiInputDevices();
 
             outBox.clear (juce::dontSendNotification);
             inBox.clear (juce::dontSendNotification);
             moduleBox.clear (juce::dontSendNotification);
-            outBox.addItem ("(none)", 1);
-            inBox.addItem ("(none)", 1);
+            outBox.addItem (utf8 ("(none)"), 1);
+            inBox.addItem (utf8 ("(none)"), 1);
 
             for (int i = 0; i < outInfos.size(); ++i)
                 outBox.addItem (outInfos[i].name, i + 2);
@@ -126,24 +155,42 @@ namespace
             }
             if (moduleBox.getSelectedId() == 0 && moduleBox.getNumItems() > 0)
                 moduleBox.setSelectedItemIndex (0, juce::dontSendNotification);
+
+            juce::StringArray selectedIds;
+            for (const auto& wantedName : config.defaultMidiInputs)
+            {
+                for (const auto& device : controllerDevices)
+                {
+                    if (device.name.equalsIgnoreCase (wantedName)
+                        || device.name.containsIgnoreCase (wantedName))
+                        selectedIds.addIfNotAlreadyThere (device.identifier);
+                }
+            }
+            controllersField.setDevices (controllerDevices, selectedIds);
         }
 
         void comboBoxChanged (juce::ComboBox*) override {}
 
+        PluginAudioEngine& engine;
+        HostConfig& config;
         juce::Array<MidiEndpointInfo> outInfos, inInfos;
-        juce::Label outLabel, inLabel, moduleLabel;
+        juce::Array<juce::MidiDeviceInfo> controllerDevices;
+        juce::Label outLabel, inLabel, moduleLabel, controllersLabel, controllersHint;
         juce::ComboBox outBox, inBox, moduleBox;
+        MidiSourceField controllersField;
     };
 }
 
-bool showMidiSetupDialog (PluginAudioEngine& engine, juce::Component* centreAround)
+bool showMidiSetupDialog (PluginAudioEngine& engine,
+                          HostConfig& config,
+                          juce::Component* centreAround)
 {
-    MidiSetupPanel panel (engine);
+    MidiSetupPanel panel (engine, config);
     const auto previousDumpInId = HostPreferences::get().getMidiDumpInIdentifier();
 
     if (HostDialog::runCustomPanelModal (
-            "MIDI Setup",
-            "Choose the MIDI ports for the device under test (sysex dump / restore).",
+            utf8 ("MIDI Setup"),
+            utf8 ("Choose the MIDI ports for the device under test (sysex dump / restore)."),
             panel,
             centreAround) != 1)
         return false;
@@ -155,11 +202,20 @@ bool showMidiSetupDialog (PluginAudioEngine& engine, juce::Component* centreArou
     HostPreferences::get().setMidiDumpInIdentifier (inId);
     HostPreferences::get().setMidiSysexModule (moduleName);
 
+    config.defaultMidiInputs = panel.getDefaultControllerNames();
+    juce::String configError;
+    if (! config.saveToFile (configError))
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                utf8 ("MIDI Setup"),
+                                                utf8 ("Saved MIDI ports but failed to write defaults:\n") + configError);
+    }
+
     juce::String error;
     if (! engine.setMidiOutputDevice (outId, error))
     {
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
-                                                "MIDI Setup",
+                                                utf8 ("MIDI Setup"),
                                                 error);
         return true;
     }
