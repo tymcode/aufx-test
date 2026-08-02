@@ -4,6 +4,7 @@
 #include "MainWindow.h"
 #include "MainContent.h"
 #include "LevelMetersWindow.h"
+#include "Utf8.h"
 
 #if JUCE_MAC
  #include "LightsOutManager_mac.h"
@@ -75,10 +76,22 @@ void MainWindow::closeButtonPressed()
     juce::JUCEApplication::getInstance()->systemRequestedQuit();
 }
 
+void MainWindow::syncLevelMetersForLightsOut()
+{
+    if (levelMetersWindow == nullptr)
+        return;
+
+    const bool lightsOn = lightsOut.isEnabled();
+    levelMetersWindow->setAlwaysOnTop (lightsOn);
+    if (lightsOn)
+        levelMetersWindow->toFront (false);
+}
+
 void MainWindow::toggleLightsOut()
 {
     lightsOut.setHostWindow (this);
     lightsOut.setEnabled (! lightsOut.isEnabled());
+    syncLevelMetersForLightsOut();
     menuItemsChanged();
     syncNativeMenuShortcuts();
 }
@@ -146,6 +159,7 @@ void MainWindow::toggleLevelMeters()
                 return false;
             return safe->handleGlobalKeyPress (key);
         });
+    syncLevelMetersForLightsOut();
     menuItemsChanged();
     syncNativeMenuShortcuts();
 }
@@ -181,6 +195,7 @@ void MainWindow::setLightsOutEnabled (bool shouldEnable)
         return;
 
     lightsOut.setEnabled (shouldEnable);
+    syncLevelMetersForLightsOut();
     menuItemsChanged();
     syncNativeMenuShortcuts();
 }
@@ -299,6 +314,7 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
             item.shortcutKeyDescription = "Cmd+T";
             menu.addItem (std::move (item));
         }
+        menu.addItem (menuRestoreTestcaseState, utf8 ("Restore Testcase State…"));
         menu.addSeparator();
         menu.addItem (menuHardwareAudioSetup, "Hardware Audio Setup...");
         menu.addItem (menuMidiSetup, "MIDI Setup...");
@@ -335,6 +351,7 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
     auto addPluginsItems = [&menu]()
     {
         menu.addItem (menuAddPlugin, "Add Plugin...");
+        menu.addItem (menuAudioUnitSettings, "Audio Unit Settings...");
         {
             juce::PopupMenu::Item item;
             item.itemID = menuRescanPlugins;
@@ -343,6 +360,7 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
             menu.addItem (std::move (item));
         }
         menu.addSeparator();
+        menu.addItem (menuInstallSourceClips, utf8 ("Install New Source Clips…"));
         {
             juce::PopupMenu::Item item;
             item.itemID = menuRescanSourceClips;
@@ -397,13 +415,16 @@ void MainWindow::menuItemSelected (int menuItemID, int topLevelMenuIndex)
                                              case menuAbout:               mainContent->openAbout(); break;
                                              case menuSettings:            mainContent->openSettings(); break;
                                              case menuCaptureTestCase:     mainContent->openCaptureTestCase(); break;
+                                             case menuRestoreTestcaseState: mainContent->openRestoreTestcaseState(); break;
                                              case menuLightsOut:           window->toggleLightsOutFromMenu(); break;
                                              case menuHardwareAudioSetup:  window->openHardwareAudioSetup(); break;
                                              case menuMidiSetup:           window->openMidiSetup(); break;
                                              case menuUseHardware:         window->toggleHardwareModeFromMenu(); break;
                                              case menuLevelMeters:         window->toggleLevelMeters(); break;
                                              case menuAddPlugin:           mainContent->openAddPlugin(); break;
+                                             case menuAudioUnitSettings:   mainContent->openAudioUnitSettings(); break;
                                              case menuRescanPlugins:       mainContent->rescanPlugins(); break;
+                                             case menuInstallSourceClips:  mainContent->openInstallSourceClips(); break;
                                              case menuRescanSourceClips:   mainContent->rescanSourceClips(); break;
                                              default: break;
                                          }

@@ -33,10 +33,13 @@ public:
     void showHardwareMeters();
     void showPluginEditorArea();
     void openSettings();
+    void openAudioUnitSettings();
+    void openInstallSourceClips();
     void openAddPlugin();
     void rescanPlugins();
     void rescanSourceClips();
     void openCaptureTestCase();
+    void openRestoreTestcaseState();
     void togglePlayback();
     /** True when a text field (or other text input target) has keyboard focus. */
     static bool isEditableFieldFocused();
@@ -71,6 +74,9 @@ private:
     void selectFixture (int comboId);
     /** Load an arbitrary audio file as the current source clip (external/"Loaded"). */
     bool loadExternalSourceClip (const juce::File& file, juce::String& error);
+    void browseForOtherSourceClip();
+    void restoreFixtureSelectionAfterSelectOtherCancelled();
+    void showInvalidWavAlert();
     void startPlayback();
     void stopPlayback();
     void resetPluginToDefaults();
@@ -121,6 +127,8 @@ private:
     std::unique_ptr<HardwareLoopMeterPanel> hardwareMeterPanel;
     juce::AudioProcessorEditor* pluginEditor { nullptr };
     SourceClipLibrary sourceClips;
+    int lastNonOtherFixtureId { 0 };
+    std::shared_ptr<juce::FileChooser> sourceClipFileChooser;
     juce::Component* keyListenerOwner { nullptr };
     PresetHardwareState presetHardwareState;
     TestCaseCapture testCaseCapture;

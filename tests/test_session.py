@@ -167,7 +167,6 @@ def test_compare_root_mode_uses_snapshot_hardware_fields(tmp_session_root, sine_
 
     args = argparse.Namespace(
         compare_config=None,
-        snr_min=None,
         corr_min=None,
         root=tmp_session_root,
         actual="compare-demo",
@@ -211,7 +210,6 @@ def test_compare_root_mode_write_report_auto_targets_snapshot_stem(tmp_session_r
 
     args = argparse.Namespace(
         compare_config=None,
-        snr_min=None,
         corr_min=None,
         root=tmp_session_root,
         actual="compare-report-demo",
@@ -289,7 +287,6 @@ def test_compare_root_mode_software_only_dry_vs_wet_report(tmp_session_root, sin
 
     args = argparse.Namespace(
         compare_config=None,
-        snr_min=None,
         corr_min=None,
         root=tmp_session_root,
         actual="compare-sw-only",
@@ -344,7 +341,6 @@ def test_compare_root_mode_hardware_only_dry_vs_wet_report(tmp_session_root, sin
 
     args = argparse.Namespace(
         compare_config=None,
-        snr_min=None,
         corr_min=None,
         root=tmp_session_root,
         actual="compare-hw-only",

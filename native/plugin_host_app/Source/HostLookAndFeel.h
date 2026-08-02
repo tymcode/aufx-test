@@ -42,6 +42,16 @@ public:
                       bool ticked, bool isEnabled,
                       bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
 
+    /** Cancel is leftmost; primary/confirm stays rightmost with Return. */
+    juce::AlertWindow* createAlertWindow (const juce::String& title,
+                                          const juce::String& message,
+                                          const juce::String& button1,
+                                          const juce::String& button2,
+                                          const juce::String& button3,
+                                          juce::MessageBoxIconType iconType,
+                                          int numButtons,
+                                          juce::Component* associatedComponent) override;
+
 private:
     static void drawRaisedBevel (juce::Graphics&, juce::Rectangle<float> area,
                                  juce::Colour face, float cornerRadius, bool recessed);

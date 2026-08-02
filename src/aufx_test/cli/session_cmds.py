@@ -76,7 +76,6 @@ def _cmd_session_promote(args: argparse.Namespace) -> int:
 
     base = load_compare_config().thresholds
     thresholds = ComparisonThresholds(
-        snr_db_min=args.snr_min if args.snr_min is not None else base.snr_db_min,
         correlation_min=args.corr_min if args.corr_min is not None else base.correlation_min,
         rms_error_max=args.rms_max if args.rms_max is not None else base.rms_error_max,
         spectral_distance_max=args.spectral_max if args.spectral_max is not None else base.spectral_distance_max,
@@ -126,7 +125,6 @@ def _cmd_session_import_goldens(args: argparse.Namespace) -> int:
     if args.promote:
         base = load_compare_config().thresholds
         thresholds = ComparisonThresholds(
-            snr_db_min=base.snr_db_min,
             correlation_min=base.correlation_min,
             rms_error_max=base.rms_error_max,
             spectral_distance_max=base.spectral_distance_max,

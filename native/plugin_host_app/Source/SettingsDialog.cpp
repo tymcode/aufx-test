@@ -1,92 +1,174 @@
 #include "SettingsDialog.h"
 #include "HostDialog.h"
 #include "HostPreferences.h"
-#include "AuPluginScanner.h"
+#include "SessionSnap.h"
 #include "Utf8.h"
 
-SettingsPanel::SettingsPanel (const HostConfig& config, juce::KnownPluginList* knownPluginsIn)
-    : dataRoot (config.projectRoot),
-      knownPlugins (knownPluginsIn)
+namespace
 {
-    dataRootLabel.setText ("Exploration data folder", juce::dontSendNotification);
+    void wireChooseDirectory (juce::TextButton& button,
+                              juce::TextEditor& editor,
+                              const juce::String& title)
+    {
+        button.onClick = [&editor, title]
+        {
+            auto chooser = std::make_shared<juce::FileChooser> (title,
+                                                                juce::File (editor.getText()),
+                                                                "*");
+            chooser->launchAsync (juce::FileBrowserComponent::openMode
+                                      | juce::FileBrowserComponent::canSelectDirectories,
+                                  [&editor, chooser] (const juce::FileChooser& fc)
+                                  {
+                                      const auto result = fc.getResult();
+                                      if (result != juce::File())
+                                          editor.setText (result.getFullPathName(),
+                                                          juce::dontSendNotification);
+                                  });
+        };
+    }
+
+    void wireReveal (juce::TextButton& button, juce::TextEditor& editor)
+    {
+        button.onClick = [&editor]
+        {
+            const auto path = juce::File (editor.getText().trim());
+            if (path != juce::File())
+                path.revealToUser();
+        };
+    }
+
+    void layoutPathRow (juce::Rectangle<int>& area,
+                        juce::Label& label,
+                        juce::TextEditor& editor,
+                        juce::TextButton& choose,
+                        juce::TextButton& secondary)
+    {
+        label.setBounds (area.removeFromTop (22));
+        auto row = area.removeFromTop (28);
+        choose.setBounds (row.removeFromRight (88));
+        row.removeFromRight (6);
+        secondary.setBounds (row.removeFromRight (72));
+        row.removeFromRight (6);
+        editor.setBounds (row);
+        area.removeFromTop (12);
+    }
+
+    bool directoryHasContent (const juce::File& dir)
+    {
+        if (! dir.isDirectory())
+            return false;
+
+        for (const auto& child : dir.findChildFiles (juce::File::findFilesAndDirectories, false))
+            if (child.getFileName() != ".DS_Store")
+                return true;
+        return false;
+    }
+
+    juce::File aufxTestCliUnder (const juce::File& root)
+    {
+        if (root == juce::File() || ! root.isDirectory())
+            return {};
+
+        const auto candidate = root.getChildFile (".venv")
+                                   .getChildFile ("bin")
+                                   .getChildFile ("aufx-test");
+        return candidate.existsAsFile() ? candidate : juce::File();
+    }
+
+    juce::File searchAufxTestNear (juce::File start, int maxParents)
+    {
+        for (int i = 0; i <= maxParents && start != juce::File(); ++i)
+        {
+            if (const auto found = aufxTestCliUnder (start); found != juce::File())
+                return found;
+            start = start.getParentDirectory();
+        }
+        return {};
+    }
+}
+
+SettingsPanel::SettingsPanel (const HostConfig& config)
+{
+    dataRootLabel.setText (utf8 ("Exploration data folder"), juce::dontSendNotification);
     addAndMakeVisible (dataRootLabel);
     dataRootEditor.setText (config.projectRoot.getFullPathName(), juce::dontSendNotification);
     addAndMakeVisible (dataRootEditor);
+    chooseDataRootButton.setButtonText (utf8 ("Choose..."));
+    revealDataRootButton.setButtonText (utf8 ("Reveal"));
     addAndMakeVisible (chooseDataRootButton);
     addAndMakeVisible (revealDataRootButton);
 
-    configLabel.setText ("Config file override (optional)", juce::dontSendNotification);
+    configLabel.setText (utf8 ("Config file override (optional)"), juce::dontSendNotification);
     addAndMakeVisible (configLabel);
     configEditor.setText (HostPreferences::get().getConfigPathPref(), juce::dontSendNotification);
-    configEditor.setTextToShowWhenEmpty ("(use data folder / bundled default)", juce::Colours::grey);
+    configEditor.setTextToShowWhenEmpty (utf8 ("(use data folder / bundled default)"), juce::Colours::grey);
+    chooseConfigButton.setButtonText (utf8 ("Choose..."));
+    clearConfigButton.setButtonText (utf8 ("Clear"));
     addAndMakeVisible (configEditor);
     addAndMakeVisible (chooseConfigButton);
     addAndMakeVisible (clearConfigButton);
 
-    allowInstrumentInputToggle.setButtonText ("Allow input to virtual instruments");
-    allowInstrumentInputToggle.setTooltip (
-        utf8 ("Enable audio input buses on instruments/samplers and feed the source clip into them "
-              "(for sampling). Off by default — some AUs crash if input is enabled without a proper feed."));
-    allowInstrumentInputToggle.setToggleState (HostPreferences::get().getAllowInstrumentAudioInput(),
-                                               juce::dontSendNotification);
-    addAndMakeVisible (allowInstrumentInputToggle);
+    fixturesLabel.setText (utf8 ("Source Clips Directory"), juce::dontSendNotification);
+    addAndMakeVisible (fixturesLabel);
+    fixturesEditor.setText (config.fixturesDir.getFullPathName(), juce::dontSendNotification);
+    chooseFixturesButton.setButtonText (utf8 ("Choose..."));
+    revealFixturesButton.setButtonText (utf8 ("Reveal"));
+    addAndMakeVisible (fixturesEditor);
+    addAndMakeVisible (chooseFixturesButton);
+    addAndMakeVisible (revealFixturesButton);
 
-    scanTimeoutLabel.setText ("Plugin scan timeout", juce::dontSendNotification);
-    addAndMakeVisible (scanTimeoutLabel);
-    scanTimeoutBox.addItem ("15 seconds", HostPreferences::defaultPluginScanTimeoutMs);
-    scanTimeoutBox.addItem ("30 seconds", 30000);
-    scanTimeoutBox.addItem ("1 minute", 60000);
-    scanTimeoutBox.addItem ("2 minutes", 120000);
-    scanTimeoutBox.addItem ("5 minutes", HostPreferences::maxPluginScanTimeoutMs);
-    scanTimeoutBox.setTooltip (
-        "How long each Audio Unit may take to respond during scan or Retry selected. "
-        "Increase this if plugins time out under load; applies to the next scan or retry.");
-    scanTimeoutBox.setSelectedId (HostPreferences::get().getPluginScanTimeoutMs(), juce::dontSendNotification);
-    addAndMakeVisible (scanTimeoutBox);
+    sessionsLabel.setText (utf8 ("Sessions directory"), juce::dontSendNotification);
+    addAndMakeVisible (sessionsLabel);
+    sessionsEditor.setText (config.sessionsRoot.getFullPathName(), juce::dontSendNotification);
+    chooseSessionsButton.setButtonText (utf8 ("Choose..."));
+    revealSessionsButton.setButtonText (utf8 ("Reveal"));
+    addAndMakeVisible (sessionsEditor);
+    addAndMakeVisible (chooseSessionsButton);
+    addAndMakeVisible (revealSessionsButton);
 
-    skippedHeading.setText ("Skipped AU plugins (crashed / hung during scan)", juce::dontSendNotification);
-    addAndMakeVisible (skippedHeading);
+    pythonCliLabel.setText (utf8 ("Location of aufx-test CLI"), juce::dontSendNotification);
+    addAndMakeVisible (pythonCliLabel);
+    pythonCliEditor.setText (config.pythonCli != juce::File() ? config.pythonCli.getFullPathName()
+                                                             : juce::String(),
+                             juce::dontSendNotification);
+    pythonCliEditor.addListener (this);
+    addAndMakeVisible (pythonCliEditor);
+    testPythonCliButton.setButtonText (utf8 ("Test"));
+    testPythonCliButton.setTooltip (
+        utf8 ("Runs `aufx-test --help` at this path. Green = OK, red = failed, grey = not tested since last edit."));
+    addAndMakeVisible (testPythonCliButton);
+    clearPythonCliButton.setButtonText (utf8 ("Clear"));
+    addAndMakeVisible (clearPythonCliButton);
+    pythonCliHint.setFont (juce::FontOptions (12.0f));
+    pythonCliHint.setColour (juce::Label::textColourId, juce::Colours::grey);
+    pythonCliHint.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (pythonCliHint);
+    setCliTestState (CliTestState::untested);
 
-    skippedList.setRowHeight (22);
-    skippedList.setMultipleSelectionEnabled (false);
-    skippedList.setColour (juce::ListBox::backgroundColourId, juce::Colours::black.withAlpha (0.15f));
-    skippedList.setColour (juce::ListBox::outlineColourId, juce::Colours::grey.withAlpha (0.4f));
-    skippedList.setOutlineThickness (1);
-    addAndMakeVisible (skippedList);
+    defaultPluginLabel.setText (utf8 ("Default plugin"), juce::dontSendNotification);
+    addAndMakeVisible (defaultPluginLabel);
+    defaultPluginBox.addItem (utf8 ("(none)"), 1);
+    for (int i = 0; i < config.plugins.size(); ++i)
+    {
+        const auto& plugin = config.plugins.getReference (i);
+        defaultPluginBox.addItem (plugin.displayLabel(), i + 2);
+        if (plugin.id == config.defaultPluginId)
+            defaultPluginBox.setSelectedId (i + 2, juce::dontSendNotification);
+    }
+    if (defaultPluginBox.getSelectedId() == 0)
+        defaultPluginBox.setSelectedId (1, juce::dontSendNotification);
+    addAndMakeVisible (defaultPluginBox);
 
-    retrySkippedButton.setTooltip ("Rescan only the selected plugin and add it to the cache if it succeeds.");
-    retrySkippedButton.setEnabled (false);
-    addAndMakeVisible (retrySkippedButton);
+    resetButton.setButtonText (utf8 ("Reset to defaults"));
     addAndMakeVisible (resetButton);
 
-    chooseDataRootButton.onClick = [this]
-    {
-        auto chooser = std::make_shared<juce::FileChooser> ("Choose exploration data folder",
-                                                            juce::File (dataRootEditor.getText()),
-                                                            "*");
-        chooser->launchAsync (juce::FileBrowserComponent::openMode
-                                  | juce::FileBrowserComponent::canSelectDirectories,
-                              [this, chooser] (const juce::FileChooser& fc)
-                              {
-                                  const auto result = fc.getResult();
-                                  if (result != juce::File())
-                                  {
-                                      dataRootEditor.setText (result.getFullPathName(), juce::dontSendNotification);
-                                      reloadSkippedList();
-                                  }
-                              });
-    };
-
-    revealDataRootButton.onClick = [this]
-    {
-        const auto path = juce::File (dataRootEditor.getText().trim());
-        if (path != juce::File())
-            path.revealToUser();
-    };
+    wireChooseDirectory (chooseDataRootButton, dataRootEditor, utf8 ("Choose exploration data folder"));
+    wireReveal (revealDataRootButton, dataRootEditor);
+    dataRootEditor.addListener (this);
 
     chooseConfigButton.onClick = [this]
     {
-        auto chooser = std::make_shared<juce::FileChooser> ("Choose host.config.json",
+        auto chooser = std::make_shared<juce::FileChooser> (utf8 ("Choose host.config.json"),
                                                             juce::File (configEditor.getText()),
                                                             "*.json");
         chooser->launchAsync (juce::FileBrowserComponent::openMode
@@ -95,13 +177,27 @@ SettingsPanel::SettingsPanel (const HostConfig& config, juce::KnownPluginList* k
                               {
                                   const auto result = fc.getResult();
                                   if (result != juce::File())
-                                      configEditor.setText (result.getFullPathName(), juce::dontSendNotification);
+                                      configEditor.setText (result.getFullPathName(),
+                                                            juce::dontSendNotification);
                               });
     };
-
     clearConfigButton.onClick = [this] { configEditor.clear(); };
 
-    retrySkippedButton.onClick = [this] { retrySelectedSkippedPlugin(); };
+    wireChooseDirectory (chooseFixturesButton, fixturesEditor, utf8 ("Choose Source Clips Directory"));
+    wireReveal (revealFixturesButton, fixturesEditor);
+    fixturesEditor.addListener (this);
+
+    wireChooseDirectory (chooseSessionsButton, sessionsEditor, utf8 ("Choose Sessions directory"));
+    wireReveal (revealSessionsButton, sessionsEditor);
+    sessionsEditor.addListener (this);
+
+    testPythonCliButton.onClick = [this] { runCliTest(); };
+    clearPythonCliButton.onClick = [this]
+    {
+        pythonCliEditor.clear();
+        setCliTestState (CliTestState::untested);
+        updateCliHint();
+    };
 
     resetButton.onClick = [this]
     {
@@ -109,169 +205,259 @@ SettingsPanel::SettingsPanel (const HostConfig& config, juce::KnownPluginList* k
         dataRootEditor.setText (HostPreferences::get().defaultExplorationDataRoot().getFullPathName(),
                                 juce::dontSendNotification);
         configEditor.clear();
-        allowInstrumentInputToggle.setToggleState (false, juce::dontSendNotification);
-        scanTimeoutBox.setSelectedId (HostPreferences::defaultPluginScanTimeoutMs, juce::dontSendNotification);
-        reloadSkippedList();
+        updateCliHint();
     };
 
-    reloadSkippedList();
-}
-
-void SettingsPanel::reloadSkippedList()
-{
-    const auto root = getSelectedDataRoot() != juce::File() ? getSelectedDataRoot() : dataRoot;
-    skippedIds = AuPluginScanner::loadSkipList (root);
-    skippedIds.removeEmptyStrings();
-    skippedList.updateContent();
-    skippedList.deselectAllRows();
-    updateRetryEnabled();
-}
-
-void SettingsPanel::updateRetryEnabled()
-{
-    retrySkippedButton.setEnabled (skippedList.getSelectedRow() >= 0
-                                   && skippedList.getSelectedRow() < skippedIds.size());
-}
-
-void SettingsPanel::retrySelectedSkippedPlugin()
-{
-    const int row = skippedList.getSelectedRow();
-    if (row < 0 || row >= skippedIds.size())
-        return;
-
-    const auto pluginId = skippedIds[row];
-    const auto root = getSelectedDataRoot() != juce::File() ? getSelectedDataRoot() : dataRoot;
-    const auto niceName = AuPluginScanner::displayNameForPluginId (pluginId);
-
-    retrySkippedButton.setEnabled (false);
-    retrySkippedButton.setButtonText ("Retrying...");
-
-    juce::KnownPluginList localList;
-    juce::KnownPluginList& list = knownPlugins != nullptr ? *knownPlugins : localList;
-
-    juce::String error;
-    const bool ok = AuPluginScanner::retrySkippedPlugin (root, pluginId, list, error);
-
-    retrySkippedButton.setButtonText ("Retry selected");
-    reloadSkippedList();
-
-    if (! ok)
+    updateCliHint();
+    if (config.pythonCli != juce::File() && config.pythonCli.existsAsFile())
     {
-        juce::AlertWindow alert ("Retry failed", error, juce::MessageBoxIconType::WarningIcon, this);
-        alert.addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-        alert.runModalLoop();
+        // Seed as untested so the user must confirm after opening Settings,
+        // unless they already have a path — leave grey until Test.
+        lastTestedCliText.clear();
+        setCliTestState (CliTestState::untested);
+    }
+
+    setSize (560, 460);
+}
+
+SettingsPanel::~SettingsPanel()
+{
+    dataRootEditor.removeListener (this);
+    fixturesEditor.removeListener (this);
+    sessionsEditor.removeListener (this);
+    pythonCliEditor.removeListener (this);
+}
+
+void SettingsPanel::textEditorTextChanged (juce::TextEditor& editor)
+{
+    if (&editor == &pythonCliEditor)
+    {
+        if (pythonCliEditor.getText().trim() != lastTestedCliText)
+            setCliTestState (CliTestState::untested);
+    }
+    else if (&editor == &dataRootEditor || &editor == &fixturesEditor || &editor == &sessionsEditor)
+    {
+        updateCliHint();
+    }
+}
+
+void SettingsPanel::updateCliHint()
+{
+    const auto inferred = inferAufxTestCli();
+    if (inferred != juce::File())
+    {
+        pythonCliHint.setText (
+            utf8 ("Suggested: ") + inferred.getFullPathName()
+                + utf8 (" — inferred from exploration / clips / sessions paths"),
+            juce::dontSendNotification);
+        if (pythonCliEditor.getText().trim().isEmpty())
+            pythonCliEditor.setTextToShowWhenEmpty (inferred.getFullPathName(), juce::Colours::grey);
+        else
+            pythonCliEditor.setTextToShowWhenEmpty ({}, juce::Colours::grey);
+    }
+    else
+    {
+        pythonCliHint.setText (
+            utf8 ("Optional — used for Generate report and calibrate PNGs. "
+                  "Typical path: <aufx-test repo>/.venv/bin/aufx-test"),
+            juce::dontSendNotification);
+        pythonCliEditor.setTextToShowWhenEmpty (
+            utf8 ("e.g. ~/dev/aufx-test/.venv/bin/aufx-test"),
+            juce::Colours::grey);
+    }
+}
+
+void SettingsPanel::setCliTestState (CliTestState state)
+{
+    cliTestState = state;
+
+    juce::Colour fill;
+    switch (state)
+    {
+        case CliTestState::ok:
+            fill = juce::Colour (0xff2f9e5a);
+            break;
+        case CliTestState::failed:
+            fill = juce::Colour (0xffc44747);
+            break;
+        case CliTestState::untested:
+        default:
+            fill = juce::Colour (0xff6a6a6a);
+            break;
+    }
+
+    testPythonCliButton.setColour (juce::TextButton::buttonColourId, fill);
+    testPythonCliButton.setColour (juce::TextButton::buttonOnColourId, fill.brighter (0.15f));
+    testPythonCliButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    testPythonCliButton.setColour (juce::TextButton::textColourOnId, juce::Colours::white);
+    testPythonCliButton.repaint();
+}
+
+juce::File SettingsPanel::expandUserPath (const juce::String& raw) const
+{
+    auto text = raw.trim().unquoted();
+    if (text.isEmpty())
+        return {};
+
+    if (text.startsWithChar ('~'))
+    {
+        const auto home = juce::File::getSpecialLocation (juce::File::userHomeDirectory).getFullPathName();
+        text = home + text.substring (1);
+    }
+
+    if (juce::File::isAbsolutePath (text))
+        return juce::File (text);
+
+    return getSelectedDataRoot().getChildFile (text);
+}
+
+juce::File SettingsPanel::inferAufxTestCli() const
+{
+    if (const auto found = searchAufxTestNear (getSelectedDataRoot(), 4); found != juce::File())
+        return found;
+
+    const auto fixtures = getSelectedFixturesDir();
+    if (fixtures.getFileName() == "fixtures")
+        if (const auto found = searchAufxTestNear (fixtures.getParentDirectory(), 3); found != juce::File())
+            return found;
+
+    const auto sessions = getSelectedSessionsRoot();
+    if (sessions.getFileName() == "sessions")
+        if (const auto found = searchAufxTestNear (sessions.getParentDirectory(), 3); found != juce::File())
+            return found;
+
+    return {};
+}
+
+void SettingsPanel::runCliTest()
+{
+    auto text = pythonCliEditor.getText().trim();
+    if (text.isEmpty())
+    {
+        const auto inferred = inferAufxTestCli();
+        if (inferred != juce::File())
+        {
+            pythonCliEditor.setText (inferred.getFullPathName(), juce::dontSendNotification);
+            text = inferred.getFullPathName();
+        }
+    }
+
+    const auto cli = expandUserPath (text);
+    lastTestedCliText = pythonCliEditor.getText().trim();
+
+    if (cli == juce::File() || ! cli.existsAsFile())
+    {
+        setCliTestState (CliTestState::failed);
         return;
     }
 
-    pluginCacheModified = true;
-    juce::AlertWindow alert ("Retry succeeded",
-                             niceName + utf8 (" was scanned and added to the plugin cache.\n"
-                                              "Use Plugins → Add Plugin… to put it on your list."),
-                             juce::MessageBoxIconType::InfoIcon,
-                             this);
-    alert.addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    alert.runModalLoop();
-}
+    juce::ChildProcess process;
+    juce::StringArray args;
+    args.add (cli.getFullPathName());
+    args.add ("--help");
 
-int SettingsPanel::getNumRows()
-{
-    return skippedIds.size();
-}
-
-void SettingsPanel::paintListBoxItem (int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected)
-{
-    if (rowNumber < 0 || rowNumber >= skippedIds.size())
+    if (! process.start (args))
+    {
+        setCliTestState (CliTestState::failed);
         return;
+    }
 
-    if (rowIsSelected)
-        g.fillAll (juce::Colours::lightblue.withAlpha (0.35f));
+    // Keep the Settings modal responsive; aufx-test --help is normally instant.
+    if (! process.waitForProcessToFinish (5000))
+    {
+        process.kill();
+        setCliTestState (CliTestState::failed);
+        return;
+    }
 
-    g.setColour (juce::Colours::white.withAlpha (0.9f));
-    g.setFont (juce::FontOptions (13.0f));
-    g.drawText (AuPluginScanner::displayNameForPluginId (skippedIds[rowNumber]),
-                8, 0, width - 16, height,
-                juce::Justification::centredLeft, true);
-}
+    const auto output = process.readAllProcessOutput();
+    const bool ok = process.getExitCode() == 0
+                    && (output.containsIgnoreCase ("aufx-test")
+                        || output.containsIgnoreCase ("compare")
+                        || output.containsIgnoreCase ("usage"));
 
-void SettingsPanel::selectedRowsChanged (int)
-{
-    updateRetryEnabled();
+    setCliTestState (ok ? CliTestState::ok : CliTestState::failed);
 }
 
 void SettingsPanel::resized()
 {
     auto area = getLocalBounds().reduced (4);
-    dataRootLabel.setBounds (area.removeFromTop (22));
-    auto row = area.removeFromTop (28);
-    chooseDataRootButton.setBounds (row.removeFromRight (88));
-    row.removeFromRight (6);
-    revealDataRootButton.setBounds (row.removeFromRight (72));
-    row.removeFromRight (6);
-    dataRootEditor.setBounds (row);
-    area.removeFromTop (12);
+    layoutPathRow (area, dataRootLabel, dataRootEditor, chooseDataRootButton, revealDataRootButton);
+    layoutPathRow (area, configLabel, configEditor, chooseConfigButton, clearConfigButton);
+    layoutPathRow (area, fixturesLabel, fixturesEditor, chooseFixturesButton, revealFixturesButton);
+    layoutPathRow (area, sessionsLabel, sessionsEditor, chooseSessionsButton, revealSessionsButton);
 
-    configLabel.setBounds (area.removeFromTop (22));
-    row = area.removeFromTop (28);
-    chooseConfigButton.setBounds (row.removeFromRight (88));
-    row.removeFromRight (6);
-    clearConfigButton.setBounds (row.removeFromRight (72));
-    row.removeFromRight (6);
-    configEditor.setBounds (row);
-    area.removeFromTop (14);
-
-    allowInstrumentInputToggle.setBounds (area.removeFromTop (28));
+    pythonCliLabel.setBounds (area.removeFromTop (22));
+    auto cliRow = area.removeFromTop (28);
+    testPythonCliButton.setBounds (cliRow.removeFromRight (88));
+    cliRow.removeFromRight (6);
+    clearPythonCliButton.setBounds (cliRow.removeFromRight (72));
+    cliRow.removeFromRight (6);
+    pythonCliEditor.setBounds (cliRow);
+    area.removeFromTop (4);
+    pythonCliHint.setBounds (area.removeFromTop (36));
     area.removeFromTop (8);
 
-    auto timeoutRow = area.removeFromTop (28);
-    scanTimeoutLabel.setBounds (timeoutRow.removeFromLeft (160));
-    scanTimeoutBox.setBounds (timeoutRow.removeFromLeft (180));
-    area.removeFromTop (12);
+    defaultPluginLabel.setBounds (area.removeFromTop (22));
+    auto pluginRow = area.removeFromTop (28);
+    defaultPluginBox.setBounds (pluginRow);
+    area.removeFromTop (14);
 
-    skippedHeading.setBounds (area.removeFromTop (22));
-    auto buttons = area.removeFromBottom (28);
-    retrySkippedButton.setBounds (buttons.removeFromLeft (140));
-    buttons.removeFromLeft (12);
-    resetButton.setBounds (buttons.removeFromLeft (160));
-    area.removeFromBottom (8);
-    skippedList.setBounds (area);
+    resetButton.setBounds (area.removeFromTop (28).removeFromLeft (160));
 }
 
 juce::File SettingsPanel::getSelectedDataRoot() const
 {
-    return juce::File (dataRootEditor.getText().trim());
+    return expandUserPath (dataRootEditor.getText());
 }
 
 juce::File SettingsPanel::getSelectedConfigOverride() const
 {
     const auto text = configEditor.getText().trim();
-    return text.isEmpty() ? juce::File() : juce::File (text);
+    return text.isEmpty() ? juce::File() : expandUserPath (text);
 }
 
-bool SettingsPanel::getAllowInstrumentAudioInput() const
+juce::File SettingsPanel::getSelectedFixturesDir() const
 {
-    return allowInstrumentInputToggle.getToggleState();
+    return expandUserPath (fixturesEditor.getText());
 }
 
-int SettingsPanel::getPluginScanTimeoutMs() const
+juce::File SettingsPanel::getSelectedSessionsRoot() const
 {
-    const int selected = scanTimeoutBox.getSelectedId();
-    if (selected > 0)
-        return selected;
+    return expandUserPath (sessionsEditor.getText());
+}
 
-    return HostPreferences::defaultPluginScanTimeoutMs;
+juce::File SettingsPanel::getSelectedPythonCli() const
+{
+    return expandUserPath (pythonCliEditor.getText());
+}
+
+juce::String SettingsPanel::getSelectedDefaultPluginId (const HostConfig& config) const
+{
+    const int selected = defaultPluginBox.getSelectedId();
+    if (selected <= 1)
+        return {};
+
+    const int index = selected - 2;
+    if (! juce::isPositiveAndBelow (index, config.plugins.size()))
+        return {};
+
+    return config.plugins.getReference (index).id;
 }
 
 bool showSettingsDialog (HostConfig& config,
-                         juce::KnownPluginList* knownPlugins,
-                         juce::Component* centreAround)
+                         juce::Component* centreAround,
+                         bool* outFixturesChanged)
 {
-    SettingsPanel panel (config, knownPlugins);
-    panel.setSize (560, 450);
+    if (outFixturesChanged != nullptr)
+        *outFixturesChanged = false;
+
+    SettingsPanel panel (config);
 
     if (HostDialog::runCustomPanelModal (
-            "Settings",
-            "Changing the exploration folder moves its data (including the AU plugin cache) to the new location. "
-            "Folder/config override changes apply after relaunch.",
+            utf8 ("Settings"),
+            utf8 ("Exploration folder / config override changes apply after relaunch. "
+                  "Source Clips, Sessions, aufx-test CLI, and Default plugin save immediately."),
             panel,
             centreAround) != 1)
         return false;
@@ -289,7 +475,7 @@ bool showSettingsDialog (HostConfig& config,
             if (! prefs.relocateExplorationData (previousDataRoot, defaultRoot, migrateMessage))
             {
                 juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
-                                                        "Could not move exploration data",
+                                                        utf8 ("Could not move exploration data"),
                                                         migrateMessage);
                 return false;
             }
@@ -305,8 +491,8 @@ bool showSettingsDialog (HostConfig& config,
         if (! dataRoot.createDirectory())
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
-                                                    "Settings",
-                                                    "Could not create exploration data folder:\n"
+                                                    utf8 ("Settings"),
+                                                    utf8 ("Could not create exploration data folder:\n")
                                                         + dataRoot.getFullPathName());
             return false;
         }
@@ -318,7 +504,7 @@ bool showSettingsDialog (HostConfig& config,
             if (! prefs.relocateExplorationData (previousDataRoot, dataRoot, migrateMessage))
             {
                 juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
-                                                        "Could not move exploration data",
+                                                        utf8 ("Could not move exploration data"),
                                                         migrateMessage);
                 return false;
             }
@@ -330,7 +516,112 @@ bool showSettingsDialog (HostConfig& config,
     const auto configOverride = panel.getSelectedConfigOverride();
     prefs.setConfigPathPref (configOverride != juce::File() ? configOverride.getFullPathName()
                                                             : juce::String());
-    prefs.setAllowInstrumentAudioInput (panel.getAllowInstrumentAudioInput());
-    prefs.setPluginScanTimeoutMs (panel.getPluginScanTimeoutMs());
+
+    const auto previousFixtures = config.fixturesDir;
+    const auto previousSessions = config.sessionsRoot;
+    const auto newFixtures = panel.getSelectedFixturesDir();
+    const auto newSessions = panel.getSelectedSessionsRoot();
+    const auto newPythonCli = panel.getSelectedPythonCli();
+    const auto newDefaultPluginId = panel.getSelectedDefaultPluginId (config);
+
+    if (newFixtures != juce::File()
+        && newFixtures.getFullPathName() != previousFixtures.getFullPathName())
+    {
+        juce::String migrateMessage;
+        const auto bundled = prefs.bundledFixturesDir();
+        const bool previousIsBundled = previousFixtures != juce::File()
+                                       && bundled != juce::File()
+                                       && previousFixtures.getFullPathName() == bundled.getFullPathName();
+
+        if (directoryHasContent (previousFixtures) && ! previousIsBundled)
+        {
+            if (! prefs.relocateDirectoryContents (previousFixtures, newFixtures, migrateMessage))
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                        utf8 ("Could not move Source Clips"),
+                                                        migrateMessage);
+                return false;
+            }
+        }
+        else if (bundled != juce::File() && bundled.isDirectory())
+        {
+            if (! prefs.copyDirectoryContents (bundled, newFixtures, migrateMessage))
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                        utf8 ("Could not copy Source Clips"),
+                                                        migrateMessage);
+                return false;
+            }
+        }
+        else if (! newFixtures.createDirectory())
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                    utf8 ("Settings"),
+                                                    utf8 ("Could not create Source Clips Directory:\n")
+                                                        + newFixtures.getFullPathName());
+            return false;
+        }
+
+        config.fixturesDir = newFixtures;
+        if (outFixturesChanged != nullptr)
+            *outFixturesChanged = true;
+    }
+
+    if (newSessions != juce::File()
+        && newSessions.getFullPathName() != previousSessions.getFullPathName())
+    {
+        juce::String migrateMessage;
+        if (directoryHasContent (previousSessions))
+        {
+            if (! prefs.relocateDirectoryContents (previousSessions, newSessions, migrateMessage))
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                        utf8 ("Could not move Sessions"),
+                                                        migrateMessage);
+                return false;
+            }
+
+            juce::String rewriteError;
+            if (! SessionSnap::rewritePathsAfterRootMove (previousSessions, newSessions, rewriteError))
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                        utf8 ("Sessions moved, but path rewrite failed"),
+                                                        rewriteError);
+                return false;
+            }
+        }
+        else if (! newSessions.createDirectory())
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                    utf8 ("Settings"),
+                                                    utf8 ("Could not create Sessions directory:\n")
+                                                        + newSessions.getFullPathName());
+            return false;
+        }
+
+        config.sessionsRoot = newSessions;
+    }
+
+    config.pythonCli = newPythonCli;
+    if (config.pythonCli != juce::File() && ! config.pythonCli.existsAsFile())
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                utf8 ("Settings"),
+                                                utf8 ("aufx-test CLI path does not exist:\n")
+                                                    + config.pythonCli.getFullPathName());
+        return false;
+    }
+
+    config.defaultPluginId = newDefaultPluginId;
+
+    juce::String saveError;
+    if (! config.saveToFile (saveError))
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                utf8 ("Settings"),
+                                                utf8 ("Failed to write host.config.json:\n") + saveError);
+        return false;
+    }
+
     return true;
 }

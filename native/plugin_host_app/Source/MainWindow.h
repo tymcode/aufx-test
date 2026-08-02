@@ -40,15 +40,20 @@ private:
     /** Shared by the main window and Level Meters (space + command shortcuts). */
     bool handleGlobalKeyPress (const juce::KeyPress& key);
     void syncNativeMenuShortcuts();
+    /** Keep Level Meters above Lights Out overlays when that mode is on. */
+    void syncLevelMetersForLightsOut();
 
     enum MenuIds
     {
         menuAbout = 1,
         menuSettings,
         menuAddPlugin,
+        menuAudioUnitSettings,
         menuRescanPlugins,
         menuRescanSourceClips,
+        menuInstallSourceClips,
         menuCaptureTestCase,
+        menuRestoreTestcaseState,
         menuLightsOut,
         menuHardwareAudioSetup,
         menuMidiSetup,

@@ -201,3 +201,70 @@ void HostLookAndFeel::drawTickBox (juce::Graphics& g, juce::Component& component
                                      .translated (0.0f, -tick.getHeight() * 0.12f), 1.2f);
     }
 }
+
+juce::AlertWindow* HostLookAndFeel::createAlertWindow (const juce::String& title,
+                                                       const juce::String& message,
+                                                       const juce::String& button1,
+                                                       const juce::String& button2,
+                                                       const juce::String& button3,
+                                                       juce::MessageBoxIconType iconType,
+                                                       int numButtons,
+                                                       juce::Component* associatedComponent)
+{
+    auto* aw = new juce::AlertWindow (title, message, iconType, associatedComponent);
+
+    auto disableCancelFocus = [aw]()
+    {
+        for (int i = 0; i < aw->getNumChildComponents(); ++i)
+            if (auto* button = dynamic_cast<juce::TextButton*> (aw->getChildComponent (i)))
+                if (button->getButtonText().equalsIgnoreCase ("Cancel")
+                    || button->getCommandID() == 0)
+                    button->setWantsKeyboardFocus (false);
+    };
+
+    if (numButtons == 1)
+    {
+        aw->addButton (button1, 0,
+                       juce::KeyPress (juce::KeyPress::escapeKey),
+                       juce::KeyPress (juce::KeyPress::returnKey));
+    }
+    else if (numButtons == 2)
+    {
+        // MessageBoxOptions: button1 = confirm (result 1), button2 = cancel (result 0).
+        // Add Cancel first so it is leftmost.
+        juce::KeyPress button1ShortCut ((int) juce::CharacterFunctions::toLowerCase (button1[0]), 0, 0);
+        juce::KeyPress button2ShortCut ((int) juce::CharacterFunctions::toLowerCase (button2[0]), 0, 0);
+        if (button1ShortCut == button2ShortCut)
+            button2ShortCut = {};
+
+        aw->addButton (button2, 0, juce::KeyPress (juce::KeyPress::escapeKey), button2ShortCut);
+        aw->addButton (button1, 1, juce::KeyPress (juce::KeyPress::returnKey), button1ShortCut);
+        disableCancelFocus();
+    }
+    else if (numButtons == 3)
+    {
+        juce::KeyPress button1ShortCut ((int) juce::CharacterFunctions::toLowerCase (button1[0]), 0, 0);
+        juce::KeyPress button2ShortCut ((int) juce::CharacterFunctions::toLowerCase (button2[0]), 0, 0);
+        if (button1ShortCut == button2ShortCut)
+            button2ShortCut = {};
+
+        // button3 = cancel (0), button2 = secondary (2), button1 = primary (1).
+        aw->addButton (button3, 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        aw->addButton (button2, 2, button2ShortCut);
+        aw->addButton (button1, 1, button1ShortCut);
+        disableCancelFocus();
+    }
+
+    // Match LookAndFeel_V4 alert padding.
+    constexpr int boundsOffset = 50;
+    auto bounds = aw->getBounds();
+    bounds = bounds.withSizeKeepingCentre (bounds.getWidth() + boundsOffset,
+                                           bounds.getHeight() + boundsOffset);
+    aw->setBounds (bounds);
+
+    for (auto* child : aw->getChildren())
+        if (auto* button = dynamic_cast<juce::TextButton*> (child))
+            button->setBounds (button->getBounds() + juce::Point<int> (25, 40));
+
+    return aw;
+}

@@ -58,4 +58,13 @@ struct SessionSnap
                               const juce::String& match,
                               SessionSnapshotRef& out,
                               juce::String& error);
+
+    /**
+     * After moving sessions from oldRoot to newRoot, rewrite absolute artifact
+     * paths inside each session.json so they stay relative to the session dir
+     * (or point under the new root).
+     */
+    static bool rewritePathsAfterRootMove (const juce::File& oldRoot,
+                                           const juce::File& newRoot,
+                                           juce::String& error);
 };

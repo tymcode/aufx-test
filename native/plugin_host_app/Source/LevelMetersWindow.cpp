@@ -80,8 +80,10 @@ namespace
             const auto defaultName = "level_sweep_"
                                      + juce::Time::getCurrentTime().formatted ("%Y%m%d_%H%M%S");
             aw->addTextEditor ("name", defaultName, "Plot name");
-            aw->addButton ("Run", 1, juce::KeyPress (juce::KeyPress::returnKey));
             aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            aw->addButton ("Run", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            if (auto* cancel = aw->getButton ("Cancel"))
+                cancel->setWantsKeyboardFocus (false);
 
             aw->enterModalState (true,
                                  juce::ModalCallbackFunction::create (

@@ -32,6 +32,7 @@ public:
     static constexpr const char* keyCaptureGenerateReport = "captureGenerateReport";
     static constexpr const char* keyCaptureSoftwareSettings = "captureSoftwareSettings";
     static constexpr const char* keyCaptureHardwareSettings = "captureHardwareSettings";
+    static constexpr const char* keyLastSourceClipBrowseDir = "lastSourceClipBrowseDir";
     static constexpr int defaultPluginScanTimeoutMs = 15000;
     static constexpr int minPluginScanTimeoutMs = 5000;
     static constexpr int maxPluginScanTimeoutMs = 300000;
@@ -70,6 +71,8 @@ public:
     bool getCaptureSoftwareSettings() const;
     /** When true (default), request a hardware sysex patch dump. */
     bool getCaptureHardwareSettings() const;
+    /** Last directory used by Source Clip → Select Other… (empty if never set). */
+    juce::File getLastSourceClipBrowseDir() const;
     void setExplorationDataRootPref (const juce::String& path);
     void setConfigPathPref (const juce::String& path);
     void setAllowInstrumentAudioInput (bool allow);
@@ -83,6 +86,7 @@ public:
     void setCaptureGenerateReport (bool shouldGenerate);
     void setCaptureSoftwareSettings (bool shouldCapture);
     void setCaptureHardwareSettings (bool shouldCapture);
+    void setLastSourceClipBrowseDir (const juce::File& directory);
     void clearPrefs();
 
     /** Read org-level defaults from /Library/Preferences (macOS). */
@@ -114,6 +118,22 @@ public:
     bool relocateExplorationData (const juce::File& from,
                                   const juce::File& to,
                                   juce::String& message);
+
+    /**
+     * Move directory children from `from` into `to` (create `to` if needed).
+     * Existing destination names are left alone. Returns false on hard failure.
+     */
+    bool relocateDirectoryContents (const juce::File& from,
+                                    const juce::File& to,
+                                    juce::String& message);
+
+    /**
+     * Copy directory children from `from` into `to`. Existing destination
+     * names are left alone.
+     */
+    bool copyDirectoryContents (const juce::File& from,
+                                const juce::File& to,
+                                juce::String& message);
 
 private:
     HostPreferences() = default;

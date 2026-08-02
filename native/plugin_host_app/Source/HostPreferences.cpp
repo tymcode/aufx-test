@@ -342,6 +342,34 @@ void HostPreferences::setCaptureHardwareSettings (bool shouldCapture)
     }
 }
 
+juce::File HostPreferences::getLastSourceClipBrowseDir() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+    {
+        const auto path = s->getValue (keyLastSourceClipBrowseDir).trim();
+        if (path.isNotEmpty())
+        {
+            const juce::File dir (path);
+            if (dir.isDirectory())
+                return dir;
+        }
+    }
+
+    return {};
+}
+
+void HostPreferences::setLastSourceClipBrowseDir (const juce::File& directory)
+{
+    if (auto* s = settings())
+    {
+        if (directory.isDirectory())
+            s->setValue (keyLastSourceClipBrowseDir, directory.getFullPathName());
+        else
+            s->removeValue (keyLastSourceClipBrowseDir);
+        s->saveIfNeeded();
+    }
+}
+
 void HostPreferences::setHardwareCaptureSilenceThresholdDb (double thresholdDb)
 {
     if (auto* s = settings())
@@ -377,6 +405,7 @@ void HostPreferences::clearPrefs()
         s->removeValue (keyCaptureGenerateReport);
         s->removeValue (keyCaptureSoftwareSettings);
         s->removeValue (keyCaptureHardwareSettings);
+        s->removeValue (keyLastSourceClipBrowseDir);
         s->saveIfNeeded();
     }
 }
@@ -563,6 +592,129 @@ bool HostPreferences::relocateExplorationData (const juce::File& from,
     if (! warnings.isEmpty())
         message += "\n\n" + warnings.joinIntoString ("\n");
 
+    return true;
+}
+
+bool HostPreferences::relocateDirectoryContents (const juce::File& from,
+                                                 const juce::File& to,
+                                                 juce::String& message)
+{
+    message.clear();
+
+    if (from == juce::File() || to == juce::File())
+        return true;
+
+    if (from.getFullPathName() == to.getFullPathName())
+        return true;
+
+    if (! from.isDirectory())
+    {
+        message = "Source folder does not exist: " + from.getFullPathName();
+        return false;
+    }
+
+    if (! to.createDirectory())
+    {
+        message = "Could not create folder: " + to.getFullPathName();
+        return false;
+    }
+
+    int moved = 0;
+    int skippedExisting = 0;
+    juce::StringArray warnings;
+
+    for (const auto& child : from.findChildFiles (juce::File::findFilesAndDirectories, false))
+    {
+        if (child.getFileName() == ".DS_Store")
+            continue;
+
+        const auto dest = to.getChildFile (child.getFileName());
+        if (dest.exists())
+        {
+            ++skippedExisting;
+            continue;
+        }
+
+        juce::String itemError;
+        if (! relocateChild (child, dest, itemError))
+        {
+            message = itemError;
+            return false;
+        }
+
+        ++moved;
+        if (itemError.isNotEmpty())
+            warnings.add (itemError);
+    }
+
+    message = "Moved " + juce::String (moved) + " item" + (moved == 1 ? "" : "s")
+              + " to " + to.getFullPathName();
+    if (skippedExisting > 0)
+        message += " (" + juce::String (skippedExisting) + " already present)";
+    message += ".";
+    if (! warnings.isEmpty())
+        message += "\n\n" + warnings.joinIntoString ("\n");
+    return true;
+}
+
+bool HostPreferences::copyDirectoryContents (const juce::File& from,
+                                             const juce::File& to,
+                                             juce::String& message)
+{
+    message.clear();
+
+    if (from == juce::File() || to == juce::File())
+        return true;
+
+    if (! from.isDirectory())
+    {
+        message = "Source folder does not exist: " + from.getFullPathName();
+        return false;
+    }
+
+    if (! to.createDirectory())
+    {
+        message = "Could not create folder: " + to.getFullPathName();
+        return false;
+    }
+
+    int copied = 0;
+    int skippedExisting = 0;
+
+    for (const auto& child : from.findChildFiles (juce::File::findFilesAndDirectories, false))
+    {
+        if (child.getFileName() == ".DS_Store")
+            continue;
+
+        const auto dest = to.getChildFile (child.getFileName());
+        if (dest.exists())
+        {
+            ++skippedExisting;
+            continue;
+        }
+
+        if (child.isDirectory())
+        {
+            if (! child.copyDirectoryTo (dest))
+            {
+                message = "Failed to copy folder: " + child.getFullPathName();
+                return false;
+            }
+        }
+        else if (! child.copyFileTo (dest))
+        {
+            message = "Failed to copy file: " + child.getFullPathName();
+            return false;
+        }
+
+        ++copied;
+    }
+
+    message = "Copied " + juce::String (copied) + " item" + (copied == 1 ? "" : "s")
+              + " to " + to.getFullPathName();
+    if (skippedExisting > 0)
+        message += " (" + juce::String (skippedExisting) + " already present)";
+    message += ".";
     return true;
 }
 

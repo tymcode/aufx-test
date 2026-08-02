@@ -35,6 +35,11 @@ public:
                          juce::ComboBox& sourceClipBox,
                          juce::String& error);
 
+    /** Temporary top-level Source Clips entry (Restore Testcase State). */
+    bool loadSourceClipTemporaryTopLevel (const juce::File& inputAudio,
+                                          juce::ComboBox& sourceClipBox,
+                                          juce::String& error);
+
     bool loadPreset (const juce::File& presetFile, juce::String& error);
 
     bool sendSysex (const juce::File& sysexFile, juce::String& error);

@@ -169,41 +169,60 @@ def plot_difference_metrics(
     """Bar chart of objective difference metrics.
 
     When ``thresholds`` is provided, each gated metric column gets a gray
-    horizontal line at its tolerance (min for SNR/correlation, max for errors).
+    horizontal line at its tolerance (min for correlation, max for errors).
+    ``level_gain_db`` is informational only (no threshold line).
     """
     m = metrics.metrics if isinstance(metrics, ComparisonResult) else metrics
-    names = ["snr_db", "correlation", "rms_error", "max_abs_error", "spectral_distance"]
-    values = [getattr(m, name) for name in names]
+    names = ["level_gain_db", "correlation", "rms_error", "max_abs_error", "spectral_distance"]
+    raw_values = [getattr(m, name) for name in names]
+    # Non-finite level gain (silent channel) → empty bar; keep others as-is.
+    values = [
+        0.0 if (name == "level_gain_db" and not np.isfinite(val)) else float(val)
+        for name, val in zip(names, raw_values, strict=True)
+    ]
 
     fig, ax = plt.subplots(figsize=figsize)
-    bars = ax.bar(names, values, color=["#4c72b0", "#55a868", "#c44e52", "#8172b2", "#ccb974"])
+    colors = ["#4c72b0", "#55a868", "#c44e52", "#8172b2", "#ccb974"]
+    bars = ax.bar(names, values, color=colors)
     ax.set_title(title)
     ax.set_ylabel("Value")
+    ax.axhline(0.0, color="#d0d7de", linewidth=0.8, zorder=1)
+
+    # Keep level gain readable: at least ±6 dB, expand if the value is larger.
+    gain = values[0]
+    gain_lim = max(6.0, abs(gain) * 1.25) if np.isfinite(raw_values[0]) else 6.0
 
     thr_map: dict[str, float] = {}
     if thresholds is not None:
         if isinstance(thresholds, ComparisonThresholds):
             thr_map = {
-                "snr_db": thresholds.snr_db_min,
                 "correlation": thresholds.correlation_min,
                 "rms_error": thresholds.rms_error_max,
                 "spectral_distance": thresholds.spectral_distance_max,
             }
         else:
             thr_map = {
-                "snr_db": float(thresholds.get("snr_db_min", 0.0)),
                 "correlation": float(thresholds.get("correlation_min", 0.0)),
                 "rms_error": float(thresholds.get("rms_error_max", 0.0)),
                 "spectral_distance": float(thresholds.get("spectral_distance_max", 0.0)),
             }
 
-    for bar, _name, val in zip(bars, names, values, strict=True):
-        label = "inf" if val == float("inf") else f"{val:.3f}"
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), label, ha="center", va="bottom")
+    for bar, name, val, raw in zip(bars, names, values, raw_values, strict=True):
+        if name == "level_gain_db" and not np.isfinite(raw):
+            label = "n/a"
+            y = 0.0
+            va = "bottom"
+        else:
+            label = f"{val:.3f}"
+            y = bar.get_height()
+            va = "bottom" if y >= 0 else "top"
+        ax.text(bar.get_x() + bar.get_width() / 2, y, label, ha="center", va=va)
 
-    # Lock scale to the metric bars before drawing thresholds. A high SNR gate
-    # must not expand ylim and crush the other columns; off-scale lines clip.
+    # Lock scale to metric bars (+ level-gain floor) before drawing thresholds
+    # so a high gate does not expand ylim and crush the other columns.
     y_lo, y_hi = ax.get_ylim()
+    y_lo = min(y_lo, -gain_lim)
+    y_hi = max(y_hi, gain_lim)
 
     for bar, name in zip(bars, names, strict=True):
         if name not in thr_map:
@@ -384,8 +403,13 @@ def _draw_panel(ax: plt.Axes, kind: str, payload: Any) -> None:
         ax.set_title("Waveforms")
     elif kind == "comparison":
         metrics = payload.metrics if hasattr(payload, "metrics") else payload
-        names = ["snr_db", "correlation", "rms_error", "spectral_distance"]
-        ax.bar(names, [getattr(metrics, n) for n in names])
+        names = ["level_gain_db", "correlation", "rms_error", "spectral_distance"]
+        vals = [getattr(metrics, n) for n in names]
+        plot_vals = [
+            0.0 if (n == "level_gain_db" and not np.isfinite(v)) else float(v)
+            for n, v in zip(names, vals, strict=True)
+        ]
+        ax.bar(names, plot_vals)
         ax.set_title("Difference Metrics")
     elif kind == "silence_distance":
         for key, values in payload.items():
