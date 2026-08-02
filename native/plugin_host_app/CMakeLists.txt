@@ -77,6 +77,7 @@ target_sources(plugin_host_app
         Source/LevelMetersWindow.cpp
         Source/TestCaseCapture.cpp
         Source/TestCaseLoader.cpp
+        Source/RestoreTestcaseStateDialog.cpp
         Source/PluginAudioEngine.cpp
         Source/MonitorOutputBridge.cpp
         Source/HardwareLoopOps.cpp
@@ -89,6 +90,7 @@ target_sources(plugin_host_app
         Source/AuPluginScanDialog.cpp
         Source/PluginScannerOOP.cpp
         Source/SettingsDialog.cpp
+        Source/InstallSourceClipsDialog.cpp
         Source/AudioUnitSettingsDialog.cpp
         Source/AddPluginDialog.cpp
         Source/AboutDialog.cpp

@@ -619,13 +619,15 @@ bool showHardwareAudioSetupDialog (PluginAudioEngine& engine,
                               juce::MessageBoxIconType::NoIcon,
                               centreAround);
     window.addCustomComponent (&panel);
+    window.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
     window.addButton ("Test", 2);
     window.addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    window.addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    if (auto* cancel = window.getButton ("Cancel"))
+        cancel->setWantsKeyboardFocus (false);
 
     panel.onLoopConfiguredChanged = [&window, &panel] (bool loopConfigured)
     {
-        if (auto* testBtn = window.getButton (0))
+        if (auto* testBtn = window.getButton ("Test"))
         {
             testBtn->setEnabled (loopConfigured);
             testBtn->setButtonText ((! loopConfigured || ! panel.isTesting()) ? "Test" : "Stop Test");
@@ -641,7 +643,7 @@ bool showHardwareAudioSetupDialog (PluginAudioEngine& engine,
             break;
 
         panel.toggleTest();
-        if (auto* testBtn = window.getButton (0))
+        if (auto* testBtn = window.getButton ("Test"))
             testBtn->setButtonText (panel.isTesting() ? "Stop Test" : "Test");
     }
 

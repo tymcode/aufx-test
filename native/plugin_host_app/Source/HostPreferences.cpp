@@ -342,6 +342,34 @@ void HostPreferences::setCaptureHardwareSettings (bool shouldCapture)
     }
 }
 
+juce::File HostPreferences::getLastSourceClipBrowseDir() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+    {
+        const auto path = s->getValue (keyLastSourceClipBrowseDir).trim();
+        if (path.isNotEmpty())
+        {
+            const juce::File dir (path);
+            if (dir.isDirectory())
+                return dir;
+        }
+    }
+
+    return {};
+}
+
+void HostPreferences::setLastSourceClipBrowseDir (const juce::File& directory)
+{
+    if (auto* s = settings())
+    {
+        if (directory.isDirectory())
+            s->setValue (keyLastSourceClipBrowseDir, directory.getFullPathName());
+        else
+            s->removeValue (keyLastSourceClipBrowseDir);
+        s->saveIfNeeded();
+    }
+}
+
 void HostPreferences::setHardwareCaptureSilenceThresholdDb (double thresholdDb)
 {
     if (auto* s = settings())
@@ -377,6 +405,7 @@ void HostPreferences::clearPrefs()
         s->removeValue (keyCaptureGenerateReport);
         s->removeValue (keyCaptureSoftwareSettings);
         s->removeValue (keyCaptureHardwareSettings);
+        s->removeValue (keyLastSourceClipBrowseDir);
         s->saveIfNeeded();
     }
 }

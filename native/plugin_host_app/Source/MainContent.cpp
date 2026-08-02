@@ -9,7 +9,11 @@
 #include "MidiSetupDialog.h"
 #include "SettingsDialog.h"
 #include "AudioUnitSettingsDialog.h"
+#include "InstallSourceClipsDialog.h"
+#include "RestoreTestcaseStateDialog.h"
 #include "Utf8.h"
+
+#include <memory>
 
 MainContent::MainContent (PluginAudioEngine& audioEngine,
                  HostConfig& hostConfig,
@@ -315,6 +319,16 @@ void MainContent::openAudioUnitSettings()
         }
     }
 
+void MainContent::openInstallSourceClips()
+{
+    bool fixturesRelocated = false;
+    if (showInstallSourceClipsDialog (config, engine, this, &fixturesRelocated)
+        || fixturesRelocated)
+    {
+        populateFixtures();
+    }
+}
+
 void MainContent::openAddPlugin()
 {
         HostLog::info ("Add Plugin: ensuring AU cache...");
@@ -386,7 +400,26 @@ void MainContent::rescanSourceClips()
 
 void MainContent::openCaptureTestCase()
 {
-        testCaseCapture.prompt (this, sourceClips, fixtureBox);
+    testCaseCapture.prompt (this, sourceClips, fixtureBox);
+}
+
+void MainContent::openRestoreTestcaseState()
+{
+    juce::File startDir;
+    if (config.sessionsRoot != juce::File() && ! config.plugins.isEmpty())
+    {
+        startDir = config.sessionsRoot
+                       .getChildFile (HostConfig::slugify (currentPlugin().sessionName))
+                       .getChildFile ("artifacts");
+        if (! startDir.isDirectory())
+            startDir.createDirectory();
+    }
+
+    if (! startDir.isDirectory())
+        startDir = config.sessionsRoot;
+
+    showRestoreTestcaseStateDialog (config, engine, testCaseLoader, sourceClips, fixtureBox,
+                                    startDir, this);
 }
 
 bool MainContent::loadTestCase (const SessionSnapshotRef& snapshot, juce::String& error)
@@ -835,6 +868,9 @@ void MainContent::populateFixtures()
         const int previousId = fixtureBox.getSelectedId();
         sourceClips.rescan (config.fixturesDir);
         sourceClips.rebuildComboBox (fixtureBox, previousId);
+        const int selectedId = fixtureBox.getSelectedId();
+        if (selectedId > 0 && selectedId != SourceClipLibrary::selectOtherItemId)
+            lastNonOtherFixtureId = selectedId;
 }
 
 void MainContent::populateMidiInputs()
@@ -965,6 +1001,9 @@ void MainContent::layoutEditor()
 
 void MainContent::selectFixture (int comboId)
 {
+        if (comboId == SourceClipLibrary::selectOtherItemId)
+            return;
+
         const auto file = sourceClips.getFileForId (comboId);
         if (! file.existsAsFile())
             return;
@@ -974,6 +1013,98 @@ void MainContent::selectFixture (int comboId)
             setStatus ("Fixture error: " + error, true);
 }
 
+void MainContent::restoreFixtureSelectionAfterSelectOtherCancelled()
+{
+        if (lastNonOtherFixtureId > 0
+            && lastNonOtherFixtureId != SourceClipLibrary::selectOtherItemId
+            && fixtureBox.indexOfItemId (lastNonOtherFixtureId) >= 0)
+        {
+            fixtureBox.setSelectedId (lastNonOtherFixtureId, juce::dontSendNotification);
+            return;
+        }
+
+        for (int i = 0; i < fixtureBox.getNumItems(); ++i)
+        {
+            const int id = fixtureBox.getItemId (i);
+            if (id != SourceClipLibrary::selectOtherItemId)
+            {
+                fixtureBox.setSelectedId (id, juce::dontSendNotification);
+                lastNonOtherFixtureId = id;
+                return;
+            }
+        }
+
+        fixtureBox.setSelectedId (0, juce::dontSendNotification);
+}
+
+void MainContent::showInvalidWavAlert()
+{
+        auto options = juce::MessageBoxOptions()
+                           .withIconType (juce::MessageBoxIconType::WarningIcon)
+                           .withTitle (utf8 ("Invalid WAV file."))
+                           .withMessage ({})
+                           .withButton (utf8 ("OK"))
+                           .withAssociatedComponent (this);
+        juce::AlertWindow::showAsync (options, nullptr);
+}
+
+void MainContent::browseForOtherSourceClip()
+{
+        auto startDir = HostPreferences::get().getLastSourceClipBrowseDir();
+        if (! startDir.isDirectory())
+        {
+            if (config.fixturesDir.isDirectory())
+                startDir = config.fixturesDir;
+            else
+                startDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+        }
+
+        auto chooser = std::make_shared<juce::FileChooser> (utf8 ("Please select a WAV file."),
+                                                            startDir,
+                                                            "*.wav");
+        sourceClipFileChooser = chooser;
+        chooser->launchAsync (juce::FileBrowserComponent::openMode
+                                  | juce::FileBrowserComponent::canSelectFiles,
+                              [this, chooser] (const juce::FileChooser& fc)
+                              {
+                                  sourceClipFileChooser.reset();
+                                  const auto result = fc.getResult();
+                                  if (result == juce::File())
+                                  {
+                                      restoreFixtureSelectionAfterSelectOtherCancelled();
+                                      return;
+                                  }
+
+                                  HostPreferences::get().setLastSourceClipBrowseDir (result.getParentDirectory());
+
+                                  if (! SourceClipLibrary::isWavFile (result))
+                                  {
+                                      showInvalidWavAlert();
+                                      restoreFixtureSelectionAfterSelectOtherCancelled();
+                                      return;
+                                  }
+
+                                  juce::String error;
+                                  if (! engine.loadFixture (result, error))
+                                  {
+                                      showInvalidWavAlert();
+                                      restoreFixtureSelectionAfterSelectOtherCancelled();
+                                      return;
+                                  }
+
+                                  const int id = sourceClips.selectOrAddTemporaryTopLevel (fixtureBox, result);
+                                  if (id <= 0)
+                                  {
+                                      showInvalidWavAlert();
+                                      restoreFixtureSelectionAfterSelectOtherCancelled();
+                                      return;
+                                  }
+
+                                  lastNonOtherFixtureId = id;
+                                  setStatus ("Loaded source clip: " + result.getFileNameWithoutExtension(), false);
+                              });
+}
+
 bool MainContent::loadExternalSourceClip (const juce::File& file, juce::String& error)
 {
         if (sourceClips.selectOrAddExternal (fixtureBox, file) <= 0)
@@ -981,6 +1112,8 @@ bool MainContent::loadExternalSourceClip (const juce::File& file, juce::String& 
             error = "Unsupported or missing audio file: " + file.getFullPathName();
             return false;
         }
+
+        lastNonOtherFixtureId = fixtureBox.getSelectedId();
 
         if (! engine.loadFixture (file, error))
         {
@@ -1135,7 +1268,17 @@ void MainContent::comboBoxChanged(juce::ComboBox* box)
 {
         if (box == &fixtureBox)
         {
-            selectFixture (fixtureBox.getSelectedId());
+            const int selectedId = fixtureBox.getSelectedId();
+            if (selectedId == SourceClipLibrary::selectOtherItemId)
+            {
+                browseForOtherSourceClip();
+                return;
+            }
+
+            if (selectedId > 0)
+                lastNonOtherFixtureId = selectedId;
+
+            selectFixture (selectedId);
             return;
         }
 

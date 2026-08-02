@@ -4,6 +4,7 @@
 #include "MainWindow.h"
 #include "MainContent.h"
 #include "LevelMetersWindow.h"
+#include "Utf8.h"
 
 #if JUCE_MAC
  #include "LightsOutManager_mac.h"
@@ -313,6 +314,7 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
             item.shortcutKeyDescription = "Cmd+T";
             menu.addItem (std::move (item));
         }
+        menu.addItem (menuRestoreTestcaseState, utf8 ("Restore Testcase State…"));
         menu.addSeparator();
         menu.addItem (menuHardwareAudioSetup, "Hardware Audio Setup...");
         menu.addItem (menuMidiSetup, "MIDI Setup...");
@@ -358,6 +360,7 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
             menu.addItem (std::move (item));
         }
         menu.addSeparator();
+        menu.addItem (menuInstallSourceClips, utf8 ("Install New Source Clips…"));
         {
             juce::PopupMenu::Item item;
             item.itemID = menuRescanSourceClips;
@@ -412,6 +415,7 @@ void MainWindow::menuItemSelected (int menuItemID, int topLevelMenuIndex)
                                              case menuAbout:               mainContent->openAbout(); break;
                                              case menuSettings:            mainContent->openSettings(); break;
                                              case menuCaptureTestCase:     mainContent->openCaptureTestCase(); break;
+                                             case menuRestoreTestcaseState: mainContent->openRestoreTestcaseState(); break;
                                              case menuLightsOut:           window->toggleLightsOutFromMenu(); break;
                                              case menuHardwareAudioSetup:  window->openHardwareAudioSetup(); break;
                                              case menuMidiSetup:           window->openMidiSetup(); break;
@@ -420,6 +424,7 @@ void MainWindow::menuItemSelected (int menuItemID, int topLevelMenuIndex)
                                              case menuAddPlugin:           mainContent->openAddPlugin(); break;
                                              case menuAudioUnitSettings:   mainContent->openAudioUnitSettings(); break;
                                              case menuRescanPlugins:       mainContent->rescanPlugins(); break;
+                                             case menuInstallSourceClips:  mainContent->openInstallSourceClips(); break;
                                              case menuRescanSourceClips:   mainContent->rescanSourceClips(); break;
                                              default: break;
                                          }

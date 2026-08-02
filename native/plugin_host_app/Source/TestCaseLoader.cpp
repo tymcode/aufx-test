@@ -36,6 +36,35 @@ bool TestCaseLoader::loadSourceClip (const juce::File& inputAudio,
     return true;
 }
 
+bool TestCaseLoader::loadSourceClipTemporaryTopLevel (const juce::File& inputAudio,
+                                                      juce::ComboBox& sourceClipBox,
+                                                      juce::String& error)
+{
+    if (! SourceClipLibrary::isSupportedAudioFile (inputAudio))
+    {
+        error = "Unsupported or missing input audio: " + inputAudio.getFullPathName();
+        return false;
+    }
+
+    // Temporary top-level entries are WAV-only in the library; fall back to Loaded.
+    const int id = SourceClipLibrary::isWavFile (inputAudio)
+                       ? sourceClips.selectOrAddTemporaryTopLevel (sourceClipBox, inputAudio)
+                       : sourceClips.selectOrAddExternal (sourceClipBox, inputAudio);
+    if (id <= 0)
+    {
+        error = "Failed to add source clip: " + inputAudio.getFileName();
+        return false;
+    }
+
+    if (! engine.loadFixture (inputAudio, error))
+    {
+        error = "Failed to load source clip: " + error;
+        return false;
+    }
+
+    return true;
+}
+
 bool TestCaseLoader::loadPreset (const juce::File& presetFile, juce::String& error)
 {
     return presetHardware.loadPresetFile (presetFile, error);

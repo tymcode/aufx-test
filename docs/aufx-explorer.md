@@ -69,7 +69,7 @@ Without `--project-root` / `--config`, the app uses its exploration data folder 
 
 ## Configure plugins
 
-Edit `host.config.json` at the project root for the repo-rooted workflow. The toolbar **Plugin** dropdown is seeded from this list. Use **Plugins → Add Plugin…** (or **More plugins…** in the picker) to choose from the AU scan cache. **Plugins → Rescan Audio Units…** (`Cmd+R`) refreshes the cache; **Rescan Source Clips** (`Cmd+Shift+R`) reloads fixture WAVs.
+Edit `host.config.json` at the project root for the repo-rooted workflow. The toolbar **Plugin** dropdown is seeded from this list. Use **Plugins → Add Plugin…** (or **More plugins…** in the picker) to choose from the AU scan cache. **Plugins → Rescan Audio Units…** (`Cmd+R`) refreshes the cache; **Install New Source Clips…** installs WAVs into the fixtures tree; **Rescan Source Clips** (`Cmd+Shift+R`) reloads the menu.
 
 ```json
 {
@@ -123,9 +123,9 @@ Paths may be absolute, `~/…`, or relative to the project root. `default_preset
 | Control                             | Purpose                                                                                                                                   |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | **Plugin**                          | Entries from `host.config.json`; **More plugins…** opens Add Plugin dialog to specify which canned plugin you want in the list            |
-| **Preset** / **Load** / **Save as** | Soft path: load/save the plugin's current state as an `.aupreset` under that plugin’s `presets_dir.`                                      |
-| **HW State** / **Send**             | Hardware mode: pick a `.syx` dump and transmit to the device configured in *MIDI Setup*                                                   |
-| **Source Clip**                     | A set up test tones and program types to use as fixture audio in testing. (grouped by folder under `fixtures/`); **Loaded** for externals |
+| **Preset** / **Load** / **Save as** | Soft path: load/save the plugin's current state as an `.aupreset` under that plugin’s `presets_dir.` **Select other…** opens a file chooser (defaults to this exploration’s session folder). |
+| **HW State** / **Send**             | Hardware mode: pick a `.syx` dump and transmit to the device configured in *MIDI Setup*. **Select other…** browses for a dump (defaults to the session folder). |
+| **Source Clip**                     | Fixture audio from `fixtures/` (grouped by folder); **Select Other…** browses for a WAV (remembers last folder; temporary top-level entry); **Loaded** for Load Testcase externals |
 | **Begin** / **Stop**                | Play the clip through the current path (loop or one-shot)                                                                                 |
 | **Loop icon button**                | Loop vs one-shot                                                                                                                          |
 | **Bypass**                          | Dry thru the host (disabled in Use Hardware mode)                                                                                         |
@@ -198,11 +198,12 @@ Choosing **None Selected** on either send or return clears both, removes the har
 
 Folder/config overrides need a relaunch. The other fields write `host.config.json` immediately.
 
-### Add Plugin… / Audio Unit Settings / Rescan (Plugins menu)
+### Add Plugin… / Audio Unit Settings / Source Clips (Plugins menu)
 
 - **Add Plugin…** — Adds plugins to the dropdown in the main app window. Equivalent to selecting **More Plugins** from the dropdown. Multi-select from the AU list that was built during the AU scan. Search filter by name/manufacturer.
 - **Audio Unit Settings…** — Allow input to virtual instruments (off by default—some AUs crash with unused input buses); plugin scan timeout; list of skipped AUs (crashed/hung) with **Retry selected**
 - **Rescan Audio Units…** (`Cmd+R`) — rebuilds the AU cache. Use after installing new plugins. (Not new builds of cached plugins.)
+- **Install New Source Clips…** — two-column mover: pick WAV files on the left, choose (or create) a target folder in the fixtures tree on the right, then **Install**. If the current Source Clips folder is read-only (e.g. app-bundled), prompts **Select a folder for the collection.**
 - **Rescan Source Clips** (`Cmd+Shift+R`) — reloads the Source Clips Directory into the Source Clip menu (useful after dropping new WAVs into the tree).
 
 ## Use Hardware (`Cmd+U`)
@@ -253,6 +254,16 @@ What gets written under `sessions/<session>/artifacts/<stem>/`:
 
 Hardware capture continues until the return falls silent (gate), you press **Stop**, or a safety limit—so long reverb tails are kept. Lights Out turns off automatically after a successful capture.
 
+## Restore Testcase State…
+
+**Session → Restore Testcase State…** opens a folder picker defaulting to the current exploration’s `artifacts/` folder.
+
+- **Open** — enter the selected subfolder (disabled when nothing is selected)
+- **Choose** — restore from the selected folder, or from the currently displayed directory when nothing is selected
+- Directory listings show files dimmed alongside folders; the path field ellipsizes leading ancestors so the leaf name stays visible
+
+Restore loads `<stem>_input.wav` as a temporary top-level Source Clip (and selects it), applies `<stem>.aupreset` (preset menu shows the basename), and sends `<stem>.syx` when a sysex file is present and hardware + sysex device are configured in MIDI Setup. A confirmation reports `{stem} state restored.` and, when hardware is configured, reminds you to adjust physical gain controls.
+
 ## Calibration
 
 Three related but separate tools:
@@ -281,7 +292,7 @@ Blacks out every display behind the host, keeps the app on top, and hides the Do
 
 ## Presets (`.aupreset`)
 
-- **Load** — apply a file from the plugin’s `presets_dir`
+- **Load** — apply a file from the plugin’s `presets_dir`, or **Select other…** to browse (defaults to this exploration’s session folder)
 - **Save as** + **Save** — write the live plugin state; **Replace existing** overwrites the same name
 - Drag-and-drop `.aupreset` onto the main window to import
 - Capture with **Software** settings on always saves live state into the snapshot folder
@@ -291,7 +302,7 @@ Blacks out every display behind the host, keeps the app on top, and hides the Do
 Experimental, limited to devices in the **Sysex Module** dropdown in **MIDI Settings**. 
 
 - **Capture** with **Hardware** settings on → dump to `<stem>.syx`
-- **Use Hardware** → choose **HW State** and **Send** to restore a dump to the unit
+- **Use Hardware** → choose **HW State** and **Send** to restore a dump to the unit (**Select other…** browses for a `.syx`, defaulting to the session folder)
 
 Other modules are not registered yet.
 

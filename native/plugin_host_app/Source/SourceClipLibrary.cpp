@@ -1,5 +1,6 @@
 #include "SourceClipLibrary.h"
 #include "HostFileUtils.h"
+#include "Utf8.h"
 
 bool SourceClipLibrary::isSupportedAudioFile (const juce::File& file)
 {
@@ -10,6 +11,11 @@ bool SourceClipLibrary::isSupportedAudioFile (const juce::File& file)
         || file.hasFileExtension ("aif")
         || file.hasFileExtension ("aiff")
         || file.hasFileExtension ("flac");
+}
+
+bool SourceClipLibrary::isWavFile (const juce::File& file)
+{
+    return file.existsAsFile() && file.hasFileExtension ("wav");
 }
 
 void SourceClipLibrary::addLibraryFile (const juce::File& file,
@@ -33,6 +39,21 @@ int SourceClipLibrary::addExternalEntry (const juce::File& file)
     SourceClipEntry entry;
     entry.file = file;
     entry.groupName = externalGroupName;
+    entry.menuLabel = file.getFileNameWithoutExtension();
+    entry.fromLibrary = false;
+    clips.add (std::move (entry));
+    return clips.size();
+}
+
+int SourceClipLibrary::addTemporaryTopLevelEntry (const juce::File& file)
+{
+    const int existing = indexOfFile (file);
+    if (existing >= 0)
+        return existing + 1;
+
+    SourceClipEntry entry;
+    entry.file = file;
+    entry.groupName = {};
     entry.menuLabel = file.getFileNameWithoutExtension();
     entry.fromLibrary = false;
     clips.add (std::move (entry));
@@ -120,8 +141,10 @@ void SourceClipLibrary::rebuildComboBox (juce::ComboBox& box, int preferredSelec
         box.getRootMenu()->addSubMenu (group, subMenu);
     }
 
+    box.addItem (utf8 ("Select Other…"), selectOtherItemId);
+
     int selectId = preferredSelectId;
-    if (selectId <= 0 || selectId > clips.size())
+    if (selectId == selectOtherItemId || selectId <= 0 || selectId > clips.size())
         selectId = impulseId > 0 ? impulseId : (clips.isEmpty() ? 0 : 1);
 
     if (selectId > 0)
@@ -158,6 +181,19 @@ int SourceClipLibrary::selectOrAddExternal (juce::ComboBox& box, const juce::Fil
 
     const int previousId = box.getSelectedId();
     const int id = addExternalEntry (file);
+    rebuildComboBox (box, id > 0 ? id : previousId);
+    if (id > 0)
+        box.setSelectedId (id, juce::dontSendNotification);
+    return id;
+}
+
+int SourceClipLibrary::selectOrAddTemporaryTopLevel (juce::ComboBox& box, const juce::File& file)
+{
+    if (! isWavFile (file))
+        return 0;
+
+    const int previousId = box.getSelectedId();
+    const int id = addTemporaryTopLevelEntry (file);
     rebuildComboBox (box, id > 0 ? id : previousId);
     if (id > 0)
         box.setSelectedId (id, juce::dontSendNotification);
