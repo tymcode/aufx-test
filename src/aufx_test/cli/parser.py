@@ -44,12 +44,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     compare.add_argument(
-        "--snr-min",
-        type=float,
-        default=None,
-        help="Override snr_db_min from compare.config.json",
-    )
-    compare.add_argument(
         "--corr-min",
         type=float,
         default=None,
@@ -161,12 +155,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--positive",
         action="store_true",
         help="Mark as normal match case (clear a previous --negative)",
-    )
-    session_promote.add_argument(
-        "--snr-min",
-        type=float,
-        default=None,
-        help="Override snr_db_min from compare.config.json",
     )
     session_promote.add_argument(
         "--corr-min",

@@ -8,14 +8,20 @@ from aufx_test import Waveform, compare_waveforms, compute_difference_metrics, d
 def test_identical_waveforms_pass(sine_mono):
     result = compare_waveforms(sine_mono, sine_mono)
     assert result.passed
-    assert result.metrics.snr_db == float("inf") or result.metrics.snr_db > 100
+    assert abs(result.metrics.level_gain_db) < 1e-6
     assert result.metrics.correlation > 0.999
 
 
 def test_slightly_different_still_passes(sine_mono, sample_rate):
     noisy = sine_mono.with_data(sine_mono.data + np.random.default_rng(42).normal(0, 0.001, sine_mono.data.shape))
-    result = compare_waveforms(noisy, sine_mono, snr_db_min=20.0, correlation_min=0.9)
+    result = compare_waveforms(noisy, sine_mono, correlation_min=0.9)
     assert result.passed
+
+
+def test_level_gain_reflects_rms_ratio(sine_mono):
+    hotter = sine_mono.with_data(sine_mono.data * 2.0)
+    result = compare_waveforms(hotter, sine_mono, correlation_min=0.9, rms_error_max=1.0, spectral_distance_max=1.0)
+    assert abs(result.metrics.level_gain_db - 6.0206) < 0.01
 
 
 def test_large_difference_fails(sine_mono, sample_rate):

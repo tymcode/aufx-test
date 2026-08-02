@@ -39,7 +39,7 @@ from pathlib import Path
 import pytest
 
 from aufx_test import Waveform
-from aufx_test.comparison import ComparisonThresholds
+from aufx_test.comparison import thresholds_from_dict
 from aufx_test.reporting import assert_setup_comparison
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -91,7 +91,7 @@ def test_session_setup(setup, {host_fixture}):
     reference = Waveform.from_file(str(reference_path))
     actual = host.process(input_wav)
 
-    thresholds = ComparisonThresholds(**setup.get("thresholds", {{}}))
+    thresholds = thresholds_from_dict(setup.get("thresholds", {{}}))
     assert_setup_comparison(
         actual,
         reference,

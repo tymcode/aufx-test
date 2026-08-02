@@ -69,12 +69,8 @@ def _cmd_compare_batch(args: argparse.Namespace) -> int:
 
     config = load_compare_config(args.compare_config)
     thresholds = config.thresholds
-    if any(
-        v is not None
-        for v in (args.snr_min, args.corr_min, args.rms_max, args.spectral_max)
-    ):
+    if any(v is not None for v in (args.corr_min, args.rms_max, args.spectral_max)):
         thresholds = ComparisonThresholds(
-            snr_db_min=args.snr_min if args.snr_min is not None else thresholds.snr_db_min,
             correlation_min=(
                 args.corr_min if args.corr_min is not None else thresholds.correlation_min
             ),
@@ -200,7 +196,6 @@ def add_compare_batch_parser(sub: argparse._SubParsersAction) -> None:
         type=Path,
         help="Path to compare.config.json",
     )
-    parser.add_argument("--snr-min", type=float, default=None)
     parser.add_argument("--corr-min", type=float, default=None)
     parser.add_argument("--rms-max", type=float, default=None)
     parser.add_argument("--spectral-max", type=float, default=None)

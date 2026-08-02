@@ -93,7 +93,6 @@ Start with loose thresholds and tighten as references stabilize:
 
 ```python
 THRESHOLDS = ComparisonThresholds(
-    snr_db_min=40.0,
     correlation_min=0.98,
     rms_error_max=0.02,
     spectral_distance_max=0.08,

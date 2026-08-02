@@ -20,7 +20,7 @@ When you select a plugin you begin an *exploration session*. Captures land under
 - Calibration: insert latency auto-detect, noise-floor / DC for hardware capture, level-sweep plots
 - **Lights Out** mode for screencaps; monitor path supports Multi-Output Devices / loopbacks so audio is in the recording
 
-Compares use objective metrics (SNR, correlation, etc.)—not bit-for-bit equality. Typical flow: explore in the app → capture → `aufx-test session promote` / `export` → `pytest`, or batch goldens with `aufx-test compare-batch`.
+Compares use objective metrics (level gain vs dry/reference, correlation, etc.)—not bit-for-bit equality. Typical flow: explore in the app → capture → `aufx-test session promote` / `export` → `pytest`, or batch goldens with `aufx-test compare-batch`.
 
 ## Requirements
 
