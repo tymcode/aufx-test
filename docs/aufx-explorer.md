@@ -4,7 +4,9 @@
 
 When you select a plugin you begin an *exploration session*. Captures land under that session’s folder (input clip, rendered / hardware WAVs, `.aupreset`, optional sysex, and compare reports).
 
-AUFX Explorer in SW mode
+
+
+![AUFX Explorer in SW mode}(./assets/explorer.png)
 
 ## Features
 
@@ -171,7 +173,7 @@ Drag `.aupreset` files or folders onto the window to import into the current plu
 
 ### MIDI Setup… (Session menu)
 
-MIDI Setup Dialog
+![MIDI Setup Dialog](./assets/midisetup/png)
 
 Choose ports for the device under test and which sysex module to use:
 
@@ -232,13 +234,13 @@ When the insert loop is configured, **Session → Use Hardware** switches monito
 - Bypass is disabled; preset **Save** is replaced by **HW State** / **Send**
 - Level Meters window (if open) follows the same path
 
-AUFX Explorer in HIL mode
+![AUFX Explorer in HIL mode](./assets/explorerHIL.png)
 
 Toggle again to return to software.
 
 ## Capture Test Case… (`Cmd+T`)
 
-Capture Test Case dialog
+![Capture Test Case dialog](./assets/captestcase.png)
 
 Dialog fields:
 
