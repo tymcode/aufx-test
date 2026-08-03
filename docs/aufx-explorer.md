@@ -6,7 +6,7 @@ When you select a plugin you begin an *exploration session*. Captures land under
 
 
 
-![AUFX Explorer in SW mode}(./assets/explorer.png)
+![AUFX Explorer in SW mode](./assets/explorer.png)
 
 ## Features
 
@@ -173,7 +173,7 @@ Drag `.aupreset` files or folders onto the window to import into the current plu
 
 ### MIDI Setup… (Session menu)
 
-![MIDI Setup Dialog](./assets/midisetup/png)
+![MIDI Setup Dialog](./assets/midisetup.png)
 
 Choose ports for the device under test and which sysex module to use:
 
