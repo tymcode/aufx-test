@@ -6,6 +6,8 @@ This is a test framework for Audio Unit effects plugins. Created primarily to te
 ## AU Effects Explorer
 This host app is designed to compare audio processing between software and hardware.  It is also an efficient way to manually test plugins in general, providing required MIDI and DAW functions without the complexities of a DAW.
 
+![AUFX Explorer screenshot](./docs/assets/explorer.png)
+
 When you select a plugin, you are said to begin an *exploration session*. Understanding that will help understand the folder structure for exported artifacts.
 
 ### Features

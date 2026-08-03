@@ -4,6 +4,10 @@
 
 When you select a plugin you begin an *exploration session*. Captures land under that session’s folder (input clip, rendered / hardware WAVs, `.aupreset`, optional sysex, and compare reports).
 
+
+
+![AUFX Explorer in SW mode](./assets/explorer.png)
+
 ## Features
 
 - Hosting of arbitrary Audio Unit effects
@@ -28,6 +32,8 @@ Compares use objective metrics (level gain vs dry/reference, correlation, etc.)�
 - Universal build (`arm64` + `x86_64`)
 - Audio Units installed under `/Library/Audio/Plug-Ins/Components/` or `~/Library/Audio/Plug-Ins/Components/`
 
+
+
 ## Install (GitHub Releases)
 
 Download the prebuilt **AU Effects Explorer** app from the project’s [GitHub Releases](https://github.com/tymcode/aufx-test/releases).
@@ -41,6 +47,8 @@ The build is currently self-signed, so Gatekeeper may block the first launch:
 For day-to-day work against this repo, open the app with your project `host.config.json` (see [Launch](#launch)). Building from source is covered in [Building from source](#building-from-source) at the bottom of this page.
 
 ## Launch
+
+
 
 ### With the repo config (recommended for development)
 
@@ -62,6 +70,8 @@ source .venv/bin/activate
 aufx-test host
 # aufx-test host --config path/to/host.config.json --project-root .
 ```
+
+
 
 ### Standalone (Release / packaged app)
 
@@ -104,6 +114,8 @@ Paths may be absolute, `~/…`, or relative to the project root. `default_preset
 4. For hardware-in-loop: **Session → Hardware Audio Setup…**, then **Session → Use Hardware** (`Cmd+U`) to switch the monitor path.
 5. When a setup is good (or broken), **Session → Capture Test Case…** (`Cmd+T`). Mark it **golden**, **broken**, or **suspect**. The app reveals the artifact folder for bug reports or automation.
 
+
+
 ## Main window
 
 ```
@@ -120,21 +132,21 @@ Paths may be absolute, `~/…`, or relative to the project root. `default_preset
 ```
 
 
-| Control                             | Purpose                                                                                                                                   |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **Plugin**                          | Entries from `host.config.json`; **More plugins…** opens Add Plugin dialog to specify which canned plugin you want in the list            |
+| Control                             | Purpose                                                                                                                                                                                      |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Plugin**                          | Entries from `host.config.json`; **More plugins…** opens Add Plugin dialog to specify which canned plugin you want in the list                                                               |
 | **Preset** / **Load** / **Save as** | Soft path: load/save the plugin's current state as an `.aupreset` under that plugin’s `presets_dir.` **Select other…** opens a file chooser (defaults to this exploration’s session folder). |
-| **HW State** / **Send**             | Hardware mode: pick a `.syx` dump and transmit to the device configured in *MIDI Setup*. **Select other…** browses for a dump (defaults to the session folder). |
-| **Source Clip**                     | Fixture audio from `fixtures/` (grouped by folder); **Select Other…** browses for a WAV (remembers last folder; temporary top-level entry); **Loaded** for Load Testcase externals |
-| **Begin** / **Stop**                | Play the clip through the current path (loop or one-shot)                                                                                 |
-| **Loop icon button**                | Loop vs one-shot                                                                                                                          |
-| **Bypass**                          | Dry thru the host (disabled in Use Hardware mode)                                                                                         |
-| **Send**                            | Input level to the effect path (−120 dB … +6 dB)                                                                                          |
-| **Mix**                             | Dry/wet percent                                                                                                                           |
-| **MIDI Sources**                    | Enable control surface / Learn ports (devices from the MacOS Audio MIDI Setup)                                                            |
-| **Host Clock**                      | Drive host playhead + MIDI clock for testing tempo-based parameters                                                                       |
-| **BPM**                             | Tempo (20–999); Press Return or leave the field to apply the change                                                                       |
-| **Metronome LED button**            | Metronome LED flashes on quarter notes when Host Clock is on; click it to toggle emitting an audible click                                |
+| **HW State** / **Send**             | Hardware mode: pick a `.syx` dump and transmit to the device configured in *MIDI Setup*. **Select other…** browses for a dump (defaults to the session folder).                              |
+| **Source Clip**                     | Fixture audio from `fixtures/` (grouped by folder); **Select Other…** browses for a WAV (remembers last folder; temporary top-level entry); **Loaded** for Load Testcase externals           |
+| **Begin** / **Stop**                | Play the clip through the current path (loop or one-shot)                                                                                                                                    |
+| **Loop icon button**                | Loop vs one-shot                                                                                                                                                                             |
+| **Bypass**                          | Dry thru the host (disabled in Use Hardware mode)                                                                                                                                            |
+| **Send**                            | Input level to the effect path (−120 dB … +6 dB)                                                                                                                                             |
+| **Mix**                             | Dry/wet percent                                                                                                                                                                              |
+| **MIDI Sources**                    | Enable control surface / Learn ports (devices from the MacOS Audio MIDI Setup)                                                                                                               |
+| **Host Clock**                      | Drive host playhead + MIDI clock for testing tempo-based parameters                                                                                                                          |
+| **BPM**                             | Tempo (20–999); Press Return or leave the field to apply the change                                                                                                                          |
+| **Metronome LED button**            | Metronome LED flashes on quarter notes when Host Clock is on; click it to toggle emitting an audible click                                                                                   |
 
 
 Drag `.aupreset` files or folders onto the window to import into the current plugin’s presets folder (confirm replace if needed).
@@ -153,9 +165,15 @@ Drag `.aupreset` files or folders onto the window to import into the current plu
 | **Cmd+Shift+R** | Rescan Source Clips to use source clips added to the `fixtures` folder. |
 
 
+
+
 ## Setup dialogs
 
+
+
 ### MIDI Setup… (Session menu)
+
+![MIDI Setup Dialog](./assets/midisetup.png)
 
 Choose ports for the device under test and which sysex module to use:
 
@@ -206,6 +224,8 @@ Folder/config overrides need a relaunch. The other fields write `host.config.jso
 - **Install New Source Clips…** — two-column mover: pick WAV files on the left, choose (or create) a target folder in the fixtures tree on the right, then **Install**. If the current Source Clips folder is read-only (e.g. app-bundled), prompts **Select a folder for the collection.**
 - **Rescan Source Clips** (`Cmd+Shift+R`) — reloads the Source Clips Directory into the Source Clip menu (useful after dropping new WAVs into the tree).
 
+
+
 ## Use Hardware (`Cmd+U`)
 
 When the insert loop is configured, **Session → Use Hardware** switches monitoring and metering to the hardware path:
@@ -214,9 +234,13 @@ When the insert loop is configured, **Session → Use Hardware** switches monito
 - Bypass is disabled; preset **Save** is replaced by **HW State** / **Send**
 - Level Meters window (if open) follows the same path
 
+![AUFX Explorer in HIL mode](./assets/explorerHIL.png)
+
 Toggle again to return to software.
 
 ## Capture Test Case… (`Cmd+T`)
+
+![Capture Test Case dialog](./assets/captestcase.png)
 
 Dialog fields:
 
@@ -269,10 +293,10 @@ Restore loads `<stem>_input.wav` as a temporary top-level Source Clip (and selec
 Three related but separate tools:
 
 
-| Tool                             | Where                       | What                                                                                                                             |
-| -------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| **Auto-detect** latency          | Hardware Audio Setup        | Impulse ×5 → latency samples + loop gain                                                                                         |
-| **Calibrate** (noise floor / DC) | Capture Test Case (HW/Both) | Sets silence gate above the return noise floor; DC offset correction                                                             |
+| Tool                             | Where                       | What                                                                                                                              |
+| -------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **Auto-detect** latency          | Hardware Audio Setup        | Impulse ×5 → latency samples + loop gain                                                                                          |
+| **Calibrate** (noise floor / DC) | Capture Test Case (HW/Both) | Sets silence gate above the return noise floor; DC offset correction                                                              |
 | **Level sweep…**                 | Level Meters window         | Stepped send gains through the *current* path; plots send vs. return to `calibration/<slug>.json` (+ PNG if aufx-test CLI is set) |
 
 
@@ -281,6 +305,8 @@ Level sweep uses `fixtures/synth_waves/sine_0db_1ch_5s_48k.wav` and records samp
 ```bash
 aufx-test calibrate-plot calibration/my_plot.json -o calibration/my_plot.png
 ```
+
+
 
 ## Level Meters (`Cmd+M`)
 
@@ -296,6 +322,8 @@ Blacks out every display behind the host, keeps the app on top, and hides the Do
 - **Save as** + **Save** — write the live plugin state; **Replace existing** overwrites the same name
 - Drag-and-drop `.aupreset` onto the main window to import
 - Capture with **Software** settings on always saves live state into the snapshot folder
+
+
 
 ## Sysex
 
@@ -337,16 +365,18 @@ Headless CI replay uses `plugin_renderer` + `SubprocessPluginHost` with the capt
 ## Troubleshooting
 
 
-| Problem                                 | Fix                                                                         |
-| --------------------------------------- | --------------------------------------------------------------------------- |
-| Gatekeeper blocks the app               | `xattr -cr "AU Effects Explorer.app"`; Right-click → Open                   |
+| Problem                                 | Fix                                                                                              |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Gatekeeper blocks the app               | `xattr -cr "AU Effects Explorer.app"`; Right-click → Open                                        |
 | `aufx-test: command not found`          | Activate `.venv` or use `.venv/bin/aufx-test` (CLI / reports only; hosting does not need Python) |
-| Plugin host app not found               | Build from source (below) or install from Releases                          |
-| Config / plugin path errors             | Edit `host.config.json`; check `path` / AU id                               |
-| No presets in dropdown                  | Set `presets_dir` for that plugin                                           |
-| Generate report / calibrate PNG skipped | Set aufx-test CLI in Settings (typically `<repo>/.venv/bin/aufx-test`) and use **Test** |
-| Need logs                               | `sessions/plugin_host_<hash>.log`                                           |
-| No audio on Begin                       | Check macOS output device; confirm Hardware Audio Setup / Use Hardware path |
+| Plugin host app not found               | Build from source (below) or install from Releases                                               |
+| Config / plugin path errors             | Edit `host.config.json`; check `path` / AU id                                                    |
+| No presets in dropdown                  | Set `presets_dir` for that plugin                                                                |
+| Generate report / calibrate PNG skipped | Set aufx-test CLI in Settings (typically `<repo>/.venv/bin/aufx-test`) and use **Test**          |
+| Need logs                               | `sessions/plugin_host_<hash>.log`                                                                |
+| No audio on Begin                       | Check macOS output device; confirm Hardware Audio Setup / Use Hardware path                      |
+
+
 
 
 ## Legacy: `aufx-test explore` REPL
@@ -378,6 +408,8 @@ aufx-test session snap "MyEffect" "half mix" \
   --output ~/Desktop/bounce.wav \
   --aupreset ~/Library/Audio/Presets/MyEffect/half_mix.aupreset
 ```
+
+
 
 ## Building from source
 

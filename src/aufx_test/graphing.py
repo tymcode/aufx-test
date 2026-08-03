@@ -39,14 +39,26 @@ def plot_waveforms(
     save_path: str | Path | None = None,
     show: bool = False,
 ) -> plt.Figure:
-    """Plot one or more waveforms on the same axes."""
+    """Plot one or more waveforms on the same axes.
+
+    All series share one absolute time axis sized to the longest clip, so a
+    shorter file ends early (empty space on the right) instead of being
+    stretched to the full plot width.
+    """
     fig, ax = plt.subplots(figsize=(12, 4))
     labels = labels or [f"signal_{i}" for i in range(len(waveforms))]
 
+    durations: list[float] = []
     for wav, label in zip(waveforms, labels, strict=True):
         n = wav.num_samples if max_seconds is None else min(wav.num_samples, int(max_seconds * wav.sample_rate))
         t = np.arange(n) / wav.sample_rate
         ax.plot(t, wav.channel_data(channel)[:n], label=label, alpha=0.8)
+        durations.append(float(n) / float(wav.sample_rate) if wav.sample_rate else 0.0)
+
+    t_max = max(durations) if durations else 0.0
+    if max_seconds is not None:
+        t_max = min(t_max, float(max_seconds)) if t_max > 0 else float(max_seconds)
+    ax.set_xlim(0.0, t_max if t_max > 0 else 1.0)
 
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
@@ -74,9 +86,13 @@ def plot_comparison(
     save_path: str | Path | None = None,
     show: bool = False,
 ) -> plt.Figure:
-    """Plot before/after/reference waveforms, optionally over a wet spectrogram."""
+    """Plot before/after/reference waveforms, optionally over a wet spectrogram.
+
+    Series share one absolute time axis (longest duration). Shorter clips are
+    not stretched to the plot width — they end early, leaving empty/black space
+    on the right.
+    """
     from matplotlib import mlab
-    from matplotlib.transforms import blended_transform_factory
 
     series_labels = list(labels) if labels is not None else ["before", "after"]
     if len(series_labels) < 2:
@@ -88,8 +104,16 @@ def plot_comparison(
         if len(series_labels) < 3:
             series_labels.append("reference")
 
+    t_max = max((float(w.duration_seconds) for w in waves), default=0.0)
+    if spectrogram_background is not None:
+        t_max = max(t_max, float(spectrogram_background.duration_seconds))
+    if t_max <= 0.0:
+        t_max = 1.0
+
     fig, ax = plt.subplots(figsize=figsize)
     if spectrogram_background is not None:
+        ax.set_facecolor("#0d1117")
+        fig.patch.set_facecolor("#0d1117")
         bg = spectrogram_background.channel_data(spectrogram_channel)
         nfft = 2048 if spectrogram_background.num_samples >= 4096 else 1024
         if spectrogram_background.num_samples < 1024:
@@ -102,25 +126,37 @@ def plot_comparison(
             Fs=spectrogram_background.sample_rate,
             noverlap=noverlap,
         )
-        # Single-axes composite avoids twin-axis patches covering the spectrogram.
+        bg_duration = float(spectrogram_background.duration_seconds)
+        # Fixed data extent — do not stretch a shorter spectrogram across t_max.
+        spec_x0 = float(times[0]) if len(times) else 0.0
+        spec_x1 = float(times[-1]) if len(times) else bg_duration
         ax.imshow(
             10.0 * np.log10(np.maximum(pxx, 1e-12)),
             origin="lower",
             aspect="auto",
-            extent=[times[0], times[-1], freqs[0], freqs[-1]],
+            extent=[spec_x0, spec_x1, freqs[0], freqs[-1]],
             cmap="magma",
             interpolation="nearest",
             alpha=max(0.0, min(1.0, spectrogram_alpha)),
             zorder=0,
+            clip_on=True,
         )
-        ax.set_ylabel("Frequency (Hz)")
-        ax.set_xlim(0.0, max(wav.duration_seconds for wav in waves))
-        # Envelope overlay (not raw samples) keeps the spectrogram readable.
-        wave_transform = blended_transform_factory(ax.transData, ax.transAxes)
+        ax.set_ylabel("Frequency (Hz)", color="#e6edf3")
+        ax.tick_params(colors="#e6edf3")
+        ax.xaxis.label.set_color("#e6edf3")
+        ax.title.set_color("#e6edf3")
+        for spine in ax.spines.values():
+            spine.set_color("#30363d")
+
+        # Amplitude overlay on a shared X axis (not normalized to axes width).
+        wave_ax = ax.twinx()
+        wave_ax.set_facecolor("none")
+        wave_ax.patch.set_visible(False)
+        wave_ax.set_zorder(ax.get_zorder() + 1)
+        ax.set_zorder(0)
         peak = max(float(np.max(np.abs(wav.channel_data(channel)))) for wav in waves) or 1.0
         for i, (wav, label) in enumerate(zip(waves, series_labels[: len(waves)], strict=True)):
             samples = np.abs(wav.channel_data(channel)) / peak
-            # ~5 ms windows → smooth amplitude envelope for overlay.
             win = max(1, int(wav.sample_rate * 0.005))
             n = samples.shape[0]
             n_win = max(1, n // win)
@@ -128,18 +164,20 @@ def plot_comparison(
             shaped = samples[:usable].reshape(n_win, win)
             env = shaped.max(axis=1)
             t = (np.arange(n_win) * win + (win * 0.5)) / wav.sample_rate
-            y = 0.08 + 0.34 * env
-            ax.plot(
+            wave_ax.plot(
                 t,
-                y,
-                transform=wave_transform,
+                env,
                 label=label,
                 color=colors[i],
                 linewidth=1.8,
                 alpha=0.95,
                 zorder=2 + i,
             )
-        ax.legend(loc="upper right")
+        wave_ax.set_ylim(0.0, 1.05)
+        wave_ax.set_ylabel("Envelope", color="#e6edf3")
+        wave_ax.tick_params(colors="#e6edf3")
+        wave_ax.legend(loc="upper right", facecolor="#21262d", edgecolor="#30363d", labelcolor="#e6edf3")
+        wave_ax.set_xlim(0.0, t_max)
         ax.grid(False)
     else:
         for wav, label in zip(waves, series_labels[: len(waves)], strict=True):
@@ -149,9 +187,12 @@ def plot_comparison(
         ax.legend(loc="upper right")
         ax.grid(True, alpha=0.25)
 
+    ax.set_xlim(0.0, t_max)
     ax.set_xlabel("Time (s)")
     ax.set_title(title)
     fig.tight_layout()
+    # Re-assert after tight_layout so a shorter spectrogram cannot expand lims.
+    ax.set_xlim(0.0, t_max)
     _save_or_show(fig, save_path, show, dpi=dpi)
     return fig
 
@@ -396,9 +437,13 @@ def _collect_panels(result: dict[str, Any]) -> list[tuple[str, Any]]:
 def _draw_panel(ax: plt.Axes, kind: str, payload: Any) -> None:
     if kind == "waveforms":
         waves, labels = payload
+        t_max = 0.0
         for wav, label in zip(waves, labels, strict=True):
             t = np.arange(wav.num_samples) / wav.sample_rate
             ax.plot(t, wav.channel, label=label, alpha=0.8)
+            t_max = max(t_max, float(wav.duration_seconds))
+        if t_max > 0:
+            ax.set_xlim(0.0, t_max)
         ax.legend()
         ax.set_title("Waveforms")
     elif kind == "comparison":
