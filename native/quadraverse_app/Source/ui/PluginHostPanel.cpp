@@ -1,7 +1,9 @@
 #include "PluginHostPanel.h"
 #include "Utf8.h"
+#include "PresetHardwareState.h"
 #include "HostPreferences.h"
 #include "MidiEndpointInfo.h"
+#include "sysex/SysexDeviceModule.h"
 
 namespace qverse
 {
@@ -255,6 +257,10 @@ void PluginHostPanel::recreatePluginEditor()
     if (engine.isHardwareMode() || engine.getPlugin() == nullptr)
         return;
 
+    // Viewport must be showing so the AU attaches to a live NSView hierarchy.
+    if (! editorViewport.isVisible() || ! isShowing())
+        return;
+
     pluginEditor = engine.createEditor();
     if (pluginEditor == nullptr)
     {
@@ -265,7 +271,9 @@ void PluginHostPanel::recreatePluginEditor()
     editorPlaceholder.addAndMakeVisible (*pluginEditor);
     layoutEditor();
 
-    if (engine.getDeviceSampleRate() > 0)
+    // createEditor() suspends DSP; audio is already running when leaving HW mode.
+    if (engine.getDeviceSampleRate() > 0
+        || engine.getDeviceManager().getCurrentAudioDevice() != nullptr)
         engine.setPluginProcessingSuspended (false);
 }
 
@@ -285,6 +293,8 @@ void PluginHostPanel::layoutEditor()
 
 void PluginHostPanel::showHardwareMetersBody()
 {
+    // Cancel any deferred software-editor create from a prior mode switch.
+    ++editorRebuildToken;
     destroyPluginEditor();
     editorViewport.setVisible (false);
     if (hardwareMeterPanel != nullptr)
@@ -292,7 +302,7 @@ void PluginHostPanel::showHardwareMetersBody()
         hardwareMeterPanel->setVisible (true);
         hardwareMeterPanel->toFront (false);
     }
-    bypassButton.setEnabled (false);
+    bypassButton.setEnabled (true);
     resized();
 }
 
@@ -303,13 +313,30 @@ void PluginHostPanel::showPluginEditorBody()
 
     editorViewport.setVisible (true);
     bypassButton.setEnabled (true);
-
-    if (engine.getPlugin() != nullptr && pluginEditor == nullptr)
-        recreatePluginEditor();
-    else
-        layoutEditor();
-
+    bypassButton.setButtonText ("Bypass");
+    hardwareDryThruEnabled = false;
+    if (bypassButton.getToggleState())
+        bypassButton.setToggleState (false, juce::dontSendNotification);
     resized();
+
+    // AU Cocoa / WebView editors must be created after the viewport is visible
+    // and the Target View NSWindow is on-screen. Doing it synchronously when
+    // leaving Use Hardware commonly yields AUGenericView or an empty placeholder.
+    const int token = ++editorRebuildToken;
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<PluginHostPanel> (this), token]
+                                     {
+                                         if (safe == nullptr || token != safe->editorRebuildToken)
+                                             return;
+                                         if (safe->engine.isHardwareMode())
+                                             return;
+                                         if (safe->engine.getPlugin() == nullptr)
+                                         {
+                                             safe->layoutEditor();
+                                             return;
+                                         }
+                                         safe->recreatePluginEditor();
+                                         safe->resized();
+                                     });
 }
 
 void PluginHostPanel::refreshHardwareModeUi()
@@ -334,17 +361,55 @@ void PluginHostPanel::refreshHardwareModeUi()
     }
 
     if (hw)
+    {
+        bypassButton.setButtonText ("Dry Thru");
+        bypassButton.setToggleState (hardwareDryThruEnabled, juce::dontSendNotification);
         showHardwareMetersBody();
+    }
     else
         showPluginEditorBody();
+}
+
+bool PluginHostPanel::setHardwareDryThru (bool enabled)
+{
+    const auto outId = HostPreferences::get().getMidiOutIdentifier();
+    const auto info = findMidiEndpointInfo (outId, true);
+    const auto* module = resolveSelectedSysexModule (info);
+    if (module == nullptr)
+    {
+        setStatus (utf8 ("No sysex module for ") + info.name, true);
+        return false;
+    }
+
+    if (! enabled)
+    {
+        setStatus (utf8 ("Dry thru disabled (re-send patch to restore full effect)"), false);
+        return true;
+    }
+
+    auto messages = module->buildDryThruMessages();
+    if (messages.isEmpty())
+    {
+        setStatus (utf8 ("Selected device has no dry-thru command"), true);
+        return false;
+    }
+    if (! engine.sendMidiMessages (messages))
+    {
+        setStatus (utf8 ("MIDI output not configured — open MIDI Setup"), true);
+        return false;
+    }
+
+    setStatus (utf8 ("Hardware dry thru enabled"), false);
+    return true;
 }
 
 void PluginHostPanel::showEditorWhenReady()
 {
     editorCreatePending = true;
-    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<PluginHostPanel> (this)]
+    const int token = ++editorRebuildToken;
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<PluginHostPanel> (this), token]
                                      {
-                                         if (safe == nullptr)
+                                         if (safe == nullptr || token != safe->editorRebuildToken)
                                              return;
                                          safe->editorCreatePending = false;
                                          safe->refreshHardwareModeUi();
@@ -448,6 +513,21 @@ void PluginHostPanel::buttonClicked (juce::Button* button)
     }
     else if (button == &bypassButton)
     {
+        if (engine.isHardwareMode())
+        {
+            const bool shouldEnable = bypassButton.getToggleState();
+            if (setHardwareDryThru (shouldEnable))
+            {
+                hardwareDryThruEnabled = shouldEnable;
+                bypassButton.setToggleState (hardwareDryThruEnabled, juce::dontSendNotification);
+            }
+            else
+            {
+                bypassButton.setToggleState (hardwareDryThruEnabled, juce::dontSendNotification);
+            }
+            return;
+        }
+
         engine.setBypassed (bypassButton.getToggleState());
     }
 }

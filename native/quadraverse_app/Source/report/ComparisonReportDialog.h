@@ -8,7 +8,7 @@
 namespace qverse
 {
 
-/** Capture selected patch contexts to software and/or hardware, then run compare + spectrograms. */
+/** Capture selected patch contexts to software and/or hardware, then write a gallery HTML report. */
 void runComparisonReportDialog (PatchContextManager& contexts,
                                 PluginAudioEngine& engine,
                                 HostConfig& config,

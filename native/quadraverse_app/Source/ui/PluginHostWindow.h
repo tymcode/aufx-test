@@ -31,7 +31,7 @@ private:
         PluginHostWindow& owner;
     };
 
-    static bool isEditableFieldFocused();
+    static bool isEditableFieldFocused (juce::Component* eventSource = nullptr);
 
     PluginHostPanel* panel { nullptr };
     ClosedFn onClosed;

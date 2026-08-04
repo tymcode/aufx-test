@@ -34,13 +34,7 @@ namespace
 
             if (key == "jucePluginState" || key == "data" || key == "state")
             {
-                if (valueElement->hasTagName ("data"))
-                {
-                    outState = decodeBase64DataElement (valueElement->getAllSubText());
-                    if (outState.getSize() > 0)
-                        return true;
-                }
-                else if (valueElement->hasTagName ("string"))
+                if (valueElement->hasTagName ("data") || valueElement->hasTagName ("string"))
                 {
                     outState = decodeBase64DataElement (valueElement->getAllSubText());
                     if (outState.getSize() > 0)
@@ -52,18 +46,34 @@ namespace
         error = "No plugin state blob found in plist (expected data/jucePluginState/state key)";
         return false;
     }
+}
 
-    bool loadXmlPlist (const juce::File& presetFile, juce::MemoryBlock& outState, juce::String& error)
+bool AUpresetLoader::extractStateBytes (const juce::MemoryBlock& hostOrPluginState,
+                                        juce::MemoryBlock& outState,
+                                        juce::String& error)
+{
+    if (hostOrPluginState.isEmpty())
     {
-        const auto xml = juce::parseXML (presetFile);
-        if (xml == nullptr)
+        error = "Plugin returned empty state";
+        return false;
+    }
+
+    if (auto xml = juce::AudioProcessor::getXmlFromBinary (hostOrPluginState.getData(),
+                                                           (int) hostOrPluginState.getSize()))
+        if (xml->hasTagName ("QDV1"))
         {
-            error = "Failed to parse plist XML: " + presetFile.getFullPathName();
-            return false;
+            outState = hostOrPluginState;
+            return true;
         }
 
-        return extractStateFromXmlPlist (*xml, outState, error);
-    }
+    // Best-effort: treat as XML plist text.
+    const auto text = juce::String::createStringFromData (hostOrPluginState.getData(),
+                                                          (int) hostOrPluginState.getSize());
+    if (auto plist = juce::parseXML (text))
+        return extractStateFromXmlPlist (*plist, outState, error);
+
+    error = "Host state is neither QDV1 XML nor a parseable AU ClassInfo plist";
+    return false;
 }
 
 bool AUpresetLoader::loadStateBytes (const juce::File& presetFile,
@@ -76,6 +86,13 @@ bool AUpresetLoader::loadStateBytes (const juce::File& presetFile,
         return false;
     }
 
-    return loadXmlPlist (presetFile, outState, error);
+    juce::MemoryBlock fileBytes;
+    if (! presetFile.loadFileAsData (fileBytes) || fileBytes.isEmpty())
+    {
+        error = "Failed to read preset file: " + presetFile.getFullPathName();
+        return false;
+    }
+
+    return extractStateBytes (fileBytes, outState, error);
 }
 #endif

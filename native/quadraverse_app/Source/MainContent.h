@@ -81,7 +81,7 @@ private:
     void importProgramsAsContexts (std::vector<qverse::QuadraverbProgram> programs,
                                    const juce::File& source,
                                    bool batchCompareOff);
-    void importSysexFile (const juce::File& file, bool alwaysShowPicker);
+    void importSysexFile (const juce::File& file);
     bool handleSpacePlayback();
     void applyConfiguredMidiInputs();
 

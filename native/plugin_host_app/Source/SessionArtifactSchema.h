@@ -15,8 +15,11 @@ namespace SessionArtifactSchema
     inline constexpr const char* roleBroken  = "bkn";
     inline constexpr const char* aupresetExtension = ".aupreset";
 
+    /** Negative roleIndex means no role suffix (``_output.wav`` / ``_output_hw.wav``). */
     inline juce::String roleCodeFromIndex (int roleIndex)
     {
+        if (roleIndex < 0)
+            return {};
         switch (roleIndex)
         {
             case 0:  return roleGolden;
@@ -27,11 +30,15 @@ namespace SessionArtifactSchema
 
     inline juce::String softwareOutputSuffix (const juce::String& role)
     {
+        if (role.isEmpty())
+            return "_output";
         return "_output_" + role;
     }
 
     inline juce::String hardwareOutputSuffix (const juce::String& role)
     {
+        if (role.isEmpty())
+            return "_output_hw";
         return "_output_hw_" + role;
     }
 

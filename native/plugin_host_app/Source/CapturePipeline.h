@@ -35,7 +35,7 @@ enum class CaptureSource
 struct CapturePipelineRequest
 {
     juce::String description;
-    int roleIndex { 2 }; // broken
+    int roleIndex { 2 }; // broken; use -1 for role-less ``_output.wav`` / ``_output_hw.wav``
     CaptureSource source { CaptureSource::plugin };
     juce::File fixtureFile;
     juce::Component* progressParent { nullptr };
@@ -45,6 +45,11 @@ struct CapturePipelineRequest
     bool captureSoftwareSettings { true };
     /** Request a hardware sysex patch dump after audio capture. */
     bool captureHardwareSettings { true };
+    /**
+     * When non-empty, write under ``sessions/<slugify(sessionNameOverride)>``
+     * instead of the plugin's exploration session folder.
+     */
+    juce::String sessionNameOverride;
 };
 
 struct CapturePipelineResult
@@ -106,7 +111,8 @@ public:
     /** Build ``artifacts/<stem>/`` plus stem filenames for a capture/compare run. */
     CaptureArtifactPaths makeArtifactPaths (const HostPluginEntry& plugin,
                                             const juce::String& description,
-                                            int roleIndex) const;
+                                            int roleIndex,
+                                            const juce::String& sessionNameOverride = {}) const;
 
     /**
      * Run software and/or hardware capture according to request.source.

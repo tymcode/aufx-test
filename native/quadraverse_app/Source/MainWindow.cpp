@@ -170,8 +170,13 @@ juce::PopupMenu QuadraverseMainWindow::getMenuForIndex (int topLevelIndex, const
         menu.addItem (menuNewPatchContext, utf8 ("New Patch Context"));
         menu.addItem (menuDuplicatePatchContext, utf8 ("Duplicate Patch Context"));
         menu.addItem (menuRenamePatchContext, utf8 ("Rename Patch Context…"));
-        menu.addItem (menuDeletePatchContext, utf8 ("Delete Patch Context…"),
-                      c != nullptr && c->canDeletePatchContext());
+        {
+            juce::PopupMenu::Item item;
+            item.itemID = menuDeletePatchContext;
+            item.text = utf8 ("Delete Patch Context…");
+            item.isEnabled = c != nullptr && c->canDeletePatchContext();
+            menu.addItem (std::move (item));
+        }
         menu.addSeparator();
         {
             juce::PopupMenu load;

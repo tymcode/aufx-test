@@ -49,25 +49,34 @@ void PluginHostWindow::closeButtonPressed()
                                      });
 }
 
-bool PluginHostWindow::isEditableFieldFocused()
+bool PluginHostWindow::isEditableFieldFocused (juce::Component* eventSource)
 {
-    auto* focused = juce::Component::getCurrentlyFocusedComponent();
-    if (focused == nullptr)
+    auto isEditable = [] (juce::Component* c) -> bool
+    {
+        if (c == nullptr)
+            return false;
+        if (dynamic_cast<juce::TextEditor*> (c) != nullptr)
+            return true;
+        if (c->findParentComponentOfClass<juce::TextEditor>() != nullptr)
+            return true;
+        if (dynamic_cast<juce::TextInputTarget*> (c) != nullptr)
+            return true;
+        if (auto* combo = c->findParentComponentOfClass<juce::ComboBox>())
+            if (combo->isTextEditable())
+                return true;
         return false;
-    if (dynamic_cast<juce::TextEditor*> (focused) != nullptr)
+    };
+
+    if (isEditable (juce::Component::getCurrentlyFocusedComponent()))
         return true;
-    if (focused->findParentComponentOfClass<juce::TextEditor>() != nullptr)
-        return true;
-    if (dynamic_cast<juce::TextInputTarget*> (focused) != nullptr)
-        return true;
-    return false;
+    return isEditable (eventSource);
 }
 
-bool PluginHostWindow::SpaceKeys::keyPressed (const juce::KeyPress& key, juce::Component*)
+bool PluginHostWindow::SpaceKeys::keyPressed (const juce::KeyPress& key, juce::Component* source)
 {
     if (! key.isKeyCode (juce::KeyPress::spaceKey))
         return false;
-    if (isEditableFieldFocused())
+    if (isEditableFieldFocused (source))
         return false;
     if (owner.panel == nullptr)
         return false;

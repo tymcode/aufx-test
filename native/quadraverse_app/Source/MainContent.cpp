@@ -1,5 +1,6 @@
 #include "MainContent.h"
 #include "Utf8.h"
+#include "AUpresetLoader.h"
 #include "MidiSetupDialog.h"
 #include "HardwareAudioSetupDialog.h"
 #include "SettingsDialog.h"
@@ -172,6 +173,11 @@ void QuadraverseMainContent::refreshChrome()
 
     if (auto* a = contexts.getActive())
         compareToggle.setToggleState (a->compare, juce::dontSendNotification);
+
+    // Keep Patch → Delete Patch Context enablement in sync with context count.
+    if (auto* top = getTopLevelComponent())
+        if (auto* menus = dynamic_cast<juce::MenuBarModel*> (top))
+            menus->menuItemsChanged();
 }
 
 bool QuadraverseMainContent::isHardwareMode() const
@@ -197,8 +203,13 @@ void QuadraverseMainContent::toggleHardwareMode()
     engine.setHardwareMode (! engine.isHardwareMode());
     refreshChrome();
     openTargetView();
-    if (hostWindow != nullptr && hostWindow->getPanel() != nullptr)
-        hostWindow->getPanel()->refreshHardwareModeUi();
+    if (hostWindow != nullptr)
+    {
+        hostWindow->setVisible (true);
+        hostWindow->toFront (true);
+        if (hostWindow->getPanel() != nullptr)
+            hostWindow->getPanel()->refreshHardwareModeUi();
+    }
 }
 
 void QuadraverseMainContent::applyConfiguredMidiInputs()
@@ -527,7 +538,7 @@ void QuadraverseMainContent::importProgramsAsContexts (std::vector<qverse::Quadr
     refreshChrome();
 }
 
-void QuadraverseMainContent::importSysexFile (const juce::File& file, bool alwaysShowPicker)
+void QuadraverseMainContent::importSysexFile (const juce::File& file)
 {
     juce::String error;
     std::vector<qverse::QuadraverbProgram> programs;
@@ -547,7 +558,7 @@ void QuadraverseMainContent::importSysexFile (const juce::File& file, bool alway
         names.add (n);
     }
 
-    if (alwaysShowPicker || programs.size() > 1)
+    if (programs.size() > 1)
     {
         const auto pick = qverse::runSysexPatchPicker (names, this, true);
         if (! pick.ok)
@@ -658,10 +669,17 @@ void QuadraverseMainContent::loadPatchFromPlugin()
         return;
     }
 
+    juce::MemoryBlock hostState;
+    plugin->getStateInformation (hostState);
     juce::MemoryBlock state;
-    plugin->getStateInformation (state);
-    qverse::QuadraverbProgram prog;
     juce::String error;
+    if (! AUpresetLoader::extractStateBytes (hostState, state, error))
+    {
+        statusLabel.setText (error, juce::dontSendNotification);
+        return;
+    }
+
+    qverse::QuadraverbProgram prog;
     if (! qverse::Qdv1StateIO::fromStateBlob (state, prog, error))
     {
         statusLabel.setText (error, juce::dontSendNotification);
@@ -720,7 +738,7 @@ void QuadraverseMainContent::loadPatchFromSysexDump()
                               const auto file = fc.getResult();
                               if (! file.existsAsFile())
                                   return;
-                              importSysexFile (file, false);
+                              importSysexFile (file);
                           });
 }
 
@@ -822,7 +840,7 @@ void QuadraverseMainContent::importSysexBank()
                               const auto file = fc.getResult();
                               if (! file.existsAsFile())
                                   return;
-                              importSysexFile (file, true);
+                              importSysexFile (file);
                           });
 }
 
@@ -1010,7 +1028,7 @@ void QuadraverseMainContent::convertSsx()
                                                            juce::dontSendNotification);
 
                                       if (doImport)
-                                          importSysexFile (dest, true);
+                                          importSysexFile (dest);
                                       return;
                                   }
                               });
@@ -1097,6 +1115,7 @@ void QuadraverseMainContent::saveBankAsPresets()
 void QuadraverseMainContent::newProject()
 {
     contexts = qverse::PatchContextManager();
+    contexts.onChanged = [this] { refreshChrome(); };
     project = {};
     project.patchSaveDirectory = QuadraversePrefs::getLibraryDirectory();
     projectFile = juce::File();
@@ -1128,6 +1147,7 @@ void QuadraverseMainContent::openProject()
                               project.windowState = state.windowState;
                               project.randomizationSettings = state.randomizationSettings;
                               contexts = std::move (state.contexts);
+                              contexts.onChanged = [this] { refreshChrome(); };
                               engine.setHardwareMode (project.hardwareMode);
                               if (project.patchSaveDirectory != juce::File())
                                   QuadraversePrefs::setLibraryDirectory (project.patchSaveDirectory);

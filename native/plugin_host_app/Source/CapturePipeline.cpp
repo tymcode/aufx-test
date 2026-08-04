@@ -21,7 +21,8 @@ CapturePipeline::CapturePipeline (PluginAudioEngine& audioEngine,
 
 CaptureArtifactPaths CapturePipeline::makeArtifactPaths (const HostPluginEntry& plugin,
                                                          const juce::String& description,
-                                                         int roleIndex) const
+                                                         int roleIndex,
+                                                         const juce::String& sessionNameOverride) const
 {
     CaptureArtifactPaths paths;
 
@@ -31,8 +32,10 @@ CaptureArtifactPaths CapturePipeline::makeArtifactPaths (const HostPluginEntry& 
 
     // One folder per capture stem so growing artifact sets stay grouped:
     // sessions/<slug>/artifacts/<stem>/{preset,wavs,sysex,…}
+    const auto sessionName = sessionNameOverride.isNotEmpty() ? sessionNameOverride
+                                                              : plugin.sessionName;
     paths.captureDir = config.sessionsRoot
-                           .getChildFile (HostConfig::slugify (plugin.sessionName))
+                           .getChildFile (HostConfig::slugify (sessionName))
                            .getChildFile ("artifacts")
                            .getChildFile (paths.stem);
     paths.captureDir.createDirectory();
@@ -350,7 +353,10 @@ bool CapturePipeline::run (const CapturePipelineRequest& request,
         return false;
     }
 
-    outResult.paths = makeArtifactPaths (plugin, request.description, request.roleIndex);
+    outResult.paths = makeArtifactPaths (plugin,
+                                         request.description,
+                                         request.roleIndex,
+                                         request.sessionNameOverride);
 
     // Flip send/return routing only. Do not refresh the chrome / tear down the
     // Cocoa editor — destroying and recreating it after capture falls back to

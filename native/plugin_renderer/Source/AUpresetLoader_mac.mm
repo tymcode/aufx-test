@@ -17,6 +17,67 @@ namespace
         [data getBytes: outState.getData() length: outState.getSize()];
         return true;
     }
+
+    bool extractFromPlistObject (id plist, juce::MemoryBlock& outState, juce::String& error)
+    {
+        if (! [plist isKindOfClass: [NSDictionary class]])
+        {
+            error = "Preset root is not a dictionary";
+            return false;
+        }
+
+        NSDictionary* dict = (NSDictionary*) plist;
+        NSArray* keys = @[ @"jucePluginState", @"data", @"state" ];
+
+        for (NSString* key in keys)
+        {
+            id value = dict[key];
+            if ([value isKindOfClass: [NSData class]] && [((NSData*) value) length] > 0)
+                return copyNSData ((NSData*) value, outState, error);
+        }
+
+        error = "Preset plist did not contain a non-empty state blob (jucePluginState/data/state)";
+        return false;
+    }
+}
+
+bool AUpresetLoader::extractStateBytes (const juce::MemoryBlock& hostOrPluginState,
+                                        juce::MemoryBlock& outState,
+                                        juce::String& error)
+{
+    if (hostOrPluginState.isEmpty())
+    {
+        error = "Plugin returned empty state";
+        return false;
+    }
+
+    // Already the processor blob (e.g. in-process / non-AU wrappers).
+    if (auto xml = juce::AudioProcessor::getXmlFromBinary (hostOrPluginState.getData(),
+                                                           (int) hostOrPluginState.getSize()))
+        if (xml->hasTagName ("QDV1"))
+        {
+            outState = hostOrPluginState;
+            return true;
+        }
+
+    @autoreleasepool
+    {
+        NSData* data = [NSData dataWithBytes: hostOrPluginState.getData()
+                                      length: hostOrPluginState.getSize()];
+        NSError* nsError = nil;
+        id plist = [NSPropertyListSerialization propertyListWithData: data
+                                                             options: NSPropertyListImmutable
+                                                              format: nil
+                                                               error: &nsError];
+        if (plist == nil)
+        {
+            error = nsError != nil ? juce::String ([nsError localizedDescription].UTF8String)
+                                   : juce::String ("Host state is neither QDV1 XML nor an AU ClassInfo plist");
+            return false;
+        }
+
+        return extractFromPlistObject (plist, outState, error);
+    }
 }
 
 bool AUpresetLoader::loadStateBytes (const juce::File& presetFile,
@@ -29,47 +90,12 @@ bool AUpresetLoader::loadStateBytes (const juce::File& presetFile,
         return false;
     }
 
-    @autoreleasepool
+    juce::MemoryBlock fileBytes;
+    if (! presetFile.loadFileAsData (fileBytes) || fileBytes.isEmpty())
     {
-        NSString* path = [NSString stringWithUTF8String: presetFile.getFullPathName().toRawUTF8()];
-        NSError* nsError = nil;
-        NSData* fileData = [NSData dataWithContentsOfFile: path options: 0 error: &nsError];
-
-        if (fileData == nil)
-        {
-            error = nsError != nil ? juce::String ([nsError localizedDescription].UTF8String)
-                                   : juce::String ("Failed to read preset file");
-            return false;
-        }
-
-        id plist = [NSPropertyListSerialization propertyListWithData: fileData
-                                                             options: NSPropertyListImmutable
-                                                              format: nil
-                                                               error: &nsError];
-        if (plist == nil)
-        {
-            error = nsError != nil ? juce::String ([nsError localizedDescription].UTF8String)
-                                   : juce::String ("Failed to parse preset plist");
-            return false;
-        }
-
-        if ([plist isKindOfClass: [NSDictionary class]])
-        {
-            NSDictionary* dict = (NSDictionary*) plist;
-            NSArray* keys = @[ @"jucePluginState", @"data", @"state" ];
-
-            for (NSString* key in keys)
-            {
-                id value = dict[key];
-                if ([value isKindOfClass: [NSData class]] && [((NSData*) value) length] > 0)
-                    return copyNSData ((NSData*) value, outState, error);
-            }
-
-            error = "Preset plist did not contain a non-empty state blob (jucePluginState/data/state)";
-            return false;
-        }
-
-        error = "Preset root is not a dictionary";
+        error = "Failed to read preset file";
         return false;
     }
+
+    return extractStateBytes (fileBytes, outState, error);
 }

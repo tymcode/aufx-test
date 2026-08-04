@@ -619,3 +619,168 @@ def write_compare_html_report(
 """
     output.write_text(html)
     return output
+
+
+def write_compare_gallery_html(
+    output_path: str | Path,
+    *,
+    session_name: str,
+    patches: list[dict[str, Any]],
+) -> Path:
+    """Write a single-page gallery with patch and software/hardware toggles.
+
+    Each patch entry::
+
+        {
+          "key": "stem",
+          "label": "Patch name",
+          "targets": [
+            {
+              "key": "software"|"hardware",
+              "label": "Software",
+              "waveform_plot": Path,
+              "spectrogram_plot": Path,
+            },
+            ...
+          ],
+        }
+    """
+    output = Path(output_path).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    def asset_url(path: str | Path) -> str:
+        relative = os.path.relpath(Path(path).resolve(), output.parent)
+        return quote(Path(relative).as_posix())
+
+    patch_buttons = "".join(
+        (
+            f'<button class="patch-btn" data-patch="{escape(str(p.get("key", "")))}">'
+            f'{escape(str(p.get("label", "Patch")))}</button>'
+        )
+        for p in patches
+    )
+
+    panels: list[str] = []
+    for p_idx, patch in enumerate(patches):
+        patch_key = escape(str(patch.get("key", "")))
+        targets = list(patch.get("targets") or [])
+        target_buttons = "".join(
+            (
+                f'<button class="target-btn" data-patch="{patch_key}" '
+                f'data-target="{escape(str(t.get("key", "")))}">'
+                f'{escape(str(t.get("label", "Target")))}</button>'
+            )
+            for t in targets
+        )
+        target_panels: list[str] = []
+        for t_idx, target in enumerate(targets):
+            target_key = escape(str(target.get("key", "")))
+            wave = target.get("waveform_plot")
+            spec = target.get("spectrogram_plot")
+            wave_img = (
+                f'<figure class="plot-card plot-waveform">'
+                f'<img src="{asset_url(wave)}" alt="Waveform over spectrogram">'
+                "<figcaption>Waveform over spectrogram</figcaption></figure>"
+                if wave
+                else ""
+            )
+            spec_img = (
+                f'<figure class="plot-card plot-spectrogram">'
+                f'<img src="{asset_url(spec)}" alt="Spectrogram">'
+                "<figcaption>Spectrogram</figcaption></figure>"
+                if spec
+                else ""
+            )
+            style = "" if t_idx == 0 else ' style="display:none"'
+            target_panels.append(
+                f"""
+    <section class="target-panel" data-patch="{patch_key}" data-target="{target_key}"{style}>
+      <div class="plot-stack">
+        {wave_img}
+        {spec_img}
+      </div>
+    </section>
+"""
+            )
+        style = "" if p_idx == 0 else ' style="display:none"'
+        panels.append(
+            f"""
+  <section class="patch-panel" data-patch="{patch_key}"{style}>
+    <h2>{escape(str(patch.get("label", "Patch")))}</h2>
+    <div class="controls target-controls">{target_buttons}</div>
+    {''.join(target_panels)}
+  </section>
+"""
+        )
+
+    html = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quadraverse Compare Gallery</title>
+  <style>
+    :root {{ color-scheme: light dark; --muted:#6e7781; --accent:#3b82f6; }}
+    body {{ font: 15px system-ui,sans-serif; max-width:1600px; margin:32px auto; padding:0 24px; }}
+    h1 {{ margin-bottom:4px; }}
+    .sub {{ color:var(--muted); margin-bottom:20px; }}
+    .controls {{ display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 18px; }}
+    .patch-btn, .target-btn {{
+      border:1px solid #8885; border-radius:8px; padding:8px 12px;
+      background:transparent; cursor:pointer;
+    }}
+    .patch-btn.active, .target-btn.active {{
+      border-color:var(--accent); background:#3b82f620;
+    }}
+    .plot-stack {{ display:flex; flex-direction:column; gap:18px; margin:12px 0 28px; }}
+    .plot-card {{
+      margin:0; padding:14px; border:1px solid #8885; border-radius:12px;
+      background:#8881; box-shadow:0 8px 24px #0002;
+    }}
+    .plot-waveform {{ border-color:#3b82f688; background:#3b82f610; }}
+    .plot-spectrogram {{ border-color:#a855f788; background:#a855f710; }}
+    .plot-card img {{ width:100%; height:auto; display:block; border-radius:6px; }}
+    .plot-card figcaption {{ color:var(--muted); margin-top:8px; }}
+  </style>
+</head>
+<body>
+  <h1>Quadraverse Compare Gallery</h1>
+  <div class="sub">{escape(session_name)}</div>
+  <div class="controls patch-controls">{patch_buttons}</div>
+  {''.join(panels)}
+  <script>
+    const patchButtons = [...document.querySelectorAll(".patch-btn")];
+    const patchPanels = [...document.querySelectorAll(".patch-panel")];
+
+    const setPatch = (key) => {{
+      patchButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.patch === key));
+      patchPanels.forEach((panel) => {{
+        const on = panel.dataset.patch === key;
+        panel.style.display = on ? "" : "none";
+        if (on) {{
+          const firstTarget = panel.querySelector(".target-btn");
+          if (firstTarget) setTarget(key, firstTarget.dataset.target);
+        }}
+      }});
+    }};
+
+    const setTarget = (patchKey, targetKey) => {{
+      document.querySelectorAll(`.target-btn[data-patch="${{patchKey}}"]`).forEach((btn) => {{
+        btn.classList.toggle("active", btn.dataset.target === targetKey);
+      }});
+      document.querySelectorAll(`.target-panel[data-patch="${{patchKey}}"]`).forEach((panel) => {{
+        panel.style.display = panel.dataset.target === targetKey ? "" : "none";
+      }});
+    }};
+
+    patchButtons.forEach((btn) => btn.addEventListener("click", () => setPatch(btn.dataset.patch)));
+    document.querySelectorAll(".target-btn").forEach((btn) => {{
+      btn.addEventListener("click", () => setTarget(btn.dataset.patch, btn.dataset.target));
+    }});
+    if (patchButtons.length) setPatch(patchButtons[0].dataset.patch);
+  </script>
+</body>
+</html>
+"""
+    output.write_text(html)
+    return output

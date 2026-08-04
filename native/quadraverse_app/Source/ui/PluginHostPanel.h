@@ -65,6 +65,7 @@ private:
     void layoutEditor();
     void showHardwareMetersBody();
     void showPluginEditorBody();
+    bool setHardwareDryThru (bool enabled);
     void setStatus (const juce::String& text, bool isError = false);
 
     PluginAudioEngine& engine;
@@ -90,7 +91,9 @@ private:
     juce::AudioProcessorEditor* pluginEditor { nullptr };
 
     SourceClipLibrary sourceClips;
+    bool hardwareDryThruEnabled { false };
     bool editorCreatePending { false };
+    int editorRebuildToken { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginHostPanel)
 };

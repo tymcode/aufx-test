@@ -1,4 +1,5 @@
 #include "SendPluginSettingsToDevice.h"
+#include "AUpresetLoader.h"
 #include "HostPreferences.h"
 #include "MidiEndpointInfo.h"
 #include "PluginAudioEngine.h"
@@ -30,11 +31,19 @@ bool SendPluginSettingsToDevice::send (PluginAudioEngine& engine, juce::String& 
         return false;
     }
 
-    juce::MemoryBlock state;
-    plugin->getStateInformation (state);
-    if (state.isEmpty())
+    juce::MemoryBlock hostState;
+    plugin->getStateInformation (hostState);
+    if (hostState.isEmpty())
     {
         errorOrStatus = utf8 ("Plugin returned empty state");
+        return false;
+    }
+
+    juce::MemoryBlock state;
+    juce::String unwrapError;
+    if (! AUpresetLoader::extractStateBytes (hostState, state, unwrapError))
+    {
+        errorOrStatus = utf8 ("Plugin state is not QDV-1 compatible: ") + unwrapError;
         return false;
     }
 

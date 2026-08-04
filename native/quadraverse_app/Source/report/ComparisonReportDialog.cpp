@@ -8,55 +8,238 @@
 namespace qverse
 {
 
+namespace
+{
+
+constexpr int kMaxComparePatches = 4;
+
+struct CompareCandidate
+{
+    int contextIndex = -1;
+    juce::String name;
+};
+
+class ContextToggleList : public juce::Component
+{
+public:
+    explicit ContextToggleList (const juce::Array<CompareCandidate>& candidates)
+    {
+        for (const auto& c : candidates)
+        {
+            auto* tb = toggles.add (new juce::ToggleButton (c.name));
+            tb->setToggleState (true, juce::dontSendNotification);
+            tb->onClick = [this]
+            {
+                if (onSelectionChanged)
+                    onSelectionChanged();
+            };
+            contextIndices.add (c.contextIndex);
+            addAndMakeVisible (tb);
+        }
+        setSize (400, juce::jmax (24, candidates.size() * 26));
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        for (auto* tb : toggles)
+            tb->setBounds (r.removeFromTop (26));
+    }
+
+    juce::Array<int> selectedContextIndices() const
+    {
+        juce::Array<int> out;
+        for (int i = 0; i < toggles.size(); ++i)
+            if (toggles[i]->getToggleState())
+                out.add (contextIndices[i]);
+        return out;
+    }
+
+    int selectedCount() const { return selectedContextIndices().size(); }
+
+    std::function<void()> onSelectionChanged;
+
+private:
+    juce::OwnedArray<juce::ToggleButton> toggles;
+    juce::Array<int> contextIndices;
+};
+
+class ComparisonOptionsPanel : public juce::Component
+{
+public:
+    explicit ComparisonOptionsPanel (const juce::Array<CompareCandidate>& candidates)
+        : list (candidates)
+    {
+        heading.setText (utf8 ("Choose up to ") + juce::String (kMaxComparePatches)
+                             + utf8 (" contexts for comparison:"),
+                         juce::dontSendNotification);
+        heading.setJustificationType (juce::Justification::centredLeft);
+        addAndMakeVisible (heading);
+
+        hint.setJustificationType (juce::Justification::centredLeft);
+        hint.setColour (juce::Label::textColourId, juce::Colours::orange);
+        addAndMakeVisible (hint);
+
+        viewport.setViewedComponent (&list, false);
+        viewport.setScrollBarsShown (true, false);
+        addAndMakeVisible (viewport);
+
+        targetLabel.setText (utf8 ("Target"), juce::dontSendNotification);
+        targetLabel.setJustificationType (juce::Justification::centredLeft);
+        addAndMakeVisible (targetLabel);
+        targetBox.addItem (utf8 ("Software"), 1);
+        targetBox.addItem (utf8 ("Hardware"), 2);
+        targetBox.addItem (utf8 ("Both"), 3);
+        targetBox.setSelectedId (3, juce::dontSendNotification);
+        addAndMakeVisible (targetBox);
+
+        reportLabel.setText (utf8 ("Plot Spectra"), juce::dontSendNotification);
+        reportLabel.setJustificationType (juce::Justification::centredLeft);
+        addAndMakeVisible (reportLabel);
+        reportBox.addItem (utf8 ("Yes"), 1);
+        reportBox.addItem (utf8 ("No"), 2);
+        reportBox.setSelectedId (1, juce::dontSendNotification);
+        addAndMakeVisible (reportBox);
+
+        list.onSelectionChanged = [this]
+        {
+            refreshHint();
+            if (onSelectionChanged)
+                onSelectionChanged();
+        };
+        refreshHint();
+
+        setSize (460, 400);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (8);
+        heading.setBounds (r.removeFromTop (22));
+        hint.setBounds (r.removeFromTop (22));
+        r.removeFromTop (4);
+
+        auto bottom = r.removeFromBottom (64);
+        auto row1 = bottom.removeFromTop (28);
+        targetLabel.setBounds (row1.removeFromLeft (140));
+        targetBox.setBounds (row1.removeFromLeft (160));
+        bottom.removeFromTop (8);
+        auto row2 = bottom.removeFromTop (28);
+        reportLabel.setBounds (row2.removeFromLeft (140));
+        reportBox.setBounds (row2.removeFromLeft (160));
+
+        r.removeFromBottom (8);
+        viewport.setBounds (r);
+        list.setSize (juce::jmax (0, viewport.getWidth() - viewport.getScrollBarThickness()),
+                      list.getHeight());
+    }
+
+    juce::Array<int> selectedContextIndices() const { return list.selectedContextIndices(); }
+    int selectedCount() const { return list.selectedCount(); }
+    bool selectionIsValid() const
+    {
+        const int n = selectedCount();
+        return n >= 1 && n <= kMaxComparePatches;
+    }
+    int targetIndex() const { return juce::jmax (0, targetBox.getSelectedItemIndex()); }
+    bool wantReport() const { return reportBox.getSelectedItemIndex() == 0; }
+
+    std::function<void()> onSelectionChanged;
+
+private:
+    void refreshHint()
+    {
+        const int n = selectedCount();
+        if (n > kMaxComparePatches)
+        {
+            hint.setText (utf8 ("Selected ") + juce::String (n)
+                              + utf8 (" — uncheck some to get down to ")
+                              + juce::String (kMaxComparePatches)
+                              + utf8 (" or fewer."),
+                          juce::dontSendNotification);
+            hint.setVisible (true);
+        }
+        else if (n == 0)
+        {
+            hint.setText (utf8 ("Select at least one context."),
+                          juce::dontSendNotification);
+            hint.setVisible (true);
+        }
+        else
+        {
+            hint.setText ({}, juce::dontSendNotification);
+            hint.setVisible (false);
+        }
+    }
+
+    juce::Label heading, hint;
+    ContextToggleList list;
+    juce::Viewport viewport;
+    juce::Label targetLabel, reportLabel;
+    juce::ComboBox targetBox, reportBox;
+};
+
+} // namespace
+
 void runComparisonReportDialog (PatchContextManager& contexts,
                                 PluginAudioEngine& engine,
                                 HostConfig& config,
                                 juce::Component* parent)
 {
+    juce::Array<CompareCandidate> candidates;
+    for (int i = 0; i < contexts.size(); ++i)
+        if (auto* ctx = contexts.get (i))
+            if (ctx->compare)
+                candidates.add ({ i, ctx->name });
+
+    if (candidates.isEmpty())
+    {
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::AlertWindow::WarningIcon,
+            utf8 ("Comparison Report"),
+            utf8 ("No patch contexts are marked Compare. "
+                 "Enable Compare on the contexts you want to include."));
+        return;
+    }
+
     juce::AlertWindow w (utf8 ("Comparison Report"),
-                         utf8 ("Capture selected patch contexts on software and/or hardware, "
-                              "then generate an aufx-test compare report (with spectrograms)."),
+                         utf8 ("You can choose up to ") + juce::String (kMaxComparePatches)
+                             + utf8 (" contexts for comparison. Captures software and/or hardware, "
+                                     "then writes one HTML gallery (waveform + spectrogram, "
+                                     "switchable by patch and target)."),
                          juce::AlertWindow::InfoIcon,
                          parent);
 
-    const auto names = contexts.getNames();
-    for (int i = 0; i < names.size(); ++i)
-    {
-        w.addComboBox ("ctx" + juce::String (i),
-                       { utf8 ("Skip"), utf8 ("Include") },
-                       names[i]);
-        if (auto* ctx = contexts.get (i))
-            if (auto* cb = w.getComboBoxComponent ("ctx" + juce::String (i)))
-                cb->setSelectedItemIndex (ctx->compare ? 1 : 0);
-    }
-
-    w.addComboBox ("target",
-                   { utf8 ("Software"), utf8 ("Hardware"), utf8 ("Both") },
-                   utf8 ("Target"));
-    w.addComboBox ("report", { utf8 ("Yes"), utf8 ("No") }, utf8 ("Generate CLI report"));
+    ComparisonOptionsPanel panel (candidates);
+    w.addCustomComponent (&panel);
     w.addButton (utf8 ("Run"), 1, juce::KeyPress (juce::KeyPress::returnKey));
     w.addButton (utf8 ("Cancel"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    auto syncRunEnabled = [&w, &panel]
+    {
+        if (auto* run = w.getButton (0))
+            run->setEnabled (panel.selectionIsValid());
+    };
+    panel.onSelectionChanged = syncRunEnabled;
+    syncRunEnabled();
 
     if (w.runModalLoop() != 1)
         return;
 
-    const int targetIdx = w.getComboBoxComponent ("target")->getSelectedItemIndex();
-    const bool wantReport = w.getComboBoxComponent ("report")->getSelectedItemIndex() == 0;
+    const int targetIdx = panel.targetIndex();
+    const bool wantReport = panel.wantReport();
     CaptureSource source = CaptureSource::plugin;
     if (targetIdx == 1) source = CaptureSource::hardware;
     if (targetIdx == 2) source = CaptureSource::both;
 
-    juce::Array<int> selected;
-    for (int i = 0; i < contexts.size(); ++i)
-        if (auto* cb = w.getComboBoxComponent ("ctx" + juce::String (i)))
-            if (cb->getSelectedItemIndex() == 1)
-                selected.add (i);
-
-    if (selected.isEmpty())
+    const auto selected = panel.selectedContextIndices();
+    if (! panel.selectionIsValid())
     {
-        juce::AlertWindow::showMessageBoxAsync (juce::AlertWindow::WarningIcon,
-                                                utf8 ("Comparison Report"),
-                                                utf8 ("Select at least one patch context."));
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::AlertWindow::WarningIcon,
+            utf8 ("Comparison Report"),
+            utf8 ("Select between 1 and ") + juce::String (kMaxComparePatches)
+                + utf8 (" patch contexts."));
         return;
     }
 
@@ -117,13 +300,14 @@ void runComparisonReportDialog (PatchContextManager& contexts,
 
         CapturePipelineRequest req;
         req.description = ctx->name;
-        req.roleIndex = 0;
+        req.roleIndex = -1; // no _gld / role suffix
         req.source = source;
         req.fixtureFile = fixture;
         req.progressParent = parent;
         req.calibrateNoiseFloor = false;
         req.captureSoftwareSettings = false;
         req.captureHardwareSettings = false;
+        req.sessionNameOverride = sessionName;
 
         CapturePipelineResult result;
         if (! pipeline.run (req, *pluginEntry, result, error))
@@ -151,17 +335,21 @@ void runComparisonReportDialog (PatchContextManager& contexts,
         SessionSnap::registerSnapshot (snap, snapErr);
     }
 
+    const auto sessionDir = config.sessionsRoot.getChildFile (HostConfig::slugify (sessionName));
+    const auto galleryHtml = sessionDir.getChildFile ("compare_gallery.html");
+
     if (wantReport && ! capturedStems.isEmpty() && config.pythonCli.existsAsFile())
     {
         juce::StringArray args;
         args.add (config.pythonCli.getFullPathName());
-        args.add ("compare");
+        args.add ("compare-gallery");
         args.add ("--root");
         args.add (config.sessionsRoot.getFullPathName());
         args.add (sessionName);
-        args.add (capturedStems[0]);
-        args.add ("--write-report");
-        args.add ("--spectrogram-diff");
+        args.add ("--limit");
+        args.add (juce::String (kMaxComparePatches));
+        args.add ("--stems");
+        args.add (capturedStems.joinIntoString (","));
 
         juce::ChildProcess proc;
         if (proc.start (args))
@@ -176,11 +364,12 @@ void runComparisonReportDialog (PatchContextManager& contexts,
         return;
     }
 
-    juce::AlertWindow::showMessageBoxAsync (
-        juce::AlertWindow::InfoIcon,
-        utf8 ("Comparison Report"),
-        utf8 ("Done. Artifacts under sessions/") + juce::String (sessionName)
-            + utf8 ("\nStems: ") + capturedStems.joinIntoString (", "));
+    if (galleryHtml.existsAsFile())
+        galleryHtml.revealToUser();
+    else if (sessionDir.isDirectory())
+        sessionDir.revealToUser();
+    else if (config.sessionsRoot.isDirectory())
+        config.sessionsRoot.revealToUser();
 }
 
 } // namespace qverse
