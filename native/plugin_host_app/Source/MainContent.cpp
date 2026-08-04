@@ -11,6 +11,7 @@
 #include "AudioUnitSettingsDialog.h"
 #include "InstallSourceClipsDialog.h"
 #include "RestoreTestcaseStateDialog.h"
+#include "SendPluginSettingsToDevice.h"
 #include "Utf8.h"
 
 #include <memory>
@@ -188,6 +189,15 @@ MainContent::MainContent (PluginAudioEngine& audioEngine,
         hardwareMeterPanel = std::make_unique<HardwareLoopMeterPanel> (engine);
         addChildComponent (*hardwareMeterPanel);
 
+        sendPluginSettingsButton.onClick = [this]
+        {
+            juce::String message;
+            const bool ok = SendPluginSettingsToDevice::send (engine, message);
+            setStatus (message, ! ok);
+        };
+        addChildComponent (sendPluginSettingsButton);
+        refreshSendPluginSettingsButton();
+
         populatePluginBox();
         presetHardwareState.populatePresets();
         populateFixtures();
@@ -252,11 +262,23 @@ void MainContent::openHardwareAudioSetup()
 void MainContent::openMidiSetup()
 {
         showMidiSetupDialog (engine, config, this);
+        refreshSendPluginSettingsButton();
     }
 
 void MainContent::refreshHardwareModeUi()
 {
         presetHardwareState.refreshHardwareModeUi();
+    }
+
+void MainContent::refreshSendPluginSettingsButton()
+{
+        const auto deviceName = SendPluginSettingsToDevice::resolveTargetDeviceName();
+        if (deviceName.isNotEmpty())
+            sendPluginSettingsButton.setButtonText (utf8 ("Send Plugin Settings to ") + deviceName);
+        else
+            sendPluginSettingsButton.setButtonText (utf8 ("Send Plugin Settings to MIDI Device"));
+
+        sendPluginSettingsButton.setEnabled (deviceName.isNotEmpty() && engine.getPlugin() != nullptr);
     }
 
 void MainContent::showHardwareMeters()
@@ -269,8 +291,12 @@ void MainContent::showHardwareMeters()
         {
             hardwareMeterPanel->setVisible (true);
             hardwareMeterPanel->toFront (false);
-            resized();
         }
+
+        refreshSendPluginSettingsButton();
+        sendPluginSettingsButton.setVisible (true);
+        sendPluginSettingsButton.toFront (false);
+        resized();
     }
 
 void MainContent::showPluginEditorArea()
@@ -278,6 +304,7 @@ void MainContent::showPluginEditorArea()
         if (hardwareMeterPanel != nullptr)
             hardwareMeterPanel->setVisible (false);
 
+        sendPluginSettingsButton.setVisible (false);
         editorViewport.setVisible (true);
 
         if (engine.getPlugin() != nullptr && pluginEditor == nullptr)
@@ -626,8 +653,22 @@ void MainContent::resized()
         bounds.removeFromTop (4);
 
         editorViewport.setBounds (bounds);
-        if (hardwareMeterPanel != nullptr)
+        if (hardwareMeterPanel != nullptr && hardwareMeterPanel->isVisible())
+        {
+            constexpr int sendBtnH = 32;
+            constexpr int sendBtnGap = 12;
+            auto meterArea = bounds;
+            sendPluginSettingsButton.setBounds (
+                meterArea.removeFromBottom (sendBtnH).reduced (12, 0).withSizeKeepingCentre (
+                    juce::jmin (420, meterArea.getWidth() - 24), sendBtnH));
+            meterArea.removeFromBottom (sendBtnGap);
+            hardwareMeterPanel->setBounds (meterArea);
+        }
+        else if (hardwareMeterPanel != nullptr)
+        {
             hardwareMeterPanel->setBounds (bounds);
+            sendPluginSettingsButton.setBounds ({});
+        }
         layoutEditor();
     }
 

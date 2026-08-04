@@ -37,6 +37,28 @@ public:
     bool loadPreset (const juce::File& presetFile, juce::String& error);
     bool saveCurrentPreset (const juce::File& presetFile, juce::String& error) const;
 
+    /**
+     * Apply an in-memory state blob (e.g. QDV-1 XML-in-binary) with the same
+     * suspend/reset/updateHostDisplay sequence as loadPreset.
+     */
+    bool applyPluginState (const juce::MemoryBlock& state, juce::String& error);
+
+    /**
+     * Unload and reload the current plugin description so plugin-side stores
+     * (e.g. QDV-1 preset library) rescans disk. Preserves fixture path, loop,
+     * BPM, host-clock, hardware mode, and restarts the audio device.
+     * Caller must destroy any owned plugin editor before calling.
+     */
+    bool reloadCurrentPlugin (juce::String& error);
+
+    /** Last successfully loaded plugin description (empty if none). */
+    juce::PluginDescription getCurrentPluginDescription() const { return lastPluginDescription; }
+
+    /** Fixture read position in seconds (0 if no fixture). */
+    double getFixturePositionSeconds() const;
+    /** Fixture length in seconds (0 if no fixture). */
+    double getFixtureLengthSeconds() const;
+
     juce::AudioPluginInstance* getPlugin() const { return plugin.get(); }
     juce::AudioProcessorEditor* createEditor();
     void destroyEditor (juce::AudioProcessorEditor*& editor);
@@ -247,6 +269,7 @@ private:
     bool canControlTransport() override { return true; }
 
     std::unique_ptr<juce::AudioPluginInstance> plugin;
+    juce::PluginDescription lastPluginDescription;
     juce::AudioDeviceManager deviceManager;
     juce::AudioFormatManager formatManager;
 

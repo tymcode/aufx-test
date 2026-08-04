@@ -8,8 +8,14 @@
 class HostPreferences
 {
 public:
-    static constexpr const char* appName = "AU Effects Explorer";
-    static constexpr const char* bundleId = "com.aufxtest.AUEffectsExplorer";
+#ifndef HOST_APP_NAME
+#define HOST_APP_NAME "AU Effects Explorer"
+#endif
+#ifndef HOST_BUNDLE_ID
+#define HOST_BUNDLE_ID "com.aufxtest.AUEffectsExplorer"
+#endif
+    static constexpr const char* appName = HOST_APP_NAME;
+    static constexpr const char* bundleId = HOST_BUNDLE_ID;
     static constexpr const char* keyExplorationDataRoot = "explorationDataRoot";
     static constexpr const char* keyConfigPath = "configPath";
     static constexpr const char* keyAllowInstrumentAudioInput = "allowInstrumentAudioInput";

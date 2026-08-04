@@ -146,6 +146,7 @@ bool PluginAudioEngine::loadPlugin (const juce::File& pluginFile, juce::String& 
 
     const juce::ScopedLock lock (processLock);
     plugin = std::move (instance);
+    plugin->fillInPluginDescription (lastPluginDescription);
     return true;
 }
 
@@ -181,6 +182,7 @@ bool PluginAudioEngine::loadPlugin (const juce::PluginDescription& description, 
 
     const juce::ScopedLock lock (processLock);
     plugin = std::move (instance);
+    lastPluginDescription = description;
     return true;
 }
 
@@ -190,6 +192,105 @@ juce::String PluginAudioEngine::getCurrentPluginName() const
         return {};
 
     return plugin->getName();
+}
+
+bool PluginAudioEngine::applyPluginState (const juce::MemoryBlock& state, juce::String& error)
+{
+    if (plugin == nullptr)
+    {
+        error = "No plugin loaded";
+        return false;
+    }
+
+    if (state.isEmpty())
+    {
+        error = "Empty plugin state";
+        return false;
+    }
+
+    // Hold processBlock out via flag — do not hold processLock during
+    // setStateInformation (can stall larger AU restores on the message thread).
+    restoringState.store (true);
+    plugin->suspendProcessing (true);
+    plugin->reset();
+    plugin->setStateInformation (state.getData(), (int) state.getSize());
+    plugin->updateHostDisplay (juce::AudioProcessorListener::ChangeDetails()
+                                   .withProgramChanged (true)
+                                   .withParameterInfoChanged (true)
+                                   .withNonParameterStateChanged (true));
+    plugin->suspendProcessing (false);
+    restoringState.store (false);
+    return true;
+}
+
+bool PluginAudioEngine::reloadCurrentPlugin (juce::String& error)
+{
+    if (lastPluginDescription.name.isEmpty()
+        && lastPluginDescription.fileOrIdentifier.isEmpty())
+    {
+        error = "No plugin description to reload";
+        return false;
+    }
+
+    const auto description = lastPluginDescription;
+    const auto fixture = currentFixtureFile;
+    const bool wasPlaying = playing.load();
+    const bool wasLooping = looping.load();
+    const bool hwMode = isHardwareMode();
+    const bool clockOn = isHostClockEnabled();
+    const double bpm = getHostClockBpm();
+    const bool clickOn = isMetronomeClickEnabled();
+    const float mix = getMixAmount();
+    const float sendDb = getSendLevelDb();
+
+    if (! loadPlugin (description, error))
+        return false;
+
+    setLooping (wasLooping);
+    setMixAmount (mix);
+    setSendLevelDb (sendDb);
+    setHostClockBpm (bpm);
+    setHostClockEnabled (clockOn);
+    setMetronomeClickEnabled (clickOn);
+    setHardwareMode (hwMode);
+
+    if (fixture.existsAsFile())
+    {
+        juce::String fixtureError;
+        if (! loadFixture (fixture, fixtureError))
+        {
+            error = fixtureError;
+            // Plugin reloaded; fixture failure is non-fatal for preset-list refresh.
+        }
+    }
+
+    juce::String deviceError;
+    if (! startAudioDevice (deviceError))
+    {
+        error = deviceError;
+        return false;
+    }
+
+    setPluginProcessingSuspended (false);
+
+    if (wasPlaying && fixture.existsAsFile())
+        playFixture();
+
+    return true;
+}
+
+double PluginAudioEngine::getFixturePositionSeconds() const
+{
+    if (fixtureBuffer.getNumSamples() <= 0 || fixtureSampleRate <= 0.0)
+        return 0.0;
+    return fixtureReadPosition / fixtureSampleRate;
+}
+
+double PluginAudioEngine::getFixtureLengthSeconds() const
+{
+    if (fixtureBuffer.getNumSamples() <= 0 || fixtureSampleRate <= 0.0)
+        return 0.0;
+    return (double) fixtureBuffer.getNumSamples() / fixtureSampleRate;
 }
 
 bool PluginAudioEngine::loadPreset (const juce::File& presetFile, juce::String& error)
@@ -204,21 +305,7 @@ bool PluginAudioEngine::loadPreset (const juce::File& presetFile, juce::String& 
     if (! AUpresetLoader::loadStateBytes (presetFile, state, error))
         return false;
 
-    // Logic-exported .aupresets (often the "initial" list entry) need a clean
-    // restore after a host-saved getStateInformation dump. Hold processBlock
-    // out via flag — do not hold processLock during setStateInformation, which
-    // can stall larger AU state restores on the message thread.
-    restoringState.store (true);
-    plugin->suspendProcessing (true);
-    plugin->reset();
-    plugin->setStateInformation (state.getData(), (int) state.getSize());
-    plugin->updateHostDisplay (juce::AudioProcessorListener::ChangeDetails()
-                                   .withProgramChanged (true)
-                                   .withParameterInfoChanged (true)
-                                   .withNonParameterStateChanged (true));
-    plugin->suspendProcessing (false);
-    restoringState.store (false);
-    return true;
+    return applyPluginState (state, error);
 }
 
 bool PluginAudioEngine::saveCurrentPreset (const juce::File& presetFile, juce::String& error) const

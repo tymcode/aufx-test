@@ -68,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
             "(otherwise: folder of the actual WAV), or pass DIR explicitly."
         ),
     )
+    compare.add_argument(
+        "--spectrogram-diff",
+        action="store_true",
+        help="Also write side-by-side spectrograms and a difference spectrogram into the report folder",
+    )
     compare.add_argument("--json", action="store_true", help="Print metrics as JSON")
     compare.set_defaults(func=_cmd_compare)
 

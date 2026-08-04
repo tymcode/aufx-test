@@ -1,0 +1,3528 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html><head>
+<link rel="stylesheet" type="text/css" href="../../../stylesheets/nose/_main.css">
+<title>Alesis QuadraVerb 2 MIDI/SYSEX</title>
+</head>
+<body bgcolor="#1B5B65" background="../../../images/bg.jpg">
+
+<map name=Index-Section>
+<area shape=CIRCLE coords="71,48,32" href="../index.html" alt="goto section page">
+<area shape=CIRCLE coords="71,124,32" href="../../../index.html" alt="goto youngmonkey main page">
+<area shape=CIRCLE coords="71,205,32" href="../../../contact.html" alt="make contact, e-mail">
+</map>
+
+<table width="100%" cellpadding=4 cellspacing=0><tr valign=TOP>
+<td width=105 rowspan=2>
+<img src="../../images/section.jpg" width=105 height=105 border=0><br>
+<img src="../../../images/index-section.jpg" width=105 height=250 border=0 usemap="#Index-Section"><br>
+</td>
+<td><font size=5 color="#FFFFFF"><b>Alesis QuadraVerb 2 MIDI/SYSEX</b></font></td>
+
+<!-- GoogleAdsense BEGIN -->
+<td width=120 valign=top rowspan=2>
+<script type="text/javascript"><!--
+google_ad_client = "pub-8408229358463458";
+google_ad_width = 160;
+google_ad_height = 600;
+google_ad_format = "160x600_as";
+google_color_border = "1B5B65";
+google_color_bg = "6BABA5";
+google_color_link = "003366";
+google_color_url = "003366";
+google_color_text = "002222";
+google_ad_channel ="0951975945";
+//--></script>
+<script type="text/javascript" src="http://pagead2.googlesyndication.com/pagead/show_ads.js"></script>
+</td>
+<!-- GoogleAdsense END -->
+
+</tr><tr>
+<td bgcolor="#94A880" valign=TOP class=bgSection>
+<center><a href="/incl/siteTools.dll?Ad_Go" target="_top"><img src="/incl/siteTools.dll?Ad_Serve" width=468 height=60 border=0 alt="Advertising Space Available"></a></center>
+<hr color="#133F45">
+<pre>
+11/13/95
+
+SYSTEM EXCLUSIVE FORMAT
+
+	The QuadraVerb 2  MIDI System Exclusive message format is as follows:
+
+	F0	System exclusive status
+	00 00 0E	Alesis manufacturer id#
+	0F	QuadraVerb id#
+	cc	Opcode
+ 	dd	Data
+	 :	   :	  
+	 :	   :
+	F7	End-Of-Exclusive
+
+
+OPCODES:
+
+	01  -  MIDI Edit  F0 00 00 0E 0F 01 <function#> <block#> <page#> 
+	<parameter#> <data> F7
+
+<function#>  =   0= PARAMETER,  1= MIX,  2= GLOBAL, 3= TYPE*
+<block#>   =   (1-8) # of block to be edited. Doesn't matter for GLOBAL edits.
+<page#>  =   (1-#of last page under function) page # for value to be edited.
+<parameter#>  =   (1-#of last parameter on page) parameter # of value 
+
+	<data> is in format described below.  It is a 16-bit value, which is
+transmitted in three MIDI bytes, LSB first.
+
+	TWO QUADRAVERB 2   BYTES:
+0: A7 A6 A5 A4 A3 A2 A1 A0   (LSB)
+1: B7 B6 B5 B4 B3 B2 B1 B0   (MSB)
+	
+	TRANSMITTED AS:
+0: 0 A7 A6 A5 A4 A3 A2 A1 
+1: 0 A0 B7 B6 B5 B4 B3 B2
+2: 0 B1 B0 0  0  0  0  0
+	
+* Editing of a flashing TYPE parameter should be followed by an 'ENTER'
+MIDI sysex message (0B).
+
+	
+02  -  MIDI User Program Dump  F0 00 00 0E 0E 02 <prog.#> <data> F7
+				              
+<program#>=  0..99 selects individual user bank 0 programs, 100 selects
+edit
+
+<data> is in a packed format in order to optimize data transfer.  Eight
+MIDI bytes are used to transmit each block of 7 QuadraVerb 2  data
+bytes.  If the 7 data bytes are looked at as one 56-bit word, the
+format for transmission is eight 7-bit words beginning with the most
+significant bit of the first byte, as follows:
+
+	SEVEN QUADRAVERB 2   BYTES:
+0: A7 A6 A5 A4 A3 A2 A1 A0
+1: B7 B6 B5 B4 B3 B2 B1 B0
+2: C7 C6 C5 C4 C3 C2 C1 C0
+3: D7 D6 D5 D4 D3 D2 D1 D0
+4: E7 E6 E5 E4 E3 E2 E1 E0
+5: F7 F6 F5 F4 F3 F2 F1 F0
+6: G7 G6 G5 G4 G3 G2 G1 G0
+
+	TRANSMITTED AS:
+0: 0 A7 A6 A5 A4 A3 A2 A1
+1: 0 A0 B7 B6 B5 B4 B3 B2
+2: 0 B1 B0 C7 C6 C5 C4 C3
+3: 0 C2 C1 C0 D7 D6 D5 D4
+4: 0 D3 D2 D1 D0 E7 E6 E5
+5: 0 E4 E3 E2 E1 E0 F7 F6
+6: 0 F5 F4 F3 F2 F1 F0 G7
+7: 0 G6 G5 G4 G3 G2 G1 G0
+
+	There are 306 data bytes sent for a single program dump, which
+corresponds to 256 bytes of program data.  With the header, the total
+number of bytes transmitted with a program dump is 314.  The location
+of each parameter within a program dump is shown in the next section:
+QuadraVerb 2   Program Data Format.
+
+	03 -  MIDI User Bank 0 Program Dump Request   F0 00 00 0E 0F 03 <program#> 	F7
+
+<program#>=  0..99 selects individual user programs in User Bank 0, 100
+selects current edit, 101 is a dump all request
+
+	When received, the QuadraVerb 2  will respond to this message with a
+MIDI user program dump (02) of the User Bank 0 program or edit
+selected. For the  dump all request User Bank 0 programs are dumped as
+individual program dumps (02) followed by all User Bank 1 programs
+dumped as individual program dumps (0C), a global parameter dump (07),
+and finally a MIDI program table dump (11).
+
+	07  -  MIDI Global Data Dump 	F0 00 00 0E 0F 07 <data> F7
+
+	<data> is in the same MIDI data format as described in 02, but with a
+different number of bytes due to the difference in the global parameter
+size.The global parameters for the MIDI dump are packed into 14
+Quadraverb 2 bytes (see below) and transferred as 16 MIDI bytes.  The
+last byte packs the most significant bit of the footswitch head
+parameter into bit address 13:0 and the msb of the footswitch tail into
+bit address 13:1.   The following table outlines this:
+
+ 	GLOBAL PARAMETER PACKING:
+	Parameter name	    	lo lim	 hi lim	bits	 bit address	
+	LCD contrast		1	10	8	0:7-0:0
+	Footswitch range head LSB*		0	299	8	1:7-1:0
+	Footswitch range tail LSB*		0	299	8	2:7-3:0
+	VU meter peak hold		0	1	8	3:7-3:0
+	Input audio source		0	1	8	4:7-4:0
+	Sample clock source		0	1	8	5:7-5:0
+	Digital left input channel		1	8	8	6:7-6:0
+	Digital right input channel		1	8	8	7:7-7:0
+	Digital left output channel		1	8	8	 8:7-8:0
+	Digital right output channel		1	8	8	9:7-9:0
+	Digital output mode		0	1	8	10:7-10:0
+	Tap tempo footswitch		0	2	8	11:7-11:0
+	Global direct signal		0	1	8	12:7-12:0
+	Footswitch range head MSB, tail MSB*	0	299	2	13:1-13:0
+	
+	*The MSBs for the footswitch parameters are stored in bit address 13:1 and13:0.
+	Bits 13:7 through 13:2 should be set to 0.
+
+	08  -  MIDI Global Data Dump Request  F0 00 00 0E 0F 08 F7
+
+	When received, the QuadraVerb 2  will respond to this message with a
+MIDI global data dump (07).
+
+	09  -  MIDI Bypass or Compare  F0 00 00 0E 0F 09 <function> <off/on> F7
+
+	<function>  =   0= BYPASS, 1= COMPARE
+	<off/on>  =  0= function off, 1= function on
+
+	When received, the QuadraVerb 2  will respond to this message by
+turning BYPASS/COMPARE OFF/ON.
+
+
+	0A  -  MIDI DSP Error Message  F0 00 00 0E 0F 0A <data>  F7
+
+	<data>  =   1= "EFFECT MEMORY IS FULL"
+	                  2= "OUT OF LFOs"
+	                  4= "DSP IS FULL"
+	                  8= "BLOCK COMBINATION NOT ALLOWED"
+
+	0B  -  MIDI Enter Message  F0 00 00 0E 0F 0B F7
+
+	This performs the ENTER function on the current parameter.  It is useful for
+	acting on flashing parameters.
+
+	0C  -  MIDI User Bank 1 Program Dump  F0 00 00 0E 0E 0C<prog.#> <data> F7
+				              
+ 	 <program#>=  0..99 selects individual User Bank 1 programs, 100 selects edit
+   <data> is the same format as the <data> of the User Bank 0 Dump opcode (02)
+
+	0D -   MIDI User Bank 1 Program Dump Request   F0 00 00 0E 0F 0D<program#>F7
+
+<program#>=  0..99 selects individual user programs in User Bank 1, 100 selects 
+		current edit, 101 is a dump all request
+
+	When received, the QuadraVerb 2  will respond to this message with a
+MIDI user program dump (0C) of the User Bank 1 program or edit
+selected. For the  dump all request User Bank 0 programs are dumped as
+individual program dumps (02) followed by all User Bank 1 programs
+dumped as individual program dumps (0C), a global parameter dump (07),
+and finally a MIDI program table dump (11).
+
+0F -   MIDI Block Bypass Dump     F0 00 00 0E 0F 0F <data> F7
+
+	<data> is in format described below.  It is an 8-bit value, which is
+transmitted in two MIDI bytes.  Bit A7 corresponds to the block bypass
+of block #8, likewise, A6 corresponds to block #7 ... and A0
+corresponds to block#1.  If thebit value= 1, the block is bypassed; if
+the bit value= 0, the block is not bypassed.
+
+	ONE QUADRAVERB 2   BYTE:
+0: A7 A6 A5 A4 A3 A2 A1 A0
+	TRANSMITTED AS: 
+0: 0 A7 A6 A5 A4 A3 A2 A1 
+1: 0 A0 0  0  0  0  0  0
+	
+
+	10 -   MIDI Block Bypass Dump Request   F0 00 00 0E 0F 10 F7
+
+	When received, the QuadraVerb 2  will respond to this message with a
+MIDI Block Bypass Dump (0F).
+
+	11 -   MIDI Program Table Dump   F0 00 00 0E 0F 11 <data>  F7
+
+	<data> is in format described below.  The 128 MIDI program table entries are 
+  9-bits each, and are transmitted in two MIDI bytes.  Values in the
+range 0-99 correspond to Presets 0-99, values 100-199 correspond to
+User bank 0 programs  0-99, and values 200-299 correspond to User bank
+1 programs  0-99.
+
+	TWO QUADRAVERB 2   MIDI TABLE ENTRIES:
+0: A7 A6 A5 A4 A3 A2 A1 A0
+1:  0  0  0  0  0  0  0 A8
+2: B7 B6 B5 B4 B3 B2 B1 B0
+3:  0  0  0  0  0  0  0 B8
+	TRANSMITTED AS: 
+0: 0 A6 A5 A4 A3 A2 A1 A0
+1: 0  0  0  0  0  0 A8 A7
+2: 0 B6 B5 B4 B3 B2 B1 B0
+3: 0  0  0  0  0  0 B8 B7
+
+	12 -   MIDI Program Table DumpRequest   F0 00 00 0E 0F 12 F7
+
+	When received, the QuadraVerb 2  will respond to this message with a
+MIDI Program Table Dump (11).
+
+
+PARAMETER FORMAT
+
+The following specific parameter information shows the locations in
+which each parameter resides after unpacking the data from its 7 bit
+MIDI format into the 8 bit format as described in opcode 02, program
+data dump.
+
+
+GLOBAL DATA FORMAT
+
+The Global parameters are comprised of 14 bytes of data.  Unlike the
+Program, the Global parameters are not packed.  This results in unused
+bits for most global bytes.  These bits must remain at 0. For direct
+parameter editing (sysex command 01H), the Page# and Parameter# are
+given in the table below.  The Function# should be set to 2 (=Global),
+and the Block# should be 1-8.
+
+#	Parameter name	    	Page Parm	lo lim	 hi lim	bits	bit address	
+0.	LCD contrast		1	1	1	10	8	0:7-0:0
+1.	Footswitch range head		2	1	0	299	16	2:7-1:0
+2.	Footswitch range tail		2	2	0	299	16	4:7-3:0
+3.	VU meter peak hold		3	1	0	1	8	5:7-5:0
+4.	Input audio source		4	1	0	1	8	6:7-6:0
+5.	Sample clock source		5	1	0	1	8	7:7-7:0
+6.	Digital left input channel		6	2	1	8	8	8:7-8:0
+7.	Digital right input channel		6	3	1	8	8	9:7-9:0
+8.	Digital left output channel		6	4	1	8	8	10:7-10:0
+9.	Digital right output channel		6	1	1	8	8	11:7-11:0
+10.	Digital output mode		7	1	0	1	8	12:7-12:0
+11.	Tap tempo footswitch		8	1	0	2	8	13:7-13:0
+12.	Global direct signal		9	1	0	1	8	14:7-14:0
+
+
+QUADRAVERB 2   PROGRAM DATA FORMAT
+Programs contain 256 bytes of packed parameter data.  The first 92
+bytes are common parameters for all programs.  The next 164 bytes
+depend on the number of bytes required for parameters of the effect
+blocks and the number of routes enabled.   Usually, not all of these
+bytes are used,  and in this case the end of the routing is designated
+by 0FFH, 0FFH.  Only numbers with negative offsets are in 2's
+complement form.
+
+#	Parameter name	 			lo lim	 hi lim	  bits byte:msb-byte:lsb
+PROGRAM  NAME:
+0.	Program name ASCII digit 0	 			32	127	8	0:7-0:0
+..
+13.	Program name ASCII digit 13	 			32	127	8	13:7-13:0
+
+BLOCK TYPES:
+14a.	Block 1 type definition	 			0	4 *	3	14:7-14:5
+14b.	Block 1 subtype definition	 			0	     **	5	14:4-14:0
+15a.	Block 2 type definition	 			0	4 *	3	15:7-15:5
+..
+20b.	Block 7 subtype definition	 			0	     **	5	20:4-20:0
+21a.	Block 8 type definition	 			0	4 *	3	21:7-21:5
+21b.	Block 8 subtype definition	 			0	     **	5	21:4-21:0
+
+* Block type definitions are given in the next section:  Block type
+definitions
+
+** The upper limit and definition for the block subtype
+depend on the block type.  The upper limit and definition for the
+subtype are given in the section:  Block subtype defintions
+
+MODULATION:
+22.	Mod. 1 source				0	129 *	8	22:7-22:0
+23.	Mod. 1 target block #				1	11 **	8	23:7-23:0 
+24a.	Mod. 1 target type: parameter, route, or mix		0	2 ***	2	24:7-24:6	
+24b.	Mod. 1 target #				0	   ***	6	24:5-24:0
+25.	Mod. 1 amplitude				-99	+99	8	25:7-25:0	
+26.	Mod. 2 source				0	129 *	8	26:7-26:0
+..		
+49.	Mod. 7 amplitude				-99	+99	8	49:7-49:0	
+50.	Mod. 8 source				0	129 *	8	50:7-50:0
+51.	Mod. 8 target block #				1	11 **	8	51:7-51:0 
+52a.	Mod. 8 target type: parameter, route, or mix		0	2 ***	2	52:7-52:6	
+52b.	Mod. 8 target #				0	   ***	6	52:5-52:0
+53.	Mod. 8 amplitude				-99	+99	8	53:7-53:0	
+
+* Definitions of the modulation sources are in the section:  Modulation
+source definitions
+
+** Target block # definition:  1 = block 1, ..., 8 = block 8, 9 = left
+out, 10 = right out, 11 = mix parameters.
+
+*** Definitions of the modulation targets are in the section: 
+Modulation target definitions
+
+BLOCK MIXES:
+54.	Direct level	 			0	100	8	54:7-54:0
+55.	Block 1 level	 			0	100	8	55:7-55:0
+56.	Block 1 inmix level	 			0	100	8	56:7-56:0
+57.	Block 2 level	 			0	100	8	57:7-57:0
+..
+68.	Block 7 inmix level	 			0	100	8	68:7-68:0
+69.	Block 8 level	 			0	100	8	69:7-69:0
+70.	Block 8 inmix level	 			0	100	8	70:7-70:0
+71.	Master effects level	 			0	100	8	71:7-71:0
+
+LOCAL GENERATORS:
+72.	Generator 1 type	 			0	4 *	8	72:7-72:0
+73.	Generator 1 trigger source channel	 			0	 2  **	8	73:7-73:0
+74.	Generator 1 attack threshold	 			-32	0	8	74:7-74:0
+75.	Generator 1 release threshold	 			-48	0	8	75:7-75:0
+76.	Generator 1 attack time	 			0	250 ***	8	76:7-76:0
+77.	Generator 1 release / decay time or period 	 	0	250 ***	8	77:7-77:0
+78.	Generator 1 input gain	 			0	99	8	78:7-78:0
+79.	Generator 1 envelope hold time	 			0	250 ***	8	79:7-79:0
+80.	Generator 1 footswitch source		 		0	1 	8	80:7-80:0
+81.	Generator 1 footswitch mode	 			0 	1	8	81:7-81:0
+82.	Generator 2 type	 			0	4 *	8	82:7-82:0
+83.	Generator 2 trigger source channel	 			0	 2  **	8	83:7-83:0
+84.	Generator 2 attack threshold	 			-32	0	8	84:7-84:0
+85.	Generator 2 release threshold	 			-48	0	8	85:7-85:0
+86.	Generator 2 attack time	 			0	250 ***	8	86:7-86:0
+87.	Generator 2 release / decay time or period 	 	0	250 ***	8	77:7-77:0
+88.	Generator 2 input gain	 			0	99	8	88:7-88:0
+89.	Generator 2 envelope hold time	 			0	250 ***	8	89:7-89:0
+90.	Generator 2 footswitch source		 		0	1 	8	90:7-90:0
+91.	Generator 2 footswitch mode	 			0 	1	8	91:7-91:0
+
+* Generator type:  0 = Envelope generator,  1 = Peak follower, 2 = Ramp, 3 = LFO,                 4 = Footswitch
+
+** Trigger source channel:  0 = Left channel,  1 = Right channel,  2 =
+Left & Right channels
+
+*** This number is multiplied by 0.04 to get the decay in seconds.
+
+
+BLOCK PARAMETERS
+92.	Parameter #1 for 1st defined block*	 (MSB)		**	**	**	    **
+93.	Parameter #1 for 1st defined block*	 (LSB)***	**	**	**	 **
+94.	Parameter #2 for 1st defined block*	 (MSB)		**	**	**	    **
+..
+* Block parameters are not stored for blocks that are off. Parameters
+are stored in order of appearance on the Quadraverb 2  display - by
+block #, parameter page #, and from left to right within the page; the
+1st stored parameter appears on the display at the left most block that
+is not off, on it's 1st parameter page, at the left.
+
+** The parameter definitions are given for each block type and subtype
+in the section: Block parameter definitions
+
+*** Exists only if the block parameter requires two bytes.
+
+BLOCK ROUTING
+92*	Route #1 position byte (LSB)				0	255 **	8	92*:7-92*:0
+93*	Route #1 position byte (MSB)				0	1     **	1	93*:7-93*:7
+93*	Route #1 level 				0	58 ***	7	93*:6-93*:0
+94*	Route #2 position byte (LSB)				0	255 **	8	94*:7-94*:0
+..
+* This number is offset by the number of block parameter bytes that are
+stored.
+
+** An equation for calculating the route position byte is given in the
+section:  Route position definitions
+
+*** This number has a corresponding dB level given by the table in the
+section:  Route level definitions
+
+BLOCK BYPASS
+255a.	Block Bypass for block #1 (1= Bypassed)			0	1	1	255:0-255:0
+255b.Block Bypass for block #2 (1= Bypassed)			0	1	1	255:1-255:1
+255c.	Block Bypass for block #3 (1= Bypassed)			0	1	1	255:2-255:2
+255d.Block Bypass for block #4 (1= Bypassed)			0	1	1	255:3-255:3
+255e.	Block Bypass for block #5 (1= Bypassed)			0	1	1	255:4-255:4
+255f.	Block Bypass for block #6 (1= Bypassed)			0	1	1	255:5-255:5
+255g.Block Bypass for block #7 (1= Bypassed)			0	1	1	255:6-255:6
+255h.Block Bypass for block #8 (1= Bypassed)			0	1	1	255:7-255:7
+
+
+TYPE DATA FORMAT
+
+The number of Type parameters, and their location depend on whether the
+selectted block is defined or off .  The Type parameters are not
+packed.  This results in unused bits for most parameters.  These bits
+must remain at 0.  For direct parameter editing (sysex command 01H),
+the Page# and Parameter# are given in the table below.  The Function#
+should be set to 3 (=Type), and the Block# should be 1-8.
+
+For  blocks that are off:
+#	Parameter name	    	Page Parm	lo lim	 hi lim	bits	bit address	
+0.	Block type		1	1	0	4	8	0:7-0:0
+1.	Block move source		2	1	1	8	8	1:7-1:0
+2.	Block move destination		2	2	1	8	8	2:7-2:0
+3.	Block copy / paste		3	1	0	1	8	3:7-3:0
+
+For  blocks that are defined:
+#	Parameter name	    	Page Parm	lo lim	 hi lim	bits	bit address	
+0.	Block type		1	1	0	4	8	0:7-0:0
+1.	Block subtype		2	1	0	*	8	1:7-1:0
+2.	Block move source		3	1	1	8	8	2:7-2:0
+3.	Block move destination		3	2	1	8	8	3:7-3:0
+4.	Block copy / paste		4	1	0	1	8	4:7-4:0
+
+* The high limit depends on the block type, see the table Block subtype
+definitions.
+
+
+BLOCK TYPE DEFINITIONS
+This table defines the block types for a given parameter:
+
+Parameter:
+Block type:
+         0
+      OFF
+         1
+      EQ
+         2
+      PCH
+         3
+      DLY
+         4
+      RVB
+
+
+BLOCK SUBTYPE DEFINITIONS
+These tables define the block subtypes for a given parameter. Different
+block subtype tables are defined for  each block type.
+
+Type = EQ
+Parameter:
+Block subtype
+         0
+Lowpass filter
+         1
+Bandpass filter
+         2
+Highpass filter
+         3
+Lowpass shelf eq
+         4
+1 Band low parametric
+         5
+1 Band high parametric
+         6
+Highpass shelf eq
+         7
+2 Band sweep shelf eq
+         8
+3 Band parametric eq
+         9
+4 Band parametric eq
+        10
+5 Band graphic eq
+        11
+Resonator
+        12
+Mono tremolo
+        13
+Stereo tremolo
+        14
+Stereo simulator
+        15
+Soft overdrive
+        16
+Hard overdrive
+        17
+Triggered Panning
+        18
+Phase Inverter
+
+
+Type = PCH
+Parameter:
+Block subtype
+         0
+Mono chorus
+         1
+Stereo chorus
+         2
+Quad chorus
+         3
+Mono flanging
+         4
+Stereo flanging
+         5
+Phasor
+         6
+Mono lezlie
+         7
+Stereo lezlie
+         8
+Pitch shifter
+         9
+Pitch detune
+        10
+Ring modulator
+        11
+Mono triggered flange
+        12
+Stereo triggered flange
+
+Type = DLY
+Parameter:
+Block subtype
+         0
+Mono delay
+         1
+Stereo delay
+         2
+Ping pong delay
+         3
+Multi tap delay
+         4
+Tap tempo mono delay
+         5
+Tap tempo ping pong delay
+         6
+Sampling
+
+Type = RVB
+Parameter:
+Block subtype
+         0
+Mono room
+         1
+Room      1
+         2
+Hall         1
+         3
+Plate        1
+         4
+Chamber 1
+         5
+Room      2
+         6
+Hall         2
+         7
+Plate        2
+         8
+Chamber 2
+         9
+Large plate
+        10
+Large room
+        11
+Spring
+        12
+Nonlinear
+        13
+Reverse
+
+
+
+
+
+MODULATION SOURCE DEFINITIONS
+
+Parameter:
+Block subtype
+         0
+Pitch bend
+         1
+After touch
+         2
+Note number
+         3
+Note velocity
+         4
+Controller 000
+         ...
+..
+       127
+Controller 123
+       128
+Local generator 1
+       129
+Local generator 2
+
+
+
+MODULATION TARGET DEFINITIONS
+
+The modulation target type and target # make up an 8 bit word: 
+TTNNNNNN (where TT denotes the target type and NNNNNN denotes the
+target #).  The targets are for the effect block or mix specified by
+the target block #.
+
+        TT
+Modulation target type
+        00
+Block parameter
+        01
+Route level
+        10
+Mix level
+
+If  TT = 00
+ NNNNNN
+Modulation target parameter
+         0
+Parameter #1 
+         1
+Parameter #2 
+        ...
+..
+        32
+Parameter #33 
+
+If  TT = 01
+ NNNNNN
+Modulation target route
+         0
+In left
+         1
+In right
+         2
+Block 1 inmix
+         3
+Block 1 mix
+         4
+Block 1 left
+         5
+Block 1 right
+         6
+Block 2 inmix
+        ...
+..
+        33
+Block 8 right
+
+If  TT = 10
+ NNNNNN
+Modulation target mix
+         0
+Direct level
+         1
+Block 1 out level
+         2
+Block 1 inmix level
+         3
+Block 2 out level
+         4
+Block 2 inmix level
+        ...
+..
+        16
+Block 8 inmix level
+        17
+Master fx level
+BLOCK PARAMETER DEFINITIONS
+
+   These parameters are packed as 8 or 16 bit words MSB first in
+programs, but are always considered 16 bit words LSB first in parameter
+edits.
+EQ:
+ Parameter
+Page
+Param
+Bytes
+Low limit
+Hi limit
+Step
+LOWPASS FILTER:  type = 1, subtype = 0
+
+
+lowpass fc
+   1
+   1
+  2
+20
+10,000
+10
+BANDPASS FILTER:  type = 1, subtype = 1
+
+
+bandpass fc
+   1
+   1
+  2
+20
+4,000
+10
+bw
+   1
+   2
+  1
+20
+200
+1
+HIGHPASS FILTER:  type = 1, subtype = 2
+
+
+
+
+highpass fc
+   1
+   1
+  2
+200
+20,000
+10
+LOWPASS SHELF EQ:  type = 001, subtype = 3
+
+
+
+
+lowpass
+   1
+   1
+  2
+20
+10,000
+10
+gain
+   1
+  2
+  2
+-140
++140
+1
+1 BAND LOW PARAMETRIC:  type = 1, subtype = 4
+
+
+
+
+bandpass
+   1
+   1
+  2
+20
+2,000
+10
+gain
+   1
+   2
+  2
+-140
++140
+1
+oct
+   1
+   3
+  1
+20
+200
+1
+1 BAND HIGH PARAMETRIC:  type = 1, subtype = 5
+
+
+
+
+bp
+   1
+   1
+  2
+1500
+10,000
+10
+gain
+   1
+   2
+  2
+-140
++140
+1
+oct
+   1
+   3
+  1
+20
+250
+1
+HIGHPASS SHELF EQ:  type = 1, subtype = 6
+
+
+
+
+highpass
+   1
+   1
+  2
+100
+20,000
+10
+gain
+   1
+   2
+  2
+-140
++140
+1
+2 BAND SWEEP SHELF EQ:  type = 1, subtype = 7
+
+
+
+
+lowpass
+   1
+   1
+  2
+20
+10,000
+10
+gain
+   1
+   2
+  2
+-140
++140
+1
+highpass
+   2
+   1
+  2
+100
+20,000
+10
+gain
+   2
+   2
+  2
+-140
++140
+1
+3 BAND PARAMETRIC EQ:  type = 1, subtype = 8
+
+
+
+
+lowpass
+   1
+   1
+  2
+20
+10,000
+10
+gain
+   1
+   2
+  2
+-140
++140
+1
+mid band
+   2
+   1
+  2
+20
+2,000
+1
+dB
+   2
+   2
+  2
+-140
++140
+1
+oct
+   2
+   3
+  1
+20
+200
+1
+highpass
+   3
+   1
+  2
+100
+20,000
+10
+gain
+   3
+   2
+  2
+-140
++140
+1
+4 BAND PARAMETRIC EQ:  type = 1, subtype = 9
+
+
+
+
+lowpass
+   1
+   1
+  2
+20
+10,000
+10
+gain
+   1
+   2
+  2
+-140
++140
+1
+low mid
+   2
+   1
+  2
+20
+2,000
+1
+dB
+   2
+   2
+  2
+-140
++140
+1
+oct
+   2
+   3
+  1
+20
+200
+1
+high mid
+   3
+   1
+  2
+1500
+10,000
+10
+dB
+   3
+   2
+  2
+-140
++140
+1
+oct
+   3
+   3
+  1
+20
+250
+1
+highpass
+   4
+   1
+  2
+100
+20,000
+10
+gain
+   4
+   2
+  2
+-140
++140
+1
+5 BAND GRAPHIC EQ:  type = 1, subtype = 10
+
+
+
+
+63Hz
+   1
+   1
+  1
+-14
++14
+1
+250Hz
+   1
+   2
+  1
+-14
++14
+1
+1KHz
+   1
+   3
+  1
+-14
++14
+1
+4KHz
+   1
+   4
+  1
+-14
++14
+1
+16kHz
+   1
+   5
+  1
+-14
++14
+1
+RESONATOR: type = 1, subtype = 11
+
+
+
+
+tuning
+   1
+   1
+  1
+0
+60
+1
+decay
+   1
+   2
+  1
+0
+99
+1
+MONO TREMOLO:  type = 1, subtype = 12
+
+
+
+
+speed
+   1
+   1
+  1
+0
+99
+1
+depth
+   1
+   2
+  1
+0
+99
+1
+shape
+   1
+   3
+  1
+0
+1
+1
+STEREO TREMOLO:  type = 1, subtype = 13
+
+
+
+
+speed
+   1
+   1
+  1
+0
+99
+1
+depth
+   1
+   2
+  1
+0
+99
+1
+shape
+   1
+   3
+  1
+0
+1
+1
+STEREO SIMULATOR:  type = 1, subtype = 14
+
+
+
+
+degrees
+   1
+   1
+  1
+0
+99
+1
+SOFT OVERDRIVE  type = 1, subtype =15
+
+
+
+
+effect mix
+   1
+   1
+  1
+0
+99
+1
+brightness
+   2
+   1
+  1
+0
+99
+1
+dirve level
+   2
+   2
+  1
+10
+110
+1
+HARD OVERDRIVE  type = 1, subtype =16
+
+
+
+
+effect mix
+   1
+   1
+  1
+0
+99
+1
+brightness
+   2
+   1
+  1
+0
+99
+1
+dirve level
+   2
+   2
+  1
+10
+110
+1
+TRIGGERED PANNING  type = 1, subtype =17
+
+
+
+
+(modulation trig. 1 parm)
+   1
+   1
+  1
+0
+1
+1
+(modulation trig. 2 parm)
+   1
+   2
+  1
+0
+1
+1
+speed
+   1
+   3
+  1
+0
+99
+1
+doppler
+   1
+   4
+  1
+0
+99
+1
+distance
+   1
+   5
+  1
+0
+99
+1
+retrigger point
+   2
+   1
+  1
+0
+255
+1
+sweeping mode
+   3
+   1
+  1
+0
+1
+1
+trigger source
+   4
+   1
+  1
+0
+4
+1
+PHASE INVERTER  type = 1, subtype =18
+
+
+
+
+output phase
+   1
+   1
+  1
+0
+4
+1
+
+PCH:	
+ Parameter
+Page
+Param
+Bytes
+Low limit
+Hi limit
+Step
+MONO CHORUS:  type = 2, subtype = 0
+
+
+
+
+speed
+   1
+   1
+  1
+0
+99
+1
+depth
+   1
+   2
+  1
+0
+99
+1
+feedback
+   1
+   3
+  1
+0
+99
+1
+chorus predelay
+   2
+   1
+  1
+0
+100
+1
+STEREO CHORUS:  type = 2, subtype = 1
+
+
+
+
+speed
+   1
+   1
+  1
+0
+99
+1
+depth
+   1
+   2
+  1
+0
+99
+1
+feedback
+   1
+   3
+  1
+0
+99
+1
+predelay chr1
+   2
+   1
+  1
+0
+100
+1
+chr2
+   2
+   2
+  1
+0
+100
+1
+QUAD CHORUS:  type = 2, subtype = 2
+
+
+
+
+speed
+   1
+   1
+  1
+0
+99
+1
+depth
+   1
+   2
+  1
+0
+99
+1
+feedback
+   1
+   3
+  1
+0
+99
+1
+predelay chr1
+   2
+   1
+  1
+0
+100
+1
+chr2
+   2
+   2
+  1
+0
+100
+1
+predelay chr3
+   3
+   1
+  1
+0
+100
+1
+chr4
+   3
+   2
+  1
+0
+100
+1
+MONO FLANGING:  type = 2, subtype = 3
+
+
+
+
+speed
+   1
+   1
+  1
+0
+99
+1
+depth
+   1
+   2
+  1
+0
+99
+1
+feedback
+   1
+   3
+  1
+-99
+99
+1
+flanging shape
+   2
+   1
+  1
+0
+1
+1
+STEREO FLANGING:  type = 2, subtype = 4
+
+
+
+
+speed
+   1
+   1
+  1
+0
+99
+1
+depth
+   1
+   2
+  1
+0
+99
+1
+feedback
+   1
+   3
+  1
+-99
+99
+1
+flanging shape
+   2
+   1
+  1
+0
+1
+1
+PHASOR:  type = 2, subtype = 5
+
+
+
+
+phasor speed
+   1
+   1
+  1
+0
+99
+1
+depth
+   1
+   2
+  1
+0
+99
+1
+MONO LEZLIE:  type = 2, subtype = 6
+
+
+
+
+lezlie motor
+   1
+   1
+  1
+0
+1
+1
+speed
+   1
+   2
+  1
+0
+1
+1
+high rotor level
+   2
+   1
+  1
+-12
++6
+1
+STEREO LEZLIE:  type = 2, subtype = 7
+
+
+
+
+lezlie motor
+   1
+   1
+  1
+0
+1
+1
+speed
+   1
+   2
+  1
+0
+1
+1
+high rotor level
+   2
+   1
+  1
+-12
++6
+1
+stereo separation
+   3
+   1
+  1
+-99
+99
+1
+PITCH SHIFTER:  type = 2, subtype = 8
+
+
+
+
+pitch shift fine
+   1
+   1
+  1
+-99
++99
+1
+coarse
+   1
+   2
+  1
+-12
++12
+1
+PITCH DETUNE:  type = 2, subtype = 9 
+
+
+
+
+detune amount
+   1
+   1
+  1
+-99
++99
+1
+RING MODULATOR:  type = 2, subtype = 10 
+
+
+
+
+spectrum shift
+   1
+   1
+  1
+-100
++100
+1
+TRIGGERED MONO FLANGING  type = 2, subtype =11
+
+
+
+
+(modulation trig. 1 parm)
+   1
+   1
+  1
+0
+1
+1
+(modulation trig. 2 parm)
+   1
+   2
+  1
+0
+1
+1
+speed
+   1
+   3
+  1
+0
+99
+1
+depth
+   1
+   4
+  1
+0
+99
+1
+feedback
+   1
+   5
+  1
+-99
+99
+1
+retrigger point
+   2
+   1
+  1
+0
+255
+1
+sweeping mode
+   3
+   1
+  1
+0
+1
+1
+trigger source
+   4
+   1
+  1
+0
+4
+1
+TRIGGERED STEREO FLANGING  type = 2, subtype =12
+
+
+
+
+(modulation trig. 1 parm)
+   1
+   1
+  1
+0
+1
+1
+(modulation trig. 2 parm)
+   1
+   2
+  1
+0
+1
+1
+speed
+   1
+   3
+  1
+0
+99
+1
+depth
+   1
+   4
+  1
+0
+99
+1
+feedback
+   1
+   5
+  1
+-99
+99
+1
+retrigger point
+   2
+   1
+  1
+0
+255
+1
+sweeping mode
+   3
+   1
+  1
+0
+1
+1
+trigger source
+   4
+   1
+  1
+0
+4
+1
+
+
+DLY:
+ Parameter
+Page
+Param
+Bytes
+Low limit
+Hi limit
+Step
+MONO DELAY:  type = 3, subtype = 0
+
+
+
+
+delay
+   1
+   1
+  2
+1
+50,000
+1
+note value
+   1
+   2
+  1
+0
+12
+1
+feedback
+   2
+   1
+  1
+0
+99
+1
+STEREO DELAY:  type = 3, subtype = 1
+
+
+
+
+L dly
+   1
+   1
+  2
+1
+50,000
+1
+note value
+   1
+   2
+  1
+0
+12
+1
+L feedback
+   2
+   1
+  1
+0
+99
+1
+R dly
+   3
+   1
+  2
+1
+50,000
+1
+note value
+   3
+   2
+  1
+0
+12
+1
+R feedback 
+   4
+   1
+  1
+0
+99
+1
+PING PONG DELAY:  type = 3, subtype = 2
+
+
+
+
+delay
+   1
+   1
+  2
+1
+25,000
+1
+note value
+   1
+   2
+  1
+0
+12
+1
+feedback
+   2
+   1
+  1
+0
+99
+1
+MULTI TAP DELAY:  type = 3, subtype = 3
+
+
+
+
+delay
+   1
+   1
+  2
+1
+50,000
+1
+tap level
+   1
+   2
+  1
+0
+38
+1
+L<- ->R
+   1
+   3
+  1
+1
+99
+1
+fb
+   1
+   4
+  1
+0
+99
+1
+delay
+   2
+   1
+  2
+1
+50,000
+1
+tap level
+   2
+   2
+  1
+0
+38
+1
+L<- ->R
+   2
+   3
+  1
+1
+99
+1
+fb
+   2
+   4
+  1
+0
+99
+1
+delay
+   3
+   1
+  2
+1
+50,000
+1
+tap level
+   3
+   2
+  1
+0
+38
+1
+L<- ->R
+   3
+   3
+  1
+1
+99
+1
+fb
+   3
+   4
+  1
+0
+99
+1
+delay
+   4
+   1
+  2
+1
+50,000
+1
+tap level
+   4
+   2
+  1
+0
+38
+1
+L<- ->R
+   4
+   3
+  1
+1
+99
+1
+fb
+   4
+   4
+  1
+0
+99
+1
+delay
+   5
+   1
+  2
+1
+50,000
+1
+tap level
+   5
+   2
+  1
+0
+38
+1
+L<- ->R
+   5
+   3
+  1
+1
+99
+1
+fb
+   5
+   4
+  1
+0
+99
+1
+master feedback
+   6
+   1
+  1
+0
+99
+1
+TAP TEMPO MONO DELAY:  type = 3, subtype = 4
+
+
+
+
+delay
+   1
+   1
+  2
+1
+50,000
+1
+note value
+   1
+   2
+  1
+0
+38
+1
+feedback
+   2
+   1
+  1
+0
+99
+1
+TAP TEMPO PING PONG DELAY: type = 3, subtype = 5
+
+
+
+
+delay
+   1
+   1
+  2
+1
+25,000
+1
+note value
+   1
+   2
+  1
+0
+38
+1
+feedback
+   2
+   1
+  1
+0
+99
+1
+SAMPLING: type = 3, subtype = 6
+
+
+
+
+(modulation play trig. parm)
+   1
+   1
+  1
+0
+1
+1
+(modulation rec trig. parm)
+   1
+   2
+  1
+0
+1
+1
+play
+   1
+   3
+  1
+0
+2
+1
+rec
+   1
+   4
+  1
+0
+1
+1
+maximum sample length
+   2
+   1
+  2
+2500
+50,000
+1
+start
+   3
+   1
+  2
+0
+49,500
+1
+end
+   3
+   2
+  2
+500
+50,000
+1
+play trigger
+   4
+   1
+  1
+0
+6
+1
+rec trigger
+   5
+   1
+  1
+0
+6
+1
+midi note#
+   6
+   1
+  1
+0
+128
+1
+rec output
+   6
+   2
+  1
+0
+1
+1
+
+RVB:
+ Parameter
+Page
+Param
+Bytes
+Low limit
+Hi limit
+Step
+MONO ROOM:  type = 4, subtype = 0 
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+gate trig 
+   5
+   1
+  1
+0
+2
+1
+gated level
+   5
+   2
+  1 
+0
+99
+1
+gate hold
+   6
+   1
+  2
+0
+500
+10
+release
+   6
+   2
+  2
+10
+500
+10
+ROOM  1:  type = 4, subtype = 1 
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+gate trig 
+   5
+   1
+  1
+0
+2
+1
+gated level
+   7
+   2
+  1 
+0
+99
+1
+gate hold
+   5
+   2
+  2
+0
+500
+10
+release
+   6
+   1
+  2
+10
+500
+10
+HALL  1:  type = 4, subtype = 2 
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+gate trig 
+   5
+   1
+  1
+0
+2
+1
+gated level
+   5
+   2
+  1 
+0
+99
+1
+gate hold
+   6
+   1
+  2
+0
+500
+10
+release
+   6
+   2
+  2
+10
+500
+10
+PLATE  1:  type = 4, subtype = 3 
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+gate trig 
+   5
+   1
+  1
+0
+2
+1
+gated level
+   5
+   2
+  1 
+0
+99
+1
+gate hold
+   6
+   1
+  2
+0
+500
+10
+release
+   6
+   2
+  2
+10
+500
+10
+CHAMBER  1:  type = 4, subtype = 4 
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+gate trig 
+   5
+   1
+  1
+0
+2
+1
+gated level
+   5
+   2
+  1 
+0
+99
+1
+gate hold
+   6
+   1
+  2
+0
+500
+10
+release
+   6
+   2
+  2
+10
+500
+10
+ROOM  2:  type = 4, subtype = 5 
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+reflection level
+   5
+   1
+  1
+0
+99
+1
+spread
+   5
+   2
+  1
+0
+99
+1
+reverberation swirl
+   6
+   1
+  1 
+0
+99
+1
+gate trig 
+   7
+   1
+  1
+0
+2
+1
+gated level
+   7
+   2
+  1 
+0
+99
+1
+gate hold
+   8
+   1
+  2
+0
+500
+10
+release
+   8
+   2
+  2
+10
+500
+10
+HALL  2:  type = 4, subtype = 6  
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+reflection level
+   5
+   1
+  1
+0
+99
+1
+spread
+   5
+   2
+  1
+0
+99
+1
+reverberation swirl
+   6
+   1
+  1 
+0
+99
+1
+gate trig 
+   7
+   1
+  1
+0
+2
+1
+gated level
+   7
+   2
+  1 
+0
+99
+1
+gate hold
+   8
+   1
+  2
+0
+500
+10
+release
+   8
+   2
+  2
+10
+500
+10
+PLATE  2:  type = 4, subtype = 7 
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+reflection level
+   5
+   1
+  1
+0
+99
+1
+spread
+   5
+   2
+  1
+0
+99
+1
+reverberation attack
+   6
+   1
+  1 
+0
+99
+1
+gate trig 
+   7
+   1
+  1
+0
+2
+1
+gated level
+   7
+   2
+  1 
+0
+99
+1
+gated hold
+   8
+   1
+  2
+0
+500
+10
+release
+   8
+   2
+  2
+10
+500
+10
+CHAMBER  2:  type = 4, subtype = 8 
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+reflection level
+   5
+   1
+  1
+0
+99
+1
+spread
+   5
+   2
+  1
+0
+99
+1
+reverberation attack
+   6
+   1
+  1 
+0
+99
+1
+gate trig 
+   7
+   1
+  1
+0
+2
+1
+gated level
+   7
+   2
+  1 
+0
+99
+1
+gate hold
+   8
+   1
+  2
+0
+500
+10
+release
+   8
+   2
+  2
+10
+500
+10
+LARGE PLATE:  type = 4, subtype = 9 
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+reflection level
+   5
+   1
+  1
+0
+99
+1
+spread
+   5
+   2
+  1
+0
+99
+1
+reverberation swirl
+   6
+   1
+  1 
+0
+99
+1
+gate trig 
+   7
+   1
+  1
+0
+2
+1
+gated level
+   7
+   2
+  1 
+0
+99
+1
+gate hold
+   8
+   1
+  2
+0
+500
+10
+release
+   8
+   2
+  2
+10
+500
+10
+LARGE ROOM:  type = 4, subtype = 10 
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+reflection level
+   5
+   1
+  1
+0
+99
+1
+spread
+   5
+   2
+  1
+0
+99
+1
+reverberation swirl
+   6
+   1
+  1 
+0
+99
+1
+gate trig 
+   7
+   1
+  1
+0
+2
+1
+gate level
+   7
+   2
+  1 
+0
+99
+1
+gate hold
+   8
+   1
+  2
+0
+500
+10
+release
+   8
+   2
+  2
+10
+500
+10
+SPRING:  type = 4, subtype = 11
+
+
+
+
+decay
+   1
+   1
+  1
+0
+99
+1
+damping hi
+   1
+   2
+  1
+0
+99
+1
+lo
+   1
+   3
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+gate trig 
+   5
+   1
+  1
+0
+2
+1
+gate level
+   5
+   2
+  1 
+0
+99
+1
+gate hold
+   6
+   1
+  2
+0
+500
+10
+release
+   6
+   2
+  2
+10
+500
+10
+NONLINEAR:  type = 4, subtype = 12 
+
+
+
+
+gate hold time
+   1
+   1
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+REVERSE:  type = 4, subtype = 13 
+
+
+
+
+reverse time
+   1
+   1
+  1
+0
+99
+1
+reverb density
+   2
+   1
+  1
+0
+99
+1
+diffusion
+   2
+   2
+  1
+0
+99
+1
+input high freq roll off
+   3
+   1
+  2
+200
+20,000
+50
+predelay
+   4
+   1
+  1
+1
+250
+1
+mix  direct<- ->dly
+   4
+   2
+  1
+1
+99
+1
+
+
+
+
+ROUTE POSITION DEFINITIONS
+
+     Route position byte (9bits)  = Sroute + [4*(Sblock-1)] +  [34*(Dblock-1)] 
+
+ where,
+ Sroute= route source #:  0= Input L, 1= Input R, 2= Block inmix, 3=
+Block mix, 4= Block L, 5= Block R
+
+Sblock= route source block #:  1= Input, 1= Block 1, ..., 8= Block 8
+
+Dblock= route destination block #:  1= Block 1, ..., 8= Block 8, 9= Out L, 10= Out R
+
+
+
+ROUTE LEVEL DEFINITIONS
+
+Below is a table that gives the corresponding dB level for a given route level #:
+
+Route level #
+Parameter dB
+        0
+      OFF
+        1
+   -48.0 dB
+        2
+   -42.0 dB
+        3
+   -38.0 dB
+        4
+   -36.0 dB
+        5
+   -34.0 dB
+        6
+   -32.0 dB
+        7
+   -31.0 dB
+        8
+   -30.0 dB
+        9
+   -29.0 dB
+       10
+   -28.0 dB
+       11
+   -27.0 dB
+       12
+   -26.0 dB
+       13
+   -25.0 dB
+       14
+   -24.0 dB
+       15
+   -23.0 dB
+       16
+   -22.0 dB
+       17
+   -21.0 dB
+       18
+   -20.0 dB
+       19
+   -19.5 dB
+       20
+   -19.0 dB
+       21
+   -18.5 dB
+       22
+   -18.0 dB
+       23
+   -17.5 dB
+       24
+   -17.0 dB
+       25
+   -16.5 dB
+       26
+   -16.0 dB
+       27
+   -15.5 dB
+       28
+   -15.0 dB
+       29
+   -14.5 dB
+       30
+   -14.0 dB
+       31
+   -13.5 dB
+       32
+   -13.0 dB
+       33
+   -12.5 dB
+       34
+   -12.0 dB
+       35
+   -11.5 dB
+       36
+   -11.0 dB
+       37
+   -10.5 dB
+       38
+   -10.0 dB
+       39
+     -9.5 dB
+       40
+     -9.0 dB
+       41
+     -8.5 dB
+       42
+     -8.0 dB
+       43
+     -7.5 dB
+       44
+     -7.0 dB
+       45
+     -6.5 dB
+       46
+     -6.0 dB
+       47
+     -5.5 dB
+       48
+     -5.0 dB
+       49
+     -4.5 dB
+       50
+     -4.0 dB
+       51
+     -3.5 dB
+       52
+     -3.0 dB
+       53
+     -2.5 dB
+       54
+     -2.0 dB
+       55
+     -1.5 dB
+       56
+     -1.0 dB
+       57
+     -0.5 dB
+       58
+     -0.0 dB
+</pre>
+</td>
+</tr></table>
+
+</body></html>

@@ -9,7 +9,12 @@ from pathlib import Path
 from ..audio import Waveform
 from ..compare_config import clear_compare_config_cache, load_compare_config
 from ..comparison import ComparisonThresholds, compare_waveforms
-from ..graphing import plot_comparison, plot_difference_metrics
+from ..graphing import (
+    plot_comparison,
+    plot_difference_metrics,
+    plot_spectrogram_difference,
+    plot_spectrogram_pair,
+)
 from ..reporting import band_analysis, write_compare_html_report
 from ..session import ExperimentSession, StateSnapshot
 from ..silence import trim_leading_silence
@@ -233,6 +238,24 @@ def _cmd_compare(args: argparse.Namespace) -> int:
                 dpi=report_dpi,
                 save_path=report_waveform,
             )
+            if getattr(args, "spectrogram_diff", False):
+                plot_spectrogram_pair(
+                    expected,
+                    actual,
+                    labels=(labels[0], labels[1]),
+                    title=f"{title} — spectrograms",
+                    figsize=(16, 6),
+                    dpi=report_dpi,
+                    save_path=report_dir / "compare_spectrograms.png",
+                )
+                plot_spectrogram_difference(
+                    expected,
+                    actual,
+                    title=f"{title} — spectrogram difference",
+                    figsize=(12, 5),
+                    dpi=report_dpi,
+                    save_path=report_dir / "compare_spectrogram_diff.png",
+                )
             plot_difference_metrics(
                 result,
                 thresholds=plot_thresholds,

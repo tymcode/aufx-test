@@ -32,6 +32,7 @@ public:
     void refreshHardwareModeUi();
     void showHardwareMeters();
     void showPluginEditorArea();
+    void refreshSendPluginSettingsButton();
     void openSettings();
     void openAudioUnitSettings();
     void openInstallSourceClips();
@@ -125,6 +126,7 @@ private:
     juce::Viewport editorViewport;
     juce::Component editorPlaceholder;
     std::unique_ptr<HardwareLoopMeterPanel> hardwareMeterPanel;
+    juce::TextButton sendPluginSettingsButton;
     juce::AudioProcessorEditor* pluginEditor { nullptr };
     SourceClipLibrary sourceClips;
     int lastNonOtherFixtureId { 0 };

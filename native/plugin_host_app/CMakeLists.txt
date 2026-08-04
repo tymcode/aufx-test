@@ -52,11 +52,16 @@ juce_add_binary_data(plugin_host_app_assets
     SOURCES
         Resources/app_icon.png)
 
+set(QV_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../quadraverse_app/Source")
+
 target_include_directories(plugin_host_app
     PRIVATE
         Source
         ${AUFX_GEN_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../plugin_renderer/Source)
+        ${CMAKE_CURRENT_SOURCE_DIR}/../plugin_renderer/Source
+        ${QV_SRC}
+        ${QV_SRC}/domain
+        ${QV_SRC}/formats)
 
 target_sources(plugin_host_app
     PRIVATE
@@ -100,6 +105,10 @@ target_sources(plugin_host_app
         Source/MidiEndpointInfo.cpp
         Source/sysex/SysexDeviceRegistry.cpp
         Source/sysex/QuadraverbSysex.cpp
+        Source/SendPluginSettingsToDevice.cpp
+        ${QV_SRC}/domain/AlesisCodec.cpp
+        ${QV_SRC}/domain/QuadraverbProgram.cpp
+        ${QV_SRC}/formats/Qdv1StateIO.cpp
         ${AUFX_GEN_DIR}/AppVersion.cpp
         ../plugin_renderer/Source/AUpresetLoader.cpp)
 

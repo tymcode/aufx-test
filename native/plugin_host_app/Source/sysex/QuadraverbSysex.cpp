@@ -7,20 +7,35 @@ namespace
 
     /**
      * Build a single-parameter edit for the Quadraverb's sysex command 0x01
-     * ("MIDI Editing", service manual sect. 4). The 16-bit value is packed
-     * into three 7-bit bytes with an unusual left-justified scheme:
-     *   value1 = bits 13..7, value2 = bits 6..0 shifted left one (so the low
-     *   bit of every byte is padding), value3 = remaining padding.
-     * This mirrors the byte layout the unit itself emits; sending a plain
-     * 7-bit value in value2 without the shift is silently ignored.
+     * ("MIDI Editing"). The value uses the same 8↔7-bit packing as program
+     * dumps (service manual / Bob Page) — always three MIDI data bytes.
+     * Raw order is LSB then MSB so the wire bit layout matches the manual.
      */
     juce::MidiMessage buildParameterEdit (uint8_t functionGroup, uint8_t page, uint16_t value)
     {
-        // QV/QV+ "MIDI Editing" packed value format for command 0x01.
-        const uint8_t value1 = (uint8_t) ((value >> 7) & 0x7f);
-        const uint8_t value2 = (uint8_t) (((value & 0x7f) << 1) & 0x7f);
-        constexpr uint8_t value3 = 0x00;
-        const uint8_t data[] = { 0x00, 0x00, 0x0e, 0x02, 0x01, functionGroup, page, value1, value2, value3 };
+        const uint8_t raw[2] = { (uint8_t) (value & 0xff), (uint8_t) ((value >> 8) & 0xff) };
+        // Inline the same MSB-first continuous pack used by AlesisCodec::encode
+        // for two bytes → three 7-bit MIDI bytes.
+        uint32_t acc = 0;
+        int bits = 0;
+        uint8_t out[3] = { 0, 0, 0 };
+        int n = 0;
+        for (int i = 0; i < 2; ++i)
+        {
+            acc = (acc << 8) | (uint32_t) raw[i];
+            bits += 8;
+            while (bits >= 7 && n < 3)
+            {
+                bits -= 7;
+                out[n++] = (uint8_t) ((acc >> bits) & 0x7f);
+            }
+        }
+        if (bits > 0 && n < 3)
+            out[n++] = (uint8_t) ((acc << (7 - bits)) & 0x7f);
+
+        const uint8_t data[] = {
+            0x00, 0x00, 0x0e, 0x02, 0x01, functionGroup, page, out[0], out[1], out[2]
+        };
         return juce::MidiMessage::createSysExMessage (data, (int) sizeof (data));
     }
 }

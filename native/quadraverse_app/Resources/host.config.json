@@ -1,0 +1,19 @@
+{
+  "fixtures_dir": "fixtures",
+  "sessions_root": "sessions",
+  "log_file": "sessions/quadraverse.log",
+  "python_cli": ".venv/bin/aufx-test",
+  "default_midi_input": ["Quadraverb Plus"],
+  "default_plugin": "qdv1",
+  "plugins": [
+    {
+      "id": "qdv1",
+      "name": "QDV1",
+      "manufacturer": "Temecula DSP",
+      "path": "AudioUnit:Effects/aufx,QDV1,TDSP",
+      "format": "AudioUnit",
+      "presets_dir": "~/Library/Audio/Presets/Temecula DSP/QDV1",
+      "session": "Quadraverse"
+    }
+  ]
+}

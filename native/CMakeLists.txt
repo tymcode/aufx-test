@@ -30,3 +30,6 @@ endif()
 add_subdirectory("${JUCE_PATH}" JUCE EXCLUDE_FROM_ALL)
 add_subdirectory(plugin_renderer)
 add_subdirectory(plugin_host_app)
+add_subdirectory(quadraverse_app)
+
+enable_testing()

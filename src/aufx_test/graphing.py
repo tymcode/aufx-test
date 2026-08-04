@@ -197,6 +197,116 @@ def plot_comparison(
     return fig
 
 
+def _stft_db(wave: Waveform, channel: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return (Sxx_db, freqs, times) for a mono channel."""
+    from matplotlib import mlab
+
+    data = wave.channel_data(channel)
+    nfft = 2048 if wave.num_samples >= 4096 else 1024
+    if wave.num_samples < 1024:
+        nfft = max(64, int(2 ** np.floor(np.log2(max(wave.num_samples, 2)))))
+    spectrum, freqs, times = mlab.specgram(
+        data,
+        NFFT=nfft,
+        Fs=wave.sample_rate,
+        noverlap=nfft // 2,
+        scale_by_freq=True,
+    )
+    spectrum = np.maximum(spectrum, 1e-12)
+    return 10.0 * np.log10(spectrum), freqs, times
+
+
+def plot_spectrogram_pair(
+    left: Waveform,
+    right: Waveform,
+    *,
+    labels: tuple[str, str] = ("A", "B"),
+    channel: int = 0,
+    title: str = "Spectrograms",
+    figsize: tuple[float, float] = (16, 6),
+    dpi: int = 150,
+    save_path: str | Path | None = None,
+    show: bool = False,
+) -> plt.Figure:
+    """Side-by-side STFT magnitude spectrograms (dB)."""
+    fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
+    for ax, wave, label in zip(axes, (left, right), labels, strict=True):
+        s_db, freqs, times = _stft_db(wave, channel)
+        extent = [times[0] if len(times) else 0.0, times[-1] if len(times) else 1.0, freqs[0], freqs[-1]]
+        im = ax.imshow(
+            s_db,
+            origin="lower",
+            aspect="auto",
+            extent=extent,
+            cmap="magma",
+            vmin=-90,
+            vmax=0,
+        )
+        ax.set_title(label)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Frequency (Hz)")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="dB")
+    fig.suptitle(title)
+    fig.tight_layout()
+    _save_or_show(fig, save_path, show, dpi=dpi)
+    return fig
+
+
+def plot_spectrogram_difference(
+    left: Waveform,
+    right: Waveform,
+    *,
+    channel: int = 0,
+    title: str = "Spectrogram difference (B − A)",
+    figsize: tuple[float, float] = (12, 5),
+    dpi: int = 150,
+    save_path: str | Path | None = None,
+    show: bool = False,
+) -> plt.Figure:
+    """Difference of STFT magnitudes in dB, highlighting spectral divergence over time."""
+    from scipy import signal as sps
+
+    a = left.channel_data(channel)
+    b = right.channel_data(channel)
+    n = min(len(a), len(b))
+    a = a[:n]
+    b = b[:n]
+    sr = left.sample_rate
+    nfft = 2048 if n >= 4096 else 1024
+    if n < 1024:
+        nfft = max(64, int(2 ** np.floor(np.log2(max(n, 2)))))
+    _, _, sa = sps.spectrogram(a, fs=sr, nperseg=nfft, noverlap=nfft // 2)
+    _, freqs, sb = sps.spectrogram(b, fs=sr, nperseg=nfft, noverlap=nfft // 2)
+    # Align shapes
+    f = min(sa.shape[0], sb.shape[0])
+    t = min(sa.shape[1], sb.shape[1])
+    sa = np.maximum(sa[:f, :t], 1e-12)
+    sb = np.maximum(sb[:f, :t], 1e-12)
+    diff_db = 10.0 * np.log10(sb) - 10.0 * np.log10(sa)
+    times = np.linspace(0.0, n / float(sr), t, endpoint=False)
+    extent = [times[0], times[-1] if len(times) else 1.0, freqs[0], freqs[f - 1]]
+
+    fig, ax = plt.subplots(figsize=figsize)
+    lim = float(np.nanmax(np.abs(diff_db))) if diff_db.size else 1.0
+    lim = max(lim, 1.0)
+    im = ax.imshow(
+        diff_db,
+        origin="lower",
+        aspect="auto",
+        extent=extent,
+        cmap="coolwarm",
+        vmin=-lim,
+        vmax=lim,
+    )
+    ax.set_title(title)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Frequency (Hz)")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Δ dB")
+    fig.tight_layout()
+    _save_or_show(fig, save_path, show, dpi=dpi)
+    return fig
+
+
 def plot_difference_metrics(
     metrics: DifferenceMetrics | ComparisonResult,
     *,

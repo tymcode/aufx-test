@@ -144,7 +144,7 @@ private:
 
 /** Send + Return VU panel driven from PluginAudioEngine metering. */
 class HardwareLoopMeterPanel : public juce::Component,
-                               private juce::Timer
+                             private juce::Timer
 {
 public:
     explicit HardwareLoopMeterPanel (PluginAudioEngine& engineIn)
