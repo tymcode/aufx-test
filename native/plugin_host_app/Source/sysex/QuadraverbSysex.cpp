@@ -62,6 +62,14 @@ juce::MidiMessage QuadraverbSysex::buildDumpRequest() const
     return juce::MidiMessage::createSysExMessage (dumpRequestBytes + 1, (int) sizeof (dumpRequestBytes) - 2);
 }
 
+juce::MidiMessage QuadraverbSysex::buildBulkDumpRequest() const
+{
+    // F0 00 00 0E 02 03 65 F7 — dump all programs (pp = 101)
+    constexpr uint8_t bulkDumpRequestBytes[] = { 0xf0, 0x00, 0x00, 0x0e, 0x02, 0x03, 0x65, 0xf7 };
+    return juce::MidiMessage::createSysExMessage (bulkDumpRequestBytes + 1,
+                                                  (int) sizeof (bulkDumpRequestBytes) - 2);
+}
+
 bool QuadraverbSysex::looksLikeAlesisHeader (const juce::MidiMessage& message)
 {
     if (! message.isSysEx())
@@ -85,6 +93,19 @@ bool QuadraverbSysex::isDumpResponse (const juce::MidiMessage& message) const
     const auto* data = message.getSysExData();
     // Opcode 0x01 = program dump (response to request 0x03) on original Quadraverb
     return message.getSysExDataSize() >= 5 && ((uint8_t) data[4] == 0x01 || (uint8_t) data[4] == 0x02);
+}
+
+bool QuadraverbSysex::isBulkDumpResponse (const juce::MidiMessage& message) const
+{
+    if (! isDumpResponse (message))
+        return false;
+
+    const auto* data = message.getSysExData();
+    const int n = message.getSysExDataSize();
+    // pp = 0x65 (all programs); payload is 147 bytes × 100 programs.
+    constexpr int kEncodedProgramSize = 147;
+    constexpr int kBulkPayloadBytes = kEncodedProgramSize * 100;
+    return n >= 6 + kBulkPayloadBytes && (uint8_t) data[5] == 0x65;
 }
 
 bool QuadraverbSysex::validateDump (const juce::MidiMessage& message) const

@@ -27,7 +27,11 @@ public:
                           const juce::String& deviceName) const = 0;
 
     virtual juce::MidiMessage buildDumpRequest() const = 0;
+    /** Request all user programs (bank). Empty message if unsupported. */
+    virtual juce::MidiMessage buildBulkDumpRequest() const { return {}; }
     virtual bool isDumpResponse (const juce::MidiMessage& message) const = 0;
+    /** True when message is a full all-programs bank dump. */
+    virtual bool isBulkDumpResponse (const juce::MidiMessage&) const { return false; }
     virtual bool validateDump (const juce::MidiMessage& message) const = 0;
 
     /** Messages to send to restore a previously captured dump (usually verbatim). */

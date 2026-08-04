@@ -281,22 +281,47 @@ int HardwareLoopOps::findCorrelationPeakLatency (const juce::AudioBuffer<float>&
                                                  int recordedSamples,
                                                  int impulseSamples)
 {
-    // Cross-correlate mono impulse against the mono-summed return, brute-force
-    // time domain. O(impulse × lag) is fine here: the impulse is ~2 s and this
-    // runs once per trial, not per block.
-    // TODO: switch to FFT-based correlation if calibration ever feels slow.
+    // fixtures/impulse.wav is ~2 s (click + silence). Correlating the full file
+    // against a multi-second return is O(impulse × lag) ≈ 10^10 ops and freezes
+    // the UI (especially Debug builds) on trial 1. Use a short window around the
+    // impulse peak as the template; latency is recovered by subtracting the
+    // window's offset into the file.
+    constexpr int kMaxTemplate = 4096;
+    constexpr int kPrePeak = 64;
+
+    if (impulseSamples <= 0 || recordedSamples < impulseSamples)
+        return 0;
+
+    int peakIdx = 0;
+    float peakAbs = 0.0f;
+    for (int i = 0; i < impulseSamples; ++i)
+    {
+        const float a = std::abs (impulseMono.getSample (0, i));
+        if (a > peakAbs)
+        {
+            peakAbs = a;
+            peakIdx = i;
+        }
+    }
+
+    const int t0 = juce::jmax (0, peakIdx - kPrePeak);
+    const int t1 = juce::jmin (impulseSamples, t0 + kMaxTemplate);
+    const int templateLen = t1 - t0;
+    if (templateLen < 16)
+        return 0;
+
     double bestCorr = -1.0e300;
     int bestLag = 0;
-    const int maxLag = recordedSamples - impulseSamples;
+    const int maxLag = recordedSamples - templateLen;
 
     for (int lag = 0; lag <= maxLag; ++lag)
     {
         double corr = 0.0;
-        for (int i = 0; i < impulseSamples; ++i)
+        for (int i = 0; i < templateLen; ++i)
         {
             const float ret = 0.5f * (recorded.getSample (0, lag + i)
                                       + recorded.getSample (1, lag + i));
-            corr += (double) impulseMono.getSample (0, i) * (double) ret;
+            corr += (double) impulseMono.getSample (0, t0 + i) * (double) ret;
         }
 
         if (corr > bestCorr)
@@ -306,7 +331,9 @@ int HardwareLoopOps::findCorrelationPeakLatency (const juce::AudioBuffer<float>&
         }
     }
 
-    return bestLag;
+    // bestLag aligns template start (impulse[t0]) with recorded[bestLag];
+    // impulse[0] therefore sits at bestLag - t0.
+    return juce::jmax (0, bestLag - t0);
 }
 
 float HardwareLoopOps::measurePeakLoopGainDb (const juce::AudioBuffer<float>& impulseMono,

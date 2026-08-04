@@ -54,6 +54,7 @@ target_sources(Quadraverse
         Source/ui/PluginHostWindow.cpp
         Source/ui/CompatibilityReviewDialog.cpp
         Source/ui/SaveToDiskDialog.cpp
+        Source/ui/SysexPatchPickerDialog.cpp
         Source/project/ProjectFile.cpp
         Source/report/ComparisonReportDialog.cpp
         # Shared host sources
@@ -138,10 +139,12 @@ if(APPLE)
         ${HOST_SRC}/MidiEndpointInfo_mac.mm
         ${HOST_SRC}/PluginScannerWorker_mac.mm
         ${HOST_SRC}/LightsOutManager.mm
+        Source/ui/SpacePlaybackMonitor.mm
         ${RENDERER_SRC}/AUpresetLoader_mac.mm)
     set_source_files_properties(
         ${HOST_SRC}/MidiEndpointInfo_mac.mm
         ${HOST_SRC}/LightsOutManager.mm
+        Source/ui/SpacePlaybackMonitor.mm
         PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     target_link_libraries(Quadraverse PRIVATE
         "-framework AppKit"

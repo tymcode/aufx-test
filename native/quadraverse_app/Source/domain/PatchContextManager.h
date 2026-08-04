@@ -16,6 +16,8 @@ struct PatchContext
     QuadraverbProgram program;
     juce::File sourceFile;
     bool dirty = false;
+    /** When true, this context participates in Compare / comparison report. */
+    bool compare = true;
 };
 
 class PatchContextManager
@@ -34,9 +36,17 @@ public:
 
     juce::StringArray getNames() const;
 
-    int addEmpty (const juce::String& name = utf8 ("Untitled"));
-    int addProgram (QuadraverbProgram program, const juce::String& name, const juce::File& source = {});
+    /** Next unused "Patch Context A/B/…" name. */
+    juce::String nextDefaultName() const;
+
+    int addEmpty (const juce::String& name = {});
+    int addProgram (QuadraverbProgram program,
+                    const juce::String& name,
+                    const juce::File& source = {},
+                    bool enableCompare = true);
     int duplicateActive();
+    bool renameActive (const juce::String& newName);
+    void setActiveCompare (bool enabled);
     bool dropActive (bool force = false);
     bool dropAt (int index, bool force = false);
 

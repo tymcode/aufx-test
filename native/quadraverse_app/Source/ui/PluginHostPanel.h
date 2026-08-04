@@ -44,6 +44,9 @@ public:
     /** Tear down owned editor before engine.reloadCurrentPlugin. */
     void destroyPluginEditor();
 
+    /** Toggle Begin/Play for the loaded source clip. */
+    void togglePlayback();
+
 private:
     void timerCallback() override;
     void comboBoxChanged (juce::ComboBox* box) override;

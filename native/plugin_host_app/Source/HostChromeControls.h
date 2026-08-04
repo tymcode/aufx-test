@@ -241,6 +241,21 @@ public:
         repaint();
     }
 
+    /** When non-empty, paint this text instead of the selected plugin label. */
+    void setForcedDisplayText (const juce::String& text)
+    {
+        forcedText = text;
+        updateDisplayText();
+        repaint();
+    }
+
+    void clearForcedDisplayText()
+    {
+        forcedText = {};
+        updateDisplayText();
+        repaint();
+    }
+
     int getSelectedIndex() const { return currentIndex; }
 
     void paint (juce::Graphics& g) override
@@ -274,6 +289,11 @@ public:
 private:
     void updateDisplayText()
     {
+        if (forcedText.isNotEmpty())
+        {
+            displayText = forcedText;
+            return;
+        }
         if (entries.isEmpty())
             displayText = utf8 ("(no plugins — choose More plugins…)");
         else if (juce::isPositiveAndBelow (currentIndex, entries.size()))
@@ -392,6 +412,7 @@ private:
     juce::Array<HostPluginEntry> entries;
     int currentIndex { -1 };
     juce::String displayText;
+    juce::String forcedText;
 };
 
 /** Loop toggle drawn as chasing arrows; on = loop, off = one-shot. */

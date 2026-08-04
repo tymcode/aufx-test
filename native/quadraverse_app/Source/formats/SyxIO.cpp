@@ -86,15 +86,23 @@ bool SyxIO::loadFile (const juce::File& file,
                       std::vector<QuadraverbProgram>& outPrograms,
                       juce::String& error)
 {
-    outPrograms.clear();
     juce::MemoryBlock mb;
     if (! file.loadFileAsData (mb))
     {
         error = utf8 ("Could not read file");
         return false;
     }
-    const auto* data = (const uint8_t*) mb.getData();
-    const int size = (int) mb.getSize();
+    return loadFromMemory (mb.getData(), mb.getSize(), outPrograms, error);
+}
+
+bool SyxIO::loadFromMemory (const void* dataIn,
+                            size_t sizeIn,
+                            std::vector<QuadraverbProgram>& outPrograms,
+                            juce::String& error)
+{
+    outPrograms.clear();
+    const auto* data = (const uint8_t*) dataIn;
+    const int size = (int) sizeIn;
 
     // One or more concatenated SysEx messages.
     int i = 0;
@@ -151,9 +159,47 @@ bool SyxIO::saveSingle (const juce::File& file,
         programSlot,
         prog.bytes.data());
 
-    // createSysExMessage strips F0/F7 from the body and re-adds them.
     juce::MemoryBlock mb;
     mb.append (msg.getRawData(), (size_t) msg.getRawDataSize());
+    if (! file.replaceWithData (mb.getData(), mb.getSize()))
+    {
+        error = utf8 ("Could not write .syx file");
+        return false;
+    }
+    return true;
+}
+
+bool SyxIO::savePrograms (const juce::File& file,
+                          const std::vector<QuadraverbProgram>& programs,
+                          juce::String& error)
+{
+    if (programs.empty())
+    {
+        error = utf8 ("No programs to save");
+        return false;
+    }
+
+    juce::MemoryBlock mb;
+    for (size_t i = 0; i < programs.size(); ++i)
+    {
+        auto prog = programs[i];
+        prog.flushValuesToBytes();
+        if (! prog.hasValidBytes)
+        {
+            error = utf8 ("Program has no dump bytes to encode");
+            return false;
+        }
+
+        const uint8_t slot = programs.size() == 1
+                                 ? AlesisCodec::kEditBuffer
+                                 : (uint8_t) juce::jmin (99, (int) i);
+        const auto msg = AlesisCodec::buildLoadProgram (
+            profileFor (prog.model).getSysexProductId(),
+            slot,
+            prog.bytes.data());
+        mb.append (msg.getRawData(), (size_t) msg.getRawDataSize());
+    }
+
     if (! file.replaceWithData (mb.getData(), mb.getSize()))
     {
         error = utf8 ("Could not write .syx file");

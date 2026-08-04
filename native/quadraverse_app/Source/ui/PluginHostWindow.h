@@ -24,8 +24,18 @@ public:
     PluginHostPanel* getPanel() const { return panel; }
 
 private:
+    struct SpaceKeys : public juce::KeyListener
+    {
+        explicit SpaceKeys (PluginHostWindow& o) : owner (o) {}
+        bool keyPressed (const juce::KeyPress& key, juce::Component*) override;
+        PluginHostWindow& owner;
+    };
+
+    static bool isEditableFieldFocused();
+
     PluginHostPanel* panel { nullptr };
     ClosedFn onClosed;
+    SpaceKeys spaceKeys { *this };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginHostWindow)
 };

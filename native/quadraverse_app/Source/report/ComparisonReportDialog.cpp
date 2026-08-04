@@ -21,9 +21,14 @@ void runComparisonReportDialog (PatchContextManager& contexts,
 
     const auto names = contexts.getNames();
     for (int i = 0; i < names.size(); ++i)
+    {
         w.addComboBox ("ctx" + juce::String (i),
                        { utf8 ("Skip"), utf8 ("Include") },
                        names[i]);
+        if (auto* ctx = contexts.get (i))
+            if (auto* cb = w.getComboBoxComponent ("ctx" + juce::String (i)))
+                cb->setSelectedItemIndex (ctx->compare ? 1 : 0);
+    }
 
     w.addComboBox ("target",
                    { utf8 ("Software"), utf8 ("Hardware"), utf8 ("Both") },

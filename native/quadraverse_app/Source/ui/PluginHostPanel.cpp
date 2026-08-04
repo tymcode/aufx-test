@@ -1,6 +1,7 @@
 #include "PluginHostPanel.h"
 #include "Utf8.h"
 #include "HostPreferences.h"
+#include "MidiEndpointInfo.h"
 
 namespace qverse
 {
@@ -10,6 +11,7 @@ PluginHostPanel::PluginHostPanel (PluginAudioEngine& engineIn, HostConfig& confi
       config (configIn)
 {
     setOpaque (true);
+    setWantsKeyboardFocus (true);
 
     pluginLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (pluginLabel);
@@ -22,14 +24,17 @@ PluginHostPanel::PluginHostPanel (PluginAudioEngine& engineIn, HostConfig& confi
     fixtureBox.addListener (this);
 
     transportButton.addListener (this);
+    transportButton.setWantsKeyboardFocus (false);
     addAndMakeVisible (transportButton);
 
     loopToggle.setToggleState (engine.isLooping(), juce::dontSendNotification);
     loopToggle.addListener (this);
+    loopToggle.setWantsKeyboardFocus (false);
     addAndMakeVisible (loopToggle);
 
     hostClockToggle.setToggleState (engine.isHostClockEnabled(), juce::dontSendNotification);
     hostClockToggle.addListener (this);
+    hostClockToggle.setWantsKeyboardFocus (false);
     addAndMakeVisible (hostClockToggle);
 
     bpmEditor.setInputRestrictions (6, "0123456789.");
@@ -41,6 +46,7 @@ PluginHostPanel::PluginHostPanel (PluginAudioEngine& engineIn, HostConfig& confi
     bypassButton.setClickingTogglesState (true);
     bypassButton.setToggleState (engine.isBypassed(), juce::dontSendNotification);
     bypassButton.addListener (this);
+    bypassButton.setWantsKeyboardFocus (false);
     addAndMakeVisible (bypassButton);
 
     positionLabel.setJustificationType (juce::Justification::centredLeft);
@@ -220,6 +226,14 @@ void PluginHostPanel::stopPlayback()
     transportButton.setPlaying (false);
 }
 
+void PluginHostPanel::togglePlayback()
+{
+    if (engine.isPlaying())
+        stopPlayback();
+    else
+        startPlayback();
+}
+
 void PluginHostPanel::applyBpmFromEditor()
 {
     const double bpm = bpmEditor.getText().getDoubleValue();
@@ -300,7 +314,26 @@ void PluginHostPanel::showPluginEditorBody()
 
 void PluginHostPanel::refreshHardwareModeUi()
 {
-    if (engine.isHardwareMode())
+    const bool hw = engine.isHardwareMode();
+    pluginField.setEnabled (! hw);
+    if (hw)
+    {
+        juce::String device;
+        const auto outId = HostPreferences::get().getMidiOutIdentifier();
+        if (outId.isNotEmpty())
+            device = findMidiEndpointInfo (outId, true).name;
+        if (device.isEmpty())
+            device = HostPreferences::get().getMidiSysexModule();
+        if (device.isEmpty())
+            device = utf8 ("Quadraverb");
+        pluginField.setForcedDisplayText (utf8 ("Using ") + device);
+    }
+    else
+    {
+        pluginField.clearForcedDisplayText();
+    }
+
+    if (hw)
         showHardwareMetersBody();
     else
         showPluginEditorBody();
@@ -374,6 +407,12 @@ void PluginHostPanel::resized()
 void PluginHostPanel::timerCallback()
 {
     transportButton.setPlaying (engine.isPlaying());
+
+    // DAW surface Play/Stop (MIDI Start/Stop, Mackie/HUI notes 94/93, MMC).
+    if (engine.consumeTransportPlayRequest())
+        startPlayback();
+    if (engine.consumeTransportStopRequest())
+        stopPlayback();
 
     const double pos = engine.getFixturePositionSeconds();
     const double len = engine.getFixtureLengthSeconds();

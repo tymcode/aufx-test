@@ -26,16 +26,43 @@ private:
         menuOpenProject,
         menuSaveProject,
         menuSaveProjectAs,
+        menuImportSysexBank,
+        menuSaveBulkDump,
+        menuConvertSsx,
+        menuSaveBankAsSysex,
+        menuSaveBankAsPresets,
         menuMidiSetup,
         menuHardwareAudio,
         menuUseHardware,
-        menuPluginHost,
+        menuTargetView,
         menuLevelMeters,
         menuCompareReport,
-        menuQuit
+        menuQuit,
+
+        menuSendPatch = 3000,
+        menuNewPatchContext,
+        menuDuplicatePatchContext,
+        menuRenamePatchContext,
+        menuDeletePatchContext,
+        menuLoadFromDevice,
+        menuLoadFromPlugin,
+        menuLoadFromPresetFile,
+        menuLoadFromSysexDump,
+        menuSavePatchAsPreset,
+        menuSavePatchAsSysex
     };
 
+    struct GlobalKeys : public juce::KeyListener
+    {
+        explicit GlobalKeys (QuadraverseMainWindow& o) : owner (o) {}
+        bool keyPressed (const juce::KeyPress& key, juce::Component*) override;
+        QuadraverseMainWindow& owner;
+    };
+
+    void syncNativeMenuShortcuts();
+
     HostConfig config;
+    GlobalKeys globalKeys { *this };
 
     QuadraverseMainContent* content() const;
 

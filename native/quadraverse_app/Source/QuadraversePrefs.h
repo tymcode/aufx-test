@@ -14,6 +14,8 @@ public:
     static constexpr const char* keySaveAupresetDefault = "qvSaveAupresetDefault";
     static constexpr const char* keyRecentProjects = "qvRecentProjects";
     static constexpr const char* keyEmitIndividualSyxFromSsx = "qvEmitIndividualSyxFromSsx";
+    static constexpr const char* keyConvertSsxDirectory = "qvConvertSsxDirectory";
+    static constexpr const char* keyImportAfterConvertSsx = "qvImportAfterConvertSsx";
 
     static bool getEditLiveToDevice()
     {
@@ -28,7 +30,8 @@ public:
             s->setValue (keyEditLiveToDevice, v);
     }
 
-    static juce::File getPatchSaveDirectory()
+    /** User Library folder for patch / bank files. */
+    static juce::File getLibraryDirectory()
     {
         if (auto* s = HostPreferences::get().settings())
         {
@@ -38,13 +41,47 @@ public:
         }
         return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
             .getChildFile ("Quadraverse")
-            .getChildFile ("Patches");
+            .getChildFile ("Library");
     }
 
-    static void setPatchSaveDirectory (const juce::File& dir)
+    static juce::File getPatchSaveDirectory() { return getLibraryDirectory(); }
+
+    static void setLibraryDirectory (const juce::File& dir)
     {
         if (auto* s = HostPreferences::get().settings())
             s->setValue (keyPatchSaveDirectory, dir.getFullPathName());
+    }
+
+    static void setPatchSaveDirectory (const juce::File& dir) { setLibraryDirectory (dir); }
+
+    static juce::File getConvertSsxDirectory()
+    {
+        if (auto* s = HostPreferences::get().settings())
+        {
+            const auto p = s->getValue (keyConvertSsxDirectory);
+            if (p.isNotEmpty())
+                return juce::File (p);
+        }
+        return getLibraryDirectory();
+    }
+
+    static void setConvertSsxDirectory (const juce::File& dir)
+    {
+        if (auto* s = HostPreferences::get().settings())
+            s->setValue (keyConvertSsxDirectory, dir.getFullPathName());
+    }
+
+    static bool getImportAfterConvertSsx()
+    {
+        if (auto* s = HostPreferences::get().settings())
+            return s->getBoolValue (keyImportAfterConvertSsx, true);
+        return true;
+    }
+
+    static void setImportAfterConvertSsx (bool v)
+    {
+        if (auto* s = HostPreferences::get().settings())
+            s->setValue (keyImportAfterConvertSsx, v);
     }
 
     static bool getSaveQdv1Default()

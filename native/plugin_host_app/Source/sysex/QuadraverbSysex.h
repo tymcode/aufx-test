@@ -13,7 +13,9 @@ public:
                   const juce::String& deviceName) const override;
 
     juce::MidiMessage buildDumpRequest() const override;
+    juce::MidiMessage buildBulkDumpRequest() const override;
     bool isDumpResponse (const juce::MidiMessage& message) const override;
+    bool isBulkDumpResponse (const juce::MidiMessage& message) const override;
     bool validateDump (const juce::MidiMessage& message) const override;
     juce::Array<juce::MidiMessage> restoreDump (const juce::MidiMessage& dump) const override;
     juce::Array<juce::MidiMessage> buildDryThruMessages() const override;
