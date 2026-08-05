@@ -121,9 +121,9 @@ bool CapturePipeline::recordHardware (const juce::File& fixtureFile,
                                       float dcOffsetL,
                                       float dcOffsetR)
 {
-    if (! engine.hasHardwareLoopConfigured())
+    if (! engine.hasExternalLoopConfigured())
     {
-        error = "Configure Hardware Audio Setup before capturing hardware";
+        error = "Configure Hardware Audio Setup (or Remote Setup) before capturing hardware";
         return false;
     }
 
@@ -294,16 +294,40 @@ bool CapturePipeline::dumpHardwareSysex (const juce::File& sysexOut, juce::Strin
         }
     }
 
-    if (! engine.sendMidiMessage (module->buildDumpRequest()))
+    // Devices without a public dump-request protocol (DP/Pro) need the user
+    // to start the dump from the front panel; show the module's instructions
+    // while we listen. waitForSysexDump pumps the message thread, so the
+    // non-modal window paints and MIDI keeps flowing.
+    std::unique_ptr<juce::AlertWindow> manualPrompt;
+
+    if (module->canRequestDump())
     {
-        error = "Failed to send dump request";
-        return false;
+        if (! engine.sendMidiMessage (module->buildDumpRequest()))
+        {
+            error = "Failed to send dump request";
+            return false;
+        }
+    }
+    else
+    {
+        manualPrompt = std::make_unique<juce::AlertWindow> (
+            module->getDisplayName() + utf8 (" — waiting for sysex dump"),
+            module->manualDumpInstructions(),
+            juce::MessageBoxIconType::InfoIcon);
+        manualPrompt->centreWithSize (juce::jmax (420, manualPrompt->getWidth()),
+                                      juce::jmax (140, manualPrompt->getHeight()));
+        manualPrompt->setVisible (true);
+        manualPrompt->toFront (true);
     }
 
     juce::MidiMessage dump;
-    if (! engine.waitForSysexDump (
-            [module] (const juce::MidiMessage& m) { return module->isDumpResponse (m); },
-            dump, 5000, error))
+    const bool received = engine.waitForSysexDump (
+        [module] (const juce::MidiMessage& m) { return module->isDumpResponse (m); },
+        dump, module->dumpTimeoutMs(), error);
+
+    manualPrompt.reset();
+
+    if (! received)
         return false;
 
     if (! module->validateDump (dump))
@@ -341,9 +365,9 @@ bool CapturePipeline::run (const CapturePipelineRequest& request,
         return false;
     }
 
-    if (wantHardware && ! engine.hasHardwareLoopConfigured())
+    if (wantHardware && ! engine.hasExternalLoopConfigured())
     {
-        error = "Configure Hardware Audio Setup before capturing hardware";
+        error = "Configure Hardware Audio Setup (or Remote Setup) before capturing hardware";
         return false;
     }
 

@@ -125,6 +125,26 @@ void MainWindow::toggleHardwareModeFromMenu()
                                   });
 }
 
+void MainWindow::toggleRemoteMode()
+{
+    if (engine == nullptr || ! engine->hasRemoteConfigured())
+        return;
+
+    engine->setRemoteMode (! engine->isRemoteMode());
+    refreshHardwareUi();
+    menuItemsChanged();
+    syncNativeMenuShortcuts();
+}
+
+void MainWindow::toggleRemoteModeFromMenu()
+{
+    juce::Timer::callAfterDelay (150, [safe = juce::Component::SafePointer<MainWindow> (this)]
+                                  {
+                                      if (safe != nullptr)
+                                          safe->toggleRemoteMode();
+                                  });
+}
+
 void MainWindow::toggleLevelMeters()
 {
     if (engine == nullptr)
@@ -176,6 +196,17 @@ void MainWindow::openHardwareAudioSetup()
     syncNativeMenuShortcuts();
 }
 
+void MainWindow::openRemoteSetup()
+{
+    if (auto* mainContent = dynamic_cast<MainContent*> (getContentComponent()))
+        mainContent->openRemoteSetup();
+
+    // Save may enable/disable the transport — refresh Use Remote tick/enable.
+    refreshHardwareUi();
+    menuItemsChanged();
+    syncNativeMenuShortcuts();
+}
+
 void MainWindow::openMidiSetup()
 {
     if (auto* mainContent = dynamic_cast<MainContent*> (getContentComponent()))
@@ -205,11 +236,13 @@ void MainWindow::syncNativeMenuShortcuts()
 #if JUCE_MAC
     const bool lightsTicked = lightsOut.isEnabled();
     const bool hwTicked = engine != nullptr && engine->isHardwareMode();
+    const bool remoteTicked = engine != nullptr && engine->isRemoteMode();
     const bool metersTicked = levelMetersWindow != nullptr && levelMetersWindow->isVisible();
-    juce::Timer::callAfterDelay (0, [lightsTicked, hwTicked, metersTicked]
+    juce::Timer::callAfterDelay (0, [lightsTicked, hwTicked, remoteTicked, metersTicked]
     {
         lightsOutSyncMenuItem (lightsTicked);
         nativeSyncMenuItem ("Use Hardware", "u", true, false, hwTicked, true);
+        nativeSyncMenuItem ("Use Remote", "u", true, true, remoteTicked, true);
         nativeSyncMenuItem ("Level Meters", "m", true, false, metersTicked, true);
         nativeSyncMenuItem ("Capture Test Case...", "t", true, false, false, false);
         nativeSyncMenuItem ("Rescan Audio Units...", "r", true, false, false, false);
@@ -237,6 +270,12 @@ bool MainWindow::handleGlobalKeyPress (const juce::KeyPress& key)
     if (key == juce::KeyPress ('l', juce::ModifierKeys::commandModifier, 0))
     {
         toggleLightsOut();
+        return true;
+    }
+
+    if (key == juce::KeyPress ('u', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0))
+    {
+        toggleRemoteMode();
         return true;
     }
 
@@ -325,6 +364,17 @@ juce::PopupMenu MainWindow::getMenuForIndex (int topLevelMenuIndex, const juce::
             item.isTicked = engine != nullptr && engine->isHardwareMode();
             item.isEnabled = engine != nullptr && engine->hasHardwareLoopConfigured();
             item.shortcutKeyDescription = "Cmd+U";
+            menu.addItem (std::move (item));
+        }
+        menu.addSeparator();
+        menu.addItem (menuRemoteSetup, utf8 ("Remote Setup…"));
+        {
+            juce::PopupMenu::Item item;
+            item.itemID = menuUseRemote;
+            item.text = "Use Remote";
+            item.isTicked = engine != nullptr && engine->isRemoteMode();
+            item.isEnabled = engine != nullptr && engine->hasRemoteConfigured();
+            item.shortcutKeyDescription = "Cmd+Shift+U";
             menu.addItem (std::move (item));
         }
         menu.addSeparator();
@@ -420,6 +470,8 @@ void MainWindow::menuItemSelected (int menuItemID, int topLevelMenuIndex)
                                              case menuHardwareAudioSetup:  window->openHardwareAudioSetup(); break;
                                              case menuMidiSetup:           window->openMidiSetup(); break;
                                              case menuUseHardware:         window->toggleHardwareModeFromMenu(); break;
+                                             case menuRemoteSetup:         window->openRemoteSetup(); break;
+                                             case menuUseRemote:           window->toggleRemoteModeFromMenu(); break;
                                              case menuLevelMeters:         window->toggleLevelMeters(); break;
                                              case menuAddPlugin:           mainContent->openAddPlugin(); break;
                                              case menuAudioUnitSettings:   mainContent->openAudioUnitSettings(); break;

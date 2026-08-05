@@ -237,6 +237,7 @@ bool PluginAudioEngine::reloadCurrentPlugin (juce::String& error)
     const bool wasPlaying = playing.load();
     const bool wasLooping = looping.load();
     const bool hwMode = isHardwareMode();
+    const bool remoteMode = isRemoteMode();
     const bool clockOn = isHostClockEnabled();
     const double bpm = getHostClockBpm();
     const bool clickOn = isMetronomeClickEnabled();
@@ -252,7 +253,10 @@ bool PluginAudioEngine::reloadCurrentPlugin (juce::String& error)
     setHostClockBpm (bpm);
     setHostClockEnabled (clockOn);
     setMetronomeClickEnabled (clickOn);
-    setHardwareMode (hwMode);
+    if (remoteMode)
+        setRemoteMode (true);
+    else
+        setHardwareMode (hwMode);
 
     if (fixture.existsAsFile())
     {
@@ -544,6 +548,8 @@ bool PluginAudioEngine::startAudioDevice (juce::String& error)
         plugin->suspendProcessing (false);
     }
 
+    remoteTransport.prepare (deviceSampleRate, deviceBlockSize);
+
     if (hardwareSettings.usesSeparateMonitorOutput())
     {
         if (! monitorOutput.startMonitorOutput (hardwareSettings, deviceSampleRate, deviceBlockSize, error))
@@ -576,7 +582,54 @@ bool PluginAudioEngine::hasHardwareLoopConfigured() const
 
 void PluginAudioEngine::setHardwareMode (bool shouldUseHardware)
 {
+    if (shouldUseHardware)
+        hardwareLoop.setTransport (HardwareLoopOps::Transport::hardware);
     hardwareLoop.setHardwareMode (shouldUseHardware);
+}
+
+bool PluginAudioEngine::loadRemoteTransport (const juce::String& fileOrIdentifier, juce::String& error)
+{
+    if (! remoteTransport.load (fileOrIdentifier, deviceSampleRate, deviceBlockSize, error))
+        return false;
+
+    hardwareLoop.setRemoteAvailable (true);
+    return true;
+}
+
+void PluginAudioEngine::unloadRemoteTransport()
+{
+    if (isRemoteMode())
+        setRemoteMode (false);
+
+    hardwareLoop.setRemoteAvailable (false);
+    remoteTransport.unload();
+}
+
+void PluginAudioEngine::setRemoteMode (bool shouldUseRemote)
+{
+    if (shouldUseRemote)
+    {
+        if (! remoteTransport.isLoaded())
+            return;
+        hardwareLoop.setTransport (HardwareLoopOps::Transport::remote);
+        hardwareLoop.setHardwareMode (true);
+    }
+    else if (hardwareLoop.isRemoteTransport())
+    {
+        hardwareLoop.setHardwareMode (false);
+    }
+}
+
+void PluginAudioEngine::selectTransport (HardwareLoopOps::Transport transport)
+{
+    if (transport == HardwareLoopOps::Transport::remote && ! remoteTransport.isLoaded())
+        return;
+
+    if (hardwareLoop.getTransport() != transport)
+    {
+        hardwareLoop.setHardwareMode (false);
+        hardwareLoop.setTransport (transport);
+    }
 }
 
 bool PluginAudioEngine::autoDetectLatency (const juce::File& impulseFile,
@@ -636,6 +689,8 @@ void PluginAudioEngine::stopAudioDevice()
 
     if (plugin != nullptr)
         plugin->releaseResources();
+
+    remoteTransport.release();
 }
 
 juce::Array<juce::MidiDeviceInfo> PluginAudioEngine::getMidiInputDevices() const
@@ -746,11 +801,25 @@ juce::String PluginAudioEngine::getMidiOutputIdentifier() const
 
 bool PluginAudioEngine::sendMidiMessage (const juce::MidiMessage& message)
 {
+    // When the remote transport is selected, MIDI goes over the network via
+    // the hosted SonoBus plugin instead of the local MIDI output device.
+    if (hardwareLoop.isRemoteTransport() && remoteTransport.isLoaded())
+    {
+        remoteTransport.queueMidiMessage (message);
+        return true;
+    }
+
     return midiServices.sendMidiMessage (message);
 }
 
 bool PluginAudioEngine::sendMidiMessages (const juce::Array<juce::MidiMessage>& messages)
 {
+    if (hardwareLoop.isRemoteTransport() && remoteTransport.isLoaded())
+    {
+        remoteTransport.queueMidiMessages (messages);
+        return true;
+    }
+
     return midiServices.sendMidiMessages (messages);
 }
 
@@ -773,6 +842,8 @@ void PluginAudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     const juce::ScopedLock lock (processLock);
     if (plugin != nullptr)
         plugin->prepareToPlay (deviceSampleRate, deviceBlockSize);
+
+    remoteTransport.prepare (deviceSampleRate, deviceBlockSize);
 }
 
 void PluginAudioEngine::audioDeviceStopped()
@@ -780,6 +851,8 @@ void PluginAudioEngine::audioDeviceStopped()
     const juce::ScopedLock lock (processLock);
     if (plugin != nullptr)
         plugin->releaseResources();
+
+    remoteTransport.release();
 }
 
 void PluginAudioEngine::fillFixtureBlock (juce::AudioBuffer<float>& buffer, int numSamples)
@@ -877,11 +950,39 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
     clearOutputChannels (outputChannelData, numOutputChannels, numSamples);
 
     const auto& hardwareSettings = hardwareLoop.getHardwareLoopSettingsRef();
-    const bool loopConfigured = hardwareSettings.isConfigured();
+    const bool remoteActive = hardwareLoop.isRemoteTransport() && remoteTransport.isLoaded();
+    const bool loopConfigured = ! remoteActive && hardwareSettings.isConfigured();
     if (loopConfigured)
         hardwareLoop.pushReturnToLatencyBuffer (inputChannelData, numInputChannels, numSamples);
 
     // Latency / capture special ops: drive send from loopPlayBuffer, record return.
+    if (remoteActive && hardwareLoop.isLoopOpActive())
+    {
+        // Remote variant: play block -> transport plugin -> record its output.
+        const juce::ScopedLock lock (processLock);
+
+        juce::AudioBuffer<float> block (2, numSamples);
+        hardwareLoop.renderLoopOpSend (block, numSamples);
+
+        juce::MidiBuffer remoteMidi;
+        remoteTransport.swapPendingMidi (remoteMidi);
+        remoteTransport.processBlock (block, remoteMidi);
+
+        hardwareLoop.recordLoopOpReturn (block, numSamples);
+
+        // Monitor the remote return on the normal outputs so latency detect
+        // and capture are audible, mirroring the hardware loop-op monitor.
+        for (int ch = 0; ch < numOutputChannels; ++ch)
+        {
+            if (outputChannelData[ch] == nullptr)
+                continue;
+            juce::FloatVectorOperations::copy (outputChannelData[ch],
+                                               block.getReadPointer (ch % block.getNumChannels()),
+                                               numSamples);
+        }
+        return;
+    }
+
     if (hardwareLoop.processLoopOpInCallback (inputChannelData, numInputChannels,
                                               outputChannelData, numOutputChannels,
                                               numSamples, monitorOutput))
@@ -908,6 +1009,10 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
 
         juce::AudioBuffer<float> sendBuffer (2, numSamples);
         sendBuffer.clear();
+
+        // Controller MIDI destined for the remote hardware (copied before the
+        // plugin under test consumes/replaces the buffer).
+        juce::MidiBuffer controllerMidiForRemote;
 
         if (! restoringState.load() && plugin != nullptr && ! plugin->isSuspended())
         {
@@ -941,6 +1046,9 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                 if (hostClock.isHostClockPlaying())
                     hostClock.generateHostClockMidi (midi, numSamples);
             }
+
+            if (remoteActive)
+                controllerMidiForRemote = midi;
 
             if (mutePlugin)
             {
@@ -993,6 +1101,10 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                 }
             }
             hostClock.mixMetronomeClick (buffer, numSamples);
+
+            // No plugin loaded: controller MIDI still reaches the remote gear.
+            if (remoteActive)
+                midiServices.swapPendingMidi (controllerMidiForRemote);
         }
 
         {
@@ -1035,7 +1147,60 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
             softwareReturnPeakR.store (retR);
         }
 
-        if (loopConfigured)
+        if (remoteActive)
+        {
+            // Remote transport: the "send/return" is the SonoBus plugin. It
+            // must process every block while loaded (its network engine runs
+            // off the audio callback), so feed it silence when the send is
+            // not being driven — same gating as the analog send below.
+            const bool driveRemoteSend = hardwareLoop.isHardwareMode()
+                                         || hardwareLoop.isSoftwareEffectMuted();
+
+            juce::AudioBuffer<float> remoteBuffer (2, numSamples);
+            if (driveRemoteSend)
+            {
+                for (int ch = 0; ch < 2; ++ch)
+                    remoteBuffer.copyFrom (ch, 0, sendBuffer, ch, 0, numSamples);
+            }
+            else
+            {
+                remoteBuffer.clear();
+                hardwareLoop.storeSendMeters (0.0f, 0.0f, 0.0f);
+            }
+
+            juce::MidiBuffer remoteMidi;
+            remoteTransport.swapPendingMidi (remoteMidi);
+
+            for (const auto metadata : controllerMidiForRemote)
+                remoteMidi.addEvent (metadata.getMessage(), metadata.samplePosition);
+
+            remoteTransport.processBlock (remoteBuffer, remoteMidi);
+
+            // After processBlock the buffer holds MIDI received from the peer;
+            // route sysex responses to the dump collector.
+            for (const auto metadata : remoteMidi)
+                midiServices.collectRemoteSysex (metadata.getMessage());
+
+            hardwareLoop.pushReturnBuffer (remoteBuffer, numSamples);
+
+            juce::AudioBuffer<float> remoteMonitor (2, numSamples);
+            hardwareLoop.readDelayedReturn (remoteMonitor, numSamples);
+            hardwareLoop.applyMonitorCrossfade (monitorBuffer, remoteMonitor, numSamples);
+
+            // No dedicated monitor pair in remote mode — the crossfaded mix
+            // goes to the normal outputs below.
+            for (int ch = 0; ch < numOutputChannels; ++ch)
+            {
+                if (outputChannelData[ch] == nullptr)
+                    continue;
+
+                const int srcCh = ch % monitorBuffer.getNumChannels();
+                juce::FloatVectorOperations::copy (outputChannelData[ch],
+                                                   monitorBuffer.getReadPointer (srcCh),
+                                                   numSamples);
+            }
+        }
+        else if (loopConfigured)
         {
             juce::AudioBuffer<float> hardwareMonitor (2, numSamples);
             hardwareLoop.readDelayedReturn (hardwareMonitor, numSamples);
@@ -1078,6 +1243,21 @@ void PluginAudioEngine::audioDeviceIOCallbackWithContext (const float* const* in
                                                    monitorBuffer.getReadPointer (srcCh),
                                                    numSamples);
             }
+        }
+
+        if (remoteTransport.isLoaded() && ! remoteActive)
+        {
+            // The transport plugin's network engine is clocked by processBlock;
+            // keep it fed with silence while the hardware transport is selected
+            // so the peer connection does not stall. Output is discarded.
+            juce::AudioBuffer<float> keepAlive (2, numSamples);
+            keepAlive.clear();
+            juce::MidiBuffer remoteMidi;
+            remoteTransport.swapPendingMidi (remoteMidi);
+            remoteTransport.processBlock (keepAlive, remoteMidi);
+
+            for (const auto metadata : remoteMidi)
+                midiServices.collectRemoteSysex (metadata.getMessage());
         }
     }
 }

@@ -1,4 +1,5 @@
 #include "SysexDeviceRegistry.h"
+#include "DpProSysex.h"
 #include "QuadraverbSysex.h"
 
 SysexDeviceRegistry& SysexDeviceRegistry::get()
@@ -10,6 +11,7 @@ SysexDeviceRegistry& SysexDeviceRegistry::get()
 SysexDeviceRegistry::SysexDeviceRegistry()
 {
     registerModule (std::make_unique<QuadraverbSysex>());
+    registerModule (std::make_unique<DpProSysex>());
 }
 
 void SysexDeviceRegistry::registerModule (std::unique_ptr<SysexDeviceModule> module)

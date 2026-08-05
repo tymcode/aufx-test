@@ -23,17 +23,26 @@ public:
     void mouseDown (const juce::MouseEvent& e) override;
 
 private:
+    enum class ControlKind
+    {
+        combo,
+        slider,
+        knob
+    };
+
     struct ControlRow
     {
         ParamMeta meta;
+        ControlKind kind = ControlKind::slider;
         std::unique_ptr<juce::Label> label;
         std::unique_ptr<juce::Component> control;
-        std::unique_ptr<juce::Label> valueLabel;
     };
 
     void clearControls();
     void addSection (const juce::String& title);
-    void buildControl (const ParamMeta& meta, bool differs);
+    void buildControl (const ParamMeta& meta, bool differs, ControlKind kind);
+    void applyParamValue (const ParamMeta& meta, int value);
+    int readParamValue (const ParamMeta& meta) const;
     void showParamMenu (const ParamMeta& meta);
 
     PatchContextManager* manager = nullptr;

@@ -57,9 +57,12 @@ PresetHardwareState::PresetHardwareState (PluginAudioEngine& audioEngine,
 
 void PresetHardwareState::refreshHardwareModeUi()
 {
-    const bool hw = engine.isHardwareMode();
+    // Hardware and remote transports share the external-monitor UI: the
+    // editor area becomes the loop meter panel and presets become HW states
+    // (state sends reach remote gear via the network MIDI transport).
+    const bool external = engine.isExternalMode();
 
-    if (hw)
+    if (external)
     {
         presetLabel.setText ("HW State", juce::dontSendNotification);
         loadPresetButton.setButtonText ("Send");
@@ -74,10 +77,10 @@ void PresetHardwareState::refreshHardwareModeUi()
         onShowPluginEditorArea();
     }
 
-    savePresetButton.setEnabled (! hw);
-    savePresetNameEditor.setEnabled (! hw);
-    savePresetNameLabel.setEnabled (! hw);
-    bypassButton.setEnabled (! hw);
+    savePresetButton.setEnabled (! external);
+    savePresetNameEditor.setEnabled (! external);
+    savePresetNameLabel.setEnabled (! external);
+    bypassButton.setEnabled (! external);
 }
 
 void PresetHardwareState::mergeExtraFiles (juce::Array<juce::File>& files, const juce::Array<juce::File>& extras)

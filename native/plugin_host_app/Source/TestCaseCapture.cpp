@@ -130,7 +130,7 @@ void TestCaseCapture::prompt (juce::Component* parent,
     options->setName ({});
     aw->addCustomComponent (options);
 
-    const bool hardwareConfigured = engine.hasHardwareLoopConfigured();
+    const bool hardwareConfigured = engine.hasExternalLoopConfigured();
     const bool storedCalibrate = HostPreferences::get().getHardwareCaptureCalibrate();
     const bool storedGenerateReport = HostPreferences::get().getCaptureGenerateReport();
     const bool storedSoftwareSettings = HostPreferences::get().getCaptureSoftwareSettings();
@@ -309,9 +309,9 @@ void TestCaseCapture::capture (const juce::String& snapshotName, int roleIndex, 
         return;
     }
 
-    if ((sourceIndex == 1 || sourceIndex == 2) && ! engine.hasHardwareLoopConfigured())
+    if ((sourceIndex == 1 || sourceIndex == 2) && ! engine.hasExternalLoopConfigured())
     {
-        setStatus ("Configure Hardware Audio Setup before capturing hardware", true);
+        setStatus ("Configure Hardware Audio Setup (or Remote Setup) before capturing hardware", true);
         return;
     }
 

@@ -213,6 +213,88 @@ void HostPreferences::setHardwareLoopSettings (const HardwareLoopSettings& setti
     }
 }
 
+bool HostPreferences::getRemoteEnabled() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getBoolValue (keyRemoteEnabled, false);
+    return false;
+}
+
+juce::String HostPreferences::getRemotePluginIdentifier() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getValue (keyRemotePluginIdentifier);
+    return {};
+}
+
+juce::MemoryBlock HostPreferences::getRemotePluginState() const
+{
+    juce::MemoryBlock state;
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+    {
+        const auto base64 = s->getValue (keyRemotePluginState);
+        if (base64.isNotEmpty())
+        {
+            juce::MemoryOutputStream decoded;
+            if (juce::Base64::convertFromBase64 (decoded, base64))
+                state = decoded.getMemoryBlock();
+        }
+    }
+    return state;
+}
+
+int HostPreferences::getRemoteLatencySamples() const
+{
+    if (auto* s = const_cast<HostPreferences*> (this)->settings())
+        return s->getIntValue (keyRemoteLatencySamples, 0);
+    return 0;
+}
+
+void HostPreferences::setRemoteEnabled (bool enabled)
+{
+    if (auto* s = settings())
+    {
+        if (enabled)
+            s->setValue (keyRemoteEnabled, true);
+        else
+            s->removeValue (keyRemoteEnabled);
+        s->saveIfNeeded();
+    }
+}
+
+void HostPreferences::setRemotePluginIdentifier (const juce::String& identifier)
+{
+    if (auto* s = settings())
+    {
+        if (identifier.isEmpty())
+            s->removeValue (keyRemotePluginIdentifier);
+        else
+            s->setValue (keyRemotePluginIdentifier, identifier);
+        s->saveIfNeeded();
+    }
+}
+
+void HostPreferences::setRemotePluginState (const juce::MemoryBlock& state)
+{
+    if (auto* s = settings())
+    {
+        if (state.isEmpty())
+            s->removeValue (keyRemotePluginState);
+        else
+            s->setValue (keyRemotePluginState, juce::Base64::toBase64 (state.getData(), state.getSize()));
+        s->saveIfNeeded();
+    }
+}
+
+void HostPreferences::setRemoteLatencySamples (int samples)
+{
+    if (auto* s = settings())
+    {
+        s->setValue (keyRemoteLatencySamples, samples);
+        s->saveIfNeeded();
+    }
+}
+
 juce::String HostPreferences::getMidiOutIdentifier() const
 {
     if (auto* s = const_cast<HostPreferences*> (this)->settings())

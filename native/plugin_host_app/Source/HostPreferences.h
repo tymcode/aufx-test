@@ -30,6 +30,10 @@ public:
     static constexpr const char* keyHwMonitorOutputDevice = "hwLoopMonitorOutputDevice";
     static constexpr const char* keyHwBufferSize = "hwLoopBufferSize";
     static constexpr const char* keyHwLatencySamples = "hwLoopLatencySamples";
+    static constexpr const char* keyRemoteEnabled = "remoteTransportEnabled";
+    static constexpr const char* keyRemotePluginIdentifier = "remoteTransportPluginIdentifier";
+    static constexpr const char* keyRemotePluginState = "remoteTransportPluginState";
+    static constexpr const char* keyRemoteLatencySamples = "remoteTransportLatencySamples";
     static constexpr const char* keyMidiOutIdentifier = "midiOutIdentifier";
     static constexpr const char* keyMidiDumpInIdentifier = "midiDumpInIdentifier";
     static constexpr const char* keyMidiSysexModule = "midiSysexModule";
@@ -61,6 +65,12 @@ public:
     bool getAllowInstrumentAudioInput() const;
     int getPluginScanTimeoutMs() const;
     HardwareLoopSettings getHardwareLoopSettings() const;
+    /** True when the user has set up the SonoBus remote transport (load at startup). */
+    bool getRemoteEnabled() const;
+    juce::String getRemotePluginIdentifier() const;
+    /** Persisted transport plugin state (connection/group settings); empty if none. */
+    juce::MemoryBlock getRemotePluginState() const;
+    int getRemoteLatencySamples() const;
     juce::String getMidiOutIdentifier() const;
     juce::String getMidiDumpInIdentifier() const;
     juce::String getMidiSysexModule() const;
@@ -84,6 +94,10 @@ public:
     void setAllowInstrumentAudioInput (bool allow);
     void setPluginScanTimeoutMs (int timeoutMs);
     void setHardwareLoopSettings (const HardwareLoopSettings& settings);
+    void setRemoteEnabled (bool enabled);
+    void setRemotePluginIdentifier (const juce::String& identifier);
+    void setRemotePluginState (const juce::MemoryBlock& state);
+    void setRemoteLatencySamples (int samples);
     void setMidiOutIdentifier (const juce::String& identifier);
     void setMidiDumpInIdentifier (const juce::String& identifier);
     void setMidiSysexModule (const juce::String& moduleName);

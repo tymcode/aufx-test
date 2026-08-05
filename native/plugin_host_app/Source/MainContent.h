@@ -28,6 +28,7 @@ public:
 
     void openAbout();
     void openHardwareAudioSetup();
+    void openRemoteSetup();
     void openMidiSetup();
     void refreshHardwareModeUi();
     void showHardwareMeters();

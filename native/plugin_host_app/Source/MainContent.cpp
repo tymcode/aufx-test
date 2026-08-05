@@ -3,6 +3,7 @@
 #include "AddPluginDialog.h"
 #include "AuPluginScanner.h"
 #include "HardwareAudioSetupDialog.h"
+#include "RemoteSetupDialog.h"
 #include "HostFileUtils.h"
 #include "HostLog.h"
 #include "HostPreferences.h"
@@ -213,6 +214,27 @@ MainContent::MainContent (PluginAudioEngine& audioEngine,
             const auto hw = HostPreferences::get().getHardwareLoopSettings();
             engine.setHardwareLoopSettings (hw);
 
+            // Restore the SonoBus remote transport if the user set one up.
+            // Its persisted state carries the connection/group settings (and
+            // SonoBus can auto-reconnect via its "Reconnect Last" option).
+            if (HostPreferences::get().getRemoteEnabled())
+            {
+                juce::String remoteError;
+                if (engine.loadRemoteTransport (HostPreferences::get().getRemotePluginIdentifier(),
+                                                remoteError))
+                {
+                    const auto remoteState = HostPreferences::get().getRemotePluginState();
+                    if (! remoteState.isEmpty())
+                        engine.applyRemoteTransportState (remoteState);
+
+                    engine.setRemoteLatencySamples (HostPreferences::get().getRemoteLatencySamples());
+                }
+                else
+                {
+                    HostLog::error ("Remote transport unavailable: " + remoteError);
+                }
+            }
+
             juce::String midiError;
             engine.setMidiOutputDevice (HostPreferences::get().getMidiOutIdentifier(), midiError);
             if (midiError.isNotEmpty())
@@ -239,6 +261,15 @@ MainContent::MainContent (PluginAudioEngine& audioEngine,
 
 MainContent::~MainContent()
 {
+        // Persist the transport plugin's latest connection settings so the
+        // remote link survives a relaunch without reopening Remote Setup.
+        if (engine.isRemoteTransportLoaded() && HostPreferences::get().getRemoteEnabled())
+        {
+            juce::MemoryBlock remoteState;
+            if (engine.getRemoteTransportState (remoteState))
+                HostPreferences::get().setRemotePluginState (remoteState);
+        }
+
         hardwareMeterPanel.reset();
         engine.stopFixture();
         engine.stopAudioDevice();
@@ -256,6 +287,12 @@ void MainContent::openAbout()
 void MainContent::openHardwareAudioSetup()
 {
         if (showHardwareAudioSetupDialog (engine, config.fixturesDir, this))
+            presetHardwareState.refreshHardwareModeUi();
+    }
+
+void MainContent::openRemoteSetup()
+{
+        if (showRemoteSetupDialog (engine, config.fixturesDir, this))
             presetHardwareState.refreshHardwareModeUi();
     }
 

@@ -46,6 +46,11 @@ public:
     /** Swap pending inbound MIDI into dest (audio thread). */
     void swapPendingMidi (juce::MidiBuffer& dest);
 
+    /** Feed MIDI received from the remote transport into the sysex collector.
+        Deliberately does NOT enter pendingMidi, which would echo it back to
+        the remote peer. */
+    void collectRemoteSysex (const juce::MidiMessage& message);
+
     void handleIncomingMidiMessage (juce::MidiInput* source, const juce::MidiMessage& message) override;
 
 private:

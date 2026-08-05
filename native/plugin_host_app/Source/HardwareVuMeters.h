@@ -150,6 +150,10 @@ public:
     explicit HardwareLoopMeterPanel (PluginAudioEngine& engineIn)
         : engine (engineIn)
     {
+        addAndMakeVisible (titleLabel);
+        titleLabel.setJustificationType (juce::Justification::centredLeft);
+        titleLabel.setColour (juce::Label::textColourId, juce::Colour (HostLookAndFeel::textBright));
+        titleLabel.setFont (juce::FontOptions (16.0f, juce::Font::bold));
         addAndMakeVisible (sendMeter);
         addAndMakeVisible (returnMeter);
         startTimerHz (30);
@@ -158,6 +162,8 @@ public:
     void resized() override
     {
         auto area = getLocalBounds().reduced (12);
+        titleLabel.setBounds (area.removeFromTop (24));
+        area.removeFromTop (8);
         const int gap = 12;
         const int half = (area.getHeight() - gap) / 2;
         sendMeter.setBounds (area.removeFromTop (half));
@@ -170,11 +176,32 @@ private:
     // thread involvement, so a stalled UI can never glitch audio.
     void timerCallback() override
     {
+        // Title only touches the engine (plugin-name lock) on mode changes.
+        const int mode = engine.isRemoteMode() ? 1 : (engine.isHardwareMode() ? 0 : -1);
+        if (mode != lastMode)
+        {
+            lastMode = mode;
+            if (mode == 1)
+            {
+                auto name = engine.getRemoteTransportName();
+                titleLabel.setText (utf8 ("Remote session — ")
+                                        + (name.isNotEmpty() ? name : juce::String ("network transport"))
+                                        + utf8 (" insert loop"),
+                                    juce::dontSendNotification);
+            }
+            else
+            {
+                titleLabel.setText ("Hardware insert loop", juce::dontSendNotification);
+            }
+        }
+
         sendMeter.setLevels (engine.getSendPeakL(), engine.getSendPeakR());
         returnMeter.setLevels (engine.getReturnPeakL(), engine.getReturnPeakR());
     }
 
     PluginAudioEngine& engine;
+    juce::Label titleLabel;
+    int lastMode { -2 };
     StereoVuMeter sendMeter { "Send" };
     StereoVuMeter returnMeter { "Return" };
 };
@@ -214,8 +241,10 @@ public:
 private:
     void timerCallback() override
     {
-        const bool hw = engine.isHardwareMode();
-        modeLabel.setText (hw ? "Path: Hardware (sample peak)" : "Path: Software (sample peak)",
+        const bool hw = engine.isExternalMode();
+        modeLabel.setText (hw ? (engine.isRemoteMode() ? "Path: Remote (sample peak)"
+                                                       : "Path: Hardware (sample peak)")
+                              : "Path: Software (sample peak)",
                            juce::dontSendNotification);
 
         if (hw)

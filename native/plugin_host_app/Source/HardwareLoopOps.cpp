@@ -18,15 +18,48 @@ void HardwareLoopOps::setHardwareLoopSettings (const HardwareLoopSettings& setti
 {
     const juce::ScopedLock lock (processLock);
     hardwareSettings = settings;
-    if (! settings.isConfigured())
+    if (! settings.isConfigured() && ! isRemoteTransport())
         hardwareMode.store (false);
     ensureLatencyBufferSize (2, juce::jmax (settings.latencySamples + deviceBlockSize * 4,
                                             deviceBlockSize * 8));
 }
 
+void HardwareLoopOps::setTransport (Transport newTransport)
+{
+    if (transport.load() == newTransport)
+        return;
+
+    const juce::ScopedLock lock (processLock);
+    transport.store (newTransport);
+    // The delay line holds the previous transport's return; start clean so
+    // A/B toggling right after a switch cannot replay stale audio.
+    latencyBuffer.clear();
+    latencyWritePos = 0;
+    ensureLatencyBufferSize (2, juce::jmax (activeLatencySamples() + deviceBlockSize * 4,
+                                            deviceBlockSize * 8));
+
+    if (! isExternalLoopConfigured())
+        hardwareMode.store (false);
+}
+
+void HardwareLoopOps::setRemoteAvailable (bool available)
+{
+    remoteAvailable.store (available);
+    if (! available && isRemoteTransport())
+        hardwareMode.store (false);
+}
+
+void HardwareLoopOps::setRemoteLatencySamples (int samples)
+{
+    const juce::ScopedLock lock (processLock);
+    remoteLatencySamples.store (juce::jmax (0, samples));
+    ensureLatencyBufferSize (2, juce::jmax (remoteLatencySamples.load() + deviceBlockSize * 4,
+                                            deviceBlockSize * 8));
+}
+
 void HardwareLoopOps::setHardwareMode (bool shouldUseHardware)
 {
-    if (shouldUseHardware && ! hardwareSettings.isConfigured())
+    if (shouldUseHardware && ! isExternalLoopConfigured())
         return;
 
     hardwareMode.store (shouldUseHardware);
@@ -89,6 +122,46 @@ void HardwareLoopOps::pushReturnToLatencyBuffer (const float* const* inputChanne
 }
 
 /**
+ * Audio thread: remote-transport return path. Same delay-line write and
+ * metering as pushReturnToLatencyBuffer, sourced from the transport
+ * plugin's stereo output instead of device input channels.
+ */
+void HardwareLoopOps::pushReturnBuffer (const juce::AudioBuffer<float>& returnBuffer, int numSamples)
+{
+    if (latencyCapacity <= 0)
+        return;
+
+    const float* inL = returnBuffer.getNumChannels() > 0 ? returnBuffer.getReadPointer (0) : nullptr;
+    const float* inR = returnBuffer.getNumChannels() > 1 ? returnBuffer.getReadPointer (1) : nullptr;
+
+    float peakL = 0.0f;
+    float peakR = 0.0f;
+    double sumSq = 0.0;
+    int meterSamples = 0;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const float l = inL != nullptr ? inL[i] : 0.0f;
+        const float r = inR != nullptr ? inR[i] : l;
+        latencyBuffer.setSample (0, latencyWritePos, l);
+        if (latencyBuffer.getNumChannels() > 1)
+            latencyBuffer.setSample (1, latencyWritePos, r);
+
+        peakL = juce::jmax (peakL, std::abs (l));
+        peakR = juce::jmax (peakR, std::abs (r));
+        sumSq += (double) l * (double) l + (double) r * (double) r;
+        meterSamples += 2;
+
+        latencyWritePos = (latencyWritePos + 1) % latencyCapacity;
+    }
+
+    returnPeakL.store (peakL);
+    returnPeakR.store (peakR);
+    if (meterSamples > 0)
+        returnRms.store ((float) std::sqrt (sumSq / (double) meterSamples));
+}
+
+/**
  * Audio thread: read the return signal latencySamples behind the write head,
  * i.e. time-aligned with the software path so A/B'ing hardware vs plugin
  * doesn't smear transients.
@@ -99,7 +172,7 @@ void HardwareLoopOps::readDelayedReturn (juce::AudioBuffer<float>& dest, int num
     if (latencyCapacity <= 0)
         return;
 
-    const int delay = juce::jlimit (0, latencyCapacity - 1, hardwareSettings.latencySamples);
+    const int delay = juce::jlimit (0, latencyCapacity - 1, activeLatencySamples());
     int readPos = latencyWritePos - delay - numSamples;
     while (readPos < 0)
         readPos += latencyCapacity;
@@ -178,31 +251,21 @@ void HardwareLoopOps::prepareForAudioDevice (int fadeLengthSamples)
 {
     hardwareFadeLengthSamples = fadeLengthSamples;
     hardwareFade = hardwareMode.load() ? 1.0f : 0.0f;
-    ensureLatencyBufferSize (2, juce::jmax (hardwareSettings.latencySamples + deviceBlockSize * 4,
+    ensureLatencyBufferSize (2, juce::jmax (activeLatencySamples() + deviceBlockSize * 4,
                                             deviceBlockSize * 8));
 }
 
-bool HardwareLoopOps::processLoopOpInCallback (const float* const* inputChannelData,
-                                               int numInputChannels,
-                                               float* const* outputChannelData,
-                                               int numOutputChannels,
-                                               int numSamples,
-                                               MonitorOutputBridge& monitorOutput)
+/**
+ * Audio thread: pull the next loop-op play block (stereo) and update the
+ * send meters. Shared by the hardware path (which copies it to the send
+ * channel pair) and the remote path (which feeds it to the transport plugin).
+ */
+void HardwareLoopOps::renderLoopOpSend (juce::AudioBuffer<float>& sendBlock, int numSamples)
 {
-    const bool loopConfigured = hardwareSettings.isConfigured();
-    const auto op = loopOp.load();
-    if (op == LoopOp::idle || ! loopConfigured)
-        return false;
-
-    const int sendL = hardwareSettings.sendChannelL;
-    const int sendR = hardwareSettings.sendChannelR;
-
     double sendSumSq = 0.0;
     int sendCount = 0;
     float peakL = 0.0f;
     float peakR = 0.0f;
-    juce::AudioBuffer<float> loopMonitor (2, numSamples);
-    loopMonitor.clear();
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -216,46 +279,44 @@ bool HardwareLoopOps::processLoopOpInCallback (const float* const* inputChannelD
             ++loopPlayPosition;
         }
 
-        if (sendL >= 0 && sendL < numOutputChannels && outputChannelData[sendL] != nullptr)
-            outputChannelData[sendL][i] = l;
-        if (sendR >= 0 && sendR < numOutputChannels && outputChannelData[sendR] != nullptr)
-            outputChannelData[sendR][i] = r;
-
-        loopMonitor.setSample (0, i, l);
-        loopMonitor.setSample (1, i, r);
+        sendBlock.setSample (0, i, l);
+        if (sendBlock.getNumChannels() > 1)
+            sendBlock.setSample (1, i, r);
 
         peakL = juce::jmax (peakL, std::abs (l));
         peakR = juce::jmax (peakR, std::abs (r));
         sendSumSq += (double) l * (double) l + (double) r * (double) r;
         sendCount += 2;
-
-        if (loopRecordPosition < loopRecordCapacity)
-        {
-            const int retL = hardwareSettings.returnChannelL;
-            const int retR = hardwareSettings.returnChannelR;
-            const float rl = (retL >= 0 && retL < numInputChannels && inputChannelData != nullptr
-                              && inputChannelData[retL] != nullptr)
-                                 ? inputChannelData[retL][i] : 0.0f;
-            const float rr = (retR >= 0 && retR < numInputChannels && inputChannelData != nullptr
-                              && inputChannelData[retR] != nullptr)
-                                 ? inputChannelData[retR][i] : rl;
-            loopRecordBuffer.setSample (0, loopRecordPosition, rl);
-            if (loopRecordBuffer.getNumChannels() > 1)
-                loopRecordBuffer.setSample (1, loopRecordPosition, rr);
-            ++loopRecordPosition;
-        }
     }
-
-    writeMonitorSamples (loopMonitor, numSamples, outputChannelData, numOutputChannels, monitorOutput);
 
     if (sendCount > 0)
         sendRms.store ((float) std::sqrt (sendSumSq / (double) sendCount));
     sendPeakL.store (peakL);
     sendPeakR.store (peakR);
+}
 
-    // Audio-side end conditions only. For capture, the message thread owns
-    // silence / target-duration / Stop — do NOT stop after play+2s here or
-    // reverb tails get truncated and the message thread later false-stalls.
+/**
+ * Audio thread: append a return block to the loop-op record buffer and apply
+ * the audio-side end conditions. For capture, the message thread owns
+ * silence / target-duration / Stop — do NOT stop after play+2s here or
+ * reverb tails get truncated and the message thread later false-stalls.
+ */
+void HardwareLoopOps::recordLoopOpReturn (const juce::AudioBuffer<float>& returnBlock, int numSamples)
+{
+    const auto op = loopOp.load();
+    if (op == LoopOp::idle)
+        return;
+
+    for (int i = 0; i < numSamples && loopRecordPosition < loopRecordCapacity; ++i)
+    {
+        const float rl = returnBlock.getNumChannels() > 0 ? returnBlock.getSample (0, i) : 0.0f;
+        const float rr = returnBlock.getNumChannels() > 1 ? returnBlock.getSample (1, i) : rl;
+        loopRecordBuffer.setSample (0, loopRecordPosition, rl);
+        if (loopRecordBuffer.getNumChannels() > 1)
+            loopRecordBuffer.setSample (1, loopRecordPosition, rr);
+        ++loopRecordPosition;
+    }
+
     if (loopRecordPosition >= loopRecordCapacity)
     {
         loopOp.store (LoopOp::idle);
@@ -272,7 +333,49 @@ bool HardwareLoopOps::processLoopOpInCallback (const float* const* inputChannelD
             loopOpFinished.store (true);
         }
     }
+}
 
+bool HardwareLoopOps::processLoopOpInCallback (const float* const* inputChannelData,
+                                               int numInputChannels,
+                                               float* const* outputChannelData,
+                                               int numOutputChannels,
+                                               int numSamples,
+                                               MonitorOutputBridge& monitorOutput)
+{
+    const bool loopConfigured = hardwareSettings.isConfigured();
+    const auto op = loopOp.load();
+    if (op == LoopOp::idle || ! loopConfigured || isRemoteTransport())
+        return false;
+
+    const int sendL = hardwareSettings.sendChannelL;
+    const int sendR = hardwareSettings.sendChannelR;
+
+    juce::AudioBuffer<float> loopMonitor (2, numSamples);
+    renderLoopOpSend (loopMonitor, numSamples);
+
+    if (sendL >= 0 && sendL < numOutputChannels && outputChannelData[sendL] != nullptr)
+        juce::FloatVectorOperations::copy (outputChannelData[sendL], loopMonitor.getReadPointer (0), numSamples);
+    if (sendR >= 0 && sendR < numOutputChannels && outputChannelData[sendR] != nullptr)
+        juce::FloatVectorOperations::copy (outputChannelData[sendR], loopMonitor.getReadPointer (1), numSamples);
+
+    juce::AudioBuffer<float> returnBlock (2, numSamples);
+    {
+        const int retL = hardwareSettings.returnChannelL;
+        const int retR = hardwareSettings.returnChannelR;
+        const float* inL = (retL >= 0 && retL < numInputChannels && inputChannelData != nullptr)
+                               ? inputChannelData[retL] : nullptr;
+        const float* inR = (retR >= 0 && retR < numInputChannels && inputChannelData != nullptr)
+                               ? inputChannelData[retR] : nullptr;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float rl = inL != nullptr ? inL[i] : 0.0f;
+            returnBlock.setSample (0, i, rl);
+            returnBlock.setSample (1, i, inR != nullptr ? inR[i] : rl);
+        }
+    }
+    recordLoopOpReturn (returnBlock, numSamples);
+
+    writeMonitorSamples (loopMonitor, numSamples, outputChannelData, numOutputChannels, monitorOutput);
     return true;
 }
 
@@ -369,9 +472,10 @@ bool HardwareLoopOps::autoDetectLatency (const juce::File& impulseFile,
 {
     constexpr int kLatencyDetectTrials = 5;
 
-    if (! hardwareSettings.isConfigured())
+    if (! isExternalLoopConfigured())
     {
-        error = "Configure a hardware audio device first";
+        error = isRemoteTransport() ? "Load the remote transport first"
+                                    : "Configure a hardware audio device first";
         return false;
     }
 
@@ -453,7 +557,11 @@ bool HardwareLoopOps::autoDetectLatency (const juce::File& impulseFile,
     outLoopGainDb = juce::Decibels::gainToDecibels (
         (float) (gainLinSum / (double) kLatencyDetectTrials), -120.0f);
 
-    hardwareSettings.latencySamples = averagedLag;
+    if (isRemoteTransport())
+        remoteLatencySamples.store (averagedLag);
+    else
+        hardwareSettings.latencySamples = averagedLag;
+
     ensureLatencyBufferSize (2, juce::jmax (averagedLag + deviceBlockSize * 4, deviceBlockSize * 8));
     return true;
 }
@@ -470,9 +578,10 @@ bool HardwareLoopOps::measureReturnNoiseFloor (double listenSeconds,
     outDcOffsetL = 0.0f;
     outDcOffsetR = 0.0f;
 
-    if (! hardwareSettings.isConfigured())
+    if (! isExternalLoopConfigured())
     {
-        error = "Configure a hardware audio device first";
+        error = isRemoteTransport() ? "Load the remote transport first"
+                                    : "Configure a hardware audio device first";
         return false;
     }
 
@@ -485,7 +594,7 @@ bool HardwareLoopOps::measureReturnNoiseFloor (double listenSeconds,
     const double listen = juce::jlimit (0.25, 5.0, listenSeconds);
     // Discard latency plus a short settle so send muting / ADC DC settle
     // does not inflate the measured floor.
-    const int settleSamples = hardwareSettings.latencySamples
+    const int settleSamples = activeLatencySamples()
                               + juce::jmax (deviceBlockSize * 4, (int) (deviceSampleRate * 0.15));
     const int listenSampleCount = juce::jmax (deviceBlockSize, (int) std::llround (listen * deviceSampleRate));
     const int playSamples = settleSamples + listenSampleCount + deviceBlockSize * 4;
@@ -574,9 +683,10 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
                                              float dcOffsetL,
                                              float dcOffsetR)
 {
-    if (! hardwareSettings.isConfigured())
+    if (! isExternalLoopConfigured())
     {
-        error = "Configure a hardware audio device first";
+        error = isRemoteTransport() ? "Load the remote transport first"
+                                    : "Configure a hardware audio device first";
         return false;
     }
 
@@ -629,9 +739,10 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
     if (send != 1.0f)
         loopPlayBuffer.applyGain (send);
 
+    const int transportLatency = activeLatencySamples();
     const int maxRecord = fixtureSamples
                           + (int) (deviceSampleRate * maxTailSeconds)
-                          + hardwareSettings.latencySamples
+                          + transportLatency
                           + deviceBlockSize * 4;
     loopRecordBuffer.setSize (2, maxRecord, false, true, false);
     loopRecordBuffer.clear();
@@ -706,7 +817,7 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
             // If we already have usable audio, save it rather than aborting
             // the whole capture (empty artifact folders are worse than a
             // slightly short take after a mid-record device glitch).
-            if (recorded > hardwareSettings.latencySamples)
+            if (recorded > transportLatency)
                 break;
 
             error = "Hardware capture stalled (audio device not advancing)";
@@ -716,7 +827,7 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
         if (loopPlayPosition >= fixtureSamples)
             pastFixture = true;
 
-        const int usableNow = juce::jmax (0, recorded - hardwareSettings.latencySamples);
+        const int usableNow = juce::jmax (0, recorded - transportLatency);
         if (pastFixture && targetUsableSamples > 0
             && usableNow >= targetUsableSamples + targetSlackSamples)
         {
@@ -728,10 +839,10 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
         // Silence gate after the dry fixture has returned. Credit newly
         // recorded samples while the recent peak stays below the calibrated
         // gate so the hold time tracks audio, not message-thread tick rate.
-        if (pastFixture && recorded > hardwareSettings.latencySamples + fixtureSamples)
+        if (pastFixture && recorded > transportLatency + fixtureSamples)
         {
-            if (silenceCursor < hardwareSettings.latencySamples + fixtureSamples)
-                silenceCursor = hardwareSettings.latencySamples + fixtureSamples;
+            if (silenceCursor < transportLatency + fixtureSamples)
+                silenceCursor = transportLatency + fixtureSamples;
 
             if (recorded > silenceCursor)
             {
@@ -766,7 +877,7 @@ bool HardwareLoopOps::captureHardwareToFile (const juce::File& fixtureFile,
     // the fixture actually started — this keeps hardware captures sample-
     // aligned with offline software renders for A/B comparison.
     const int recorded = juce::jmin (loopRecordPosition, loopRecordCapacity);
-    const int latency = juce::jlimit (0, recorded, hardwareSettings.latencySamples);
+    const int latency = juce::jlimit (0, recorded, transportLatency);
     const int usable = recorded - latency;
     if (stopAndSave && usable <= 0)
     {

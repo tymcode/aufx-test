@@ -91,6 +91,17 @@ void MidiHostServices::swapPendingMidi (juce::MidiBuffer& dest)
     dest.swapWith (pendingMidi);
 }
 
+void MidiHostServices::collectRemoteSysex (const juce::MidiMessage& message)
+{
+    if (message.isSysEx() && collectSysex.load())
+    {
+        const juce::ScopedLock lock (sysexLock);
+        pendingSysex.add (message);
+    }
+
+    midiActivity.store (true);
+}
+
 bool MidiHostServices::setMidiOutputDevice (const juce::String& identifier, juce::String& error)
 {
     midiOutput.reset();

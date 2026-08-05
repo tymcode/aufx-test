@@ -27,8 +27,11 @@ public:
     void toggleLightsOutFromMenu();
     void toggleHardwareMode();
     void toggleHardwareModeFromMenu();
+    void toggleRemoteMode();
+    void toggleRemoteModeFromMenu();
     void toggleLevelMeters();
     void openHardwareAudioSetup();
+    void openRemoteSetup();
     void openMidiSetup();
     void refreshHardwareUi();
     void setLightsOutEnabled (bool shouldEnable);
@@ -58,6 +61,8 @@ private:
         menuHardwareAudioSetup,
         menuMidiSetup,
         menuUseHardware,
+        menuRemoteSetup,
+        menuUseRemote,
         menuLevelMeters
     };
 

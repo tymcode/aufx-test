@@ -8,6 +8,7 @@
 #include "HostClockMetronome.h"
 #include "MidiHostServices.h"
 #include "MonitorOutputBridge.h"
+#include "RemoteTransport.h"
 
 /**
  * The audio core of AU Effects Explorer. One instance owns:
@@ -104,9 +105,56 @@ public:
     HardwareLoopSettings getHardwareLoopSettings() const;
     bool hasHardwareLoopConfigured() const;
 
-    /** Crossfaded A/B between plugin monitor and latency-compensated hardware return. */
+    /**
+     * Crossfaded A/B between plugin monitor and latency-compensated external
+     * return. setHardwareMode selects the CoreAudio hardware transport;
+     * setRemoteMode selects the SonoBus remote transport. The two are
+     * mutually exclusive (one shared external-monitor flag + a transport
+     * selector).
+     */
     void setHardwareMode (bool shouldUseHardware);
-    bool isHardwareMode() const { return hardwareLoop.isHardwareMode(); }
+    bool isHardwareMode() const
+    {
+        return hardwareLoop.isHardwareMode() && ! hardwareLoop.isRemoteTransport();
+    }
+
+    /** External-monitor flag regardless of transport (hardware or remote). */
+    bool isExternalMode() const { return hardwareLoop.isHardwareMode(); }
+    /** Toggle external monitoring on the currently selected transport. */
+    void setExternalMode (bool shouldUseExternal) { hardwareLoop.setHardwareMode (shouldUseExternal); }
+    /** True when the active transport is usable (hardware configured / remote loaded). */
+    bool hasExternalLoopConfigured() const { return hardwareLoop.isExternalLoopConfigured(); }
+
+    // --- Remote transport (hosted SonoBus plugin) ---
+    /** Load the transport plugin (empty identifier = default SonoBus AU). */
+    bool loadRemoteTransport (const juce::String& fileOrIdentifier, juce::String& error);
+    void unloadRemoteTransport();
+    bool isRemoteTransportLoaded() const { return remoteTransport.isLoaded(); }
+    bool hasRemoteConfigured() const { return remoteTransport.isLoaded(); }
+    juce::String getRemoteTransportName() const { return remoteTransport.getPluginName(); }
+    RemoteTransport& getRemoteTransport() { return remoteTransport; }
+
+    void setRemoteMode (bool shouldUseRemote);
+    bool isRemoteMode() const
+    {
+        return hardwareLoop.isHardwareMode() && hardwareLoop.isRemoteTransport();
+    }
+
+    /**
+     * Select which transport latency detect / capture / A-B run against
+     * without enabling external monitoring (Remote Setup uses this).
+     */
+    void selectTransport (HardwareLoopOps::Transport transport);
+    HardwareLoopOps::Transport getSelectedTransport() const { return hardwareLoop.getTransport(); }
+
+    void setRemoteLatencySamples (int samples) { hardwareLoop.setRemoteLatencySamples (samples); }
+    int getRemoteLatencySamples() const { return hardwareLoop.getRemoteLatencySamples(); }
+
+    bool getRemoteTransportState (juce::MemoryBlock& out) const { return remoteTransport.getState (out); }
+    bool applyRemoteTransportState (const juce::MemoryBlock& state) { return remoteTransport.applyState (state); }
+
+    /** Queue MIDI for the remote transport plugin (Phase 3 remote MIDI). */
+    void queueRemoteMidiMessage (const juce::MidiMessage& message) { remoteTransport.queueMidiMessage (message); }
 
     float getReturnPeakLevel() const { return hardwareLoop.getReturnPeakLevel(); }
     float getReturnPeakL() const { return hardwareLoop.getReturnPeakL(); }
@@ -303,4 +351,5 @@ private:
     HostClockMetronome hostClock;
     MidiHostServices midiServices;
     HardwareLoopOps hardwareLoop;
+    RemoteTransport remoteTransport { processLock };
 };

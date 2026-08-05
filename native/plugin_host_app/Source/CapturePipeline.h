@@ -65,7 +65,11 @@ struct CapturePipelineResult
     float dcOffsetR { 0.0f };
 };
 
-/** RAII: restore hardware-mode flag and refresh UI on scope exit. */
+/**
+ * RAII: restore the external-monitor flag and refresh UI on scope exit.
+ * Transport-agnostic — "hardware mode" here means whichever external
+ * transport is selected (CoreAudio hardware loop or remote SonoBus).
+ */
 class HardwareModeGuard
 {
 public:
@@ -74,21 +78,21 @@ public:
     HardwareModeGuard (PluginAudioEngine& engineIn, RefreshFn refreshIn)
         : engine (engineIn),
           refresh (std::move (refreshIn)),
-          restoreHardwareMode (engine.isHardwareMode())
+          restoreExternalMode (engine.isExternalMode())
     {
     }
 
     ~HardwareModeGuard()
     {
-        engine.setHardwareMode (restoreHardwareMode);
+        engine.setExternalMode (restoreExternalMode);
         if (refresh)
             refresh();
     }
 
-    void showMode (bool hardwareMode)
+    void showMode (bool externalMode)
     {
-        if (engine.isHardwareMode() != hardwareMode)
-            engine.setHardwareMode (hardwareMode);
+        if (engine.isExternalMode() != externalMode)
+            engine.setExternalMode (externalMode);
         if (refresh)
             refresh();
     }
@@ -96,7 +100,7 @@ public:
 private:
     PluginAudioEngine& engine;
     RefreshFn refresh;
-    bool restoreHardwareMode;
+    bool restoreExternalMode;
 };
 
 class CapturePipeline

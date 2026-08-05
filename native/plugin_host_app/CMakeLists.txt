@@ -86,6 +86,8 @@ target_sources(plugin_host_app
         Source/PluginAudioEngine.cpp
         Source/MonitorOutputBridge.cpp
         Source/HardwareLoopOps.cpp
+        Source/RemoteTransport.cpp
+        Source/RemoteSetupDialog.cpp
         Source/MidiHostServices.cpp
         Source/HostClockMetronome.cpp
         Source/OfflineCapture.cpp
@@ -105,6 +107,7 @@ target_sources(plugin_host_app
         Source/MidiEndpointInfo.cpp
         Source/sysex/SysexDeviceRegistry.cpp
         Source/sysex/QuadraverbSysex.cpp
+        Source/sysex/DpProSysex.cpp
         Source/SendPluginSettingsToDevice.cpp
         ${QV_SRC}/domain/AlesisCodec.cpp
         ${QV_SRC}/domain/QuadraverbProgram.cpp

@@ -117,14 +117,14 @@ namespace
                 return;
             }
 
-            const auto path = engine.isHardwareMode() ? LevelSweepCalibration::Path::hardware
+            const auto path = engine.isExternalMode() ? LevelSweepCalibration::Path::hardware
                                                        : LevelSweepCalibration::Path::software;
 
             if (path == LevelSweepCalibration::Path::hardware)
             {
-                if (! engine.hasHardwareLoopConfigured())
+                if (! engine.hasExternalLoopConfigured())
                 {
-                    statusLabel.setText ("Configure Hardware Audio Setup before a hardware sweep",
+                    statusLabel.setText ("Configure Hardware Audio Setup (or Remote Setup) before a hardware sweep",
                                          juce::dontSendNotification);
                     return;
                 }

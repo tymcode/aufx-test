@@ -348,6 +348,10 @@ void QuadraverseMainContent::flushLiveEdit()
     if (! engine.isHardwareMode() || ! liveEditToggle.getToggleState())
         return;
 
+    if (pendingLiveAddr.function < 0 || pendingLiveAddr.function > 9
+        || pendingLiveAddr.page < 0 || pendingLiveAddr.page > 31)
+        return;
+
     const auto msg = qverse::AlesisCodec::buildChangeParameter (
         0x02,
         (uint8_t) pendingLiveAddr.function,

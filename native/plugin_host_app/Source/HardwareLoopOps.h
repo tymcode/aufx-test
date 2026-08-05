@@ -7,8 +7,14 @@
 #include "MonitorOutputBridge.h"
 
 /**
- * Hardware insert loop: latency delay line, monitor crossfade, and
+ * External insert loop: latency delay line, monitor crossfade, and
  * message-thread loop ops (calibrate / capture).
+ *
+ * Two transports share this machinery:
+ *  - hardware: CoreAudio send/return channel pairs on the loop device,
+ *  - remote:   a hosted network-transport plugin (SonoBus); the engine
+ *    processes send audio through the plugin and pushes its output back
+ *    here via pushReturnBuffer / the block-level loop-op helpers.
  *
  * Calibration Boost: interactive Level Meters (View menu) owns named
  * level-sweep linearity. Latency auto-detect averages several impulse
@@ -25,12 +31,32 @@ public:
                      double& deviceSampleRate,
                      int& deviceBlockSize);
 
+    /** Which external box the insert loop talks to. */
+    enum class Transport { hardware, remote };
+
+    void setTransport (Transport newTransport);
+    Transport getTransport() const { return transport.load(); }
+    bool isRemoteTransport() const { return transport.load() == Transport::remote; }
+
+    /** Engine sets this when the remote transport plugin is loaded/unloaded. */
+    void setRemoteAvailable (bool available);
+    bool isRemoteAvailable() const { return remoteAvailable.load(); }
+
+    void setRemoteLatencySamples (int samples);
+    int getRemoteLatencySamples() const { return remoteLatencySamples.load(); }
+
+    /** True when the active transport is usable (hardware configured / remote loaded). */
+    bool isExternalLoopConfigured() const
+    {
+        return isRemoteTransport() ? remoteAvailable.load() : hardwareSettings.isConfigured();
+    }
+
     void setHardwareLoopSettings (const HardwareLoopSettings& settings);
     HardwareLoopSettings getHardwareLoopSettings() const { return hardwareSettings; }
     const HardwareLoopSettings& getHardwareLoopSettingsRef() const { return hardwareSettings; }
     bool hasHardwareLoopConfigured() const { return hardwareSettings.isConfigured(); }
 
-    /** Crossfaded A/B between plugin monitor and latency-compensated hardware return. */
+    /** Crossfaded A/B between plugin monitor and latency-compensated external return. */
     void setHardwareMode (bool shouldUseHardware);
     bool isHardwareMode() const { return hardwareMode.load(); }
 
@@ -117,6 +143,8 @@ public:
     // Realtime helpers called from PluginAudioEngine::audioDeviceIOCallbackWithContext:
     void ensureLatencyBufferSize (int numChannels, int capacity);
     void pushReturnToLatencyBuffer (const float* const* inputChannelData, int numInputChannels, int numSamples);
+    /** Remote-transport variant: push the transport plugin's stereo output as the return. */
+    void pushReturnBuffer (const juce::AudioBuffer<float>& returnBuffer, int numSamples);
     void readDelayedReturn (juce::AudioBuffer<float>& dest, int numSamples);
     void applyMonitorCrossfade (juce::AudioBuffer<float>& softwareBuffer,
                                 const juce::AudioBuffer<float>& hardwareBuffer,
@@ -132,6 +160,16 @@ public:
                                   int numOutputChannels,
                                   int numSamples,
                                   MonitorOutputBridge& monitorOutput);
+
+    /**
+     * Block-level loop-op pieces for the remote transport. The engine calls
+     * renderLoopOpSend to pull the next play block, runs it through the
+     * transport plugin, then recordLoopOpReturn with the plugin's output.
+     * Both are audio-thread only and valid while isLoopOpActive().
+     */
+    bool isLoopOpActive() const { return loopOp.load() != LoopOp::idle; }
+    void renderLoopOpSend (juce::AudioBuffer<float>& sendBlock, int numSamples);
+    void recordLoopOpReturn (const juce::AudioBuffer<float>& returnBlock, int numSamples);
 
     void writeMonitorSamples (const juce::AudioBuffer<float>& stereoMonitor,
                               int numSamples,
@@ -158,6 +196,12 @@ private:
 
     enum class LoopOp { idle, calibrate, capture };
 
+    /** Latency of the active transport (hardware settings or remote measurement). */
+    int activeLatencySamples() const
+    {
+        return isRemoteTransport() ? remoteLatencySamples.load() : hardwareSettings.latencySamples;
+    }
+
     juce::AudioFormatManager& formatManager;
     juce::CriticalSection& processLock;
     std::atomic<float>& sendGain;
@@ -165,6 +209,9 @@ private:
     int& deviceBlockSize;
 
     HardwareLoopSettings hardwareSettings;
+    std::atomic<Transport> transport { Transport::hardware };
+    std::atomic<bool> remoteAvailable { false };
+    std::atomic<int> remoteLatencySamples { 0 };
     std::atomic<bool> hardwareMode { false };
     // Equal-power crossfade position between software monitor (0) and
     // hardware return (1); ~8 ms ramp, same feel as the bypass button.
