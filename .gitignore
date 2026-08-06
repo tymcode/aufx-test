@@ -58,7 +58,8 @@ scripts/probe_deepz_*.swift
 # Draft / personal notes (not shipped)
 docs/mac-app-distribution.md
 docs/merge-notes-refactor.md
-docs/quadraverb_sysex.html
+docs/quadraverb_sysex.html  
+docs/EnsoniqDP-ProReferenceManual.pdf
 
 # Re-assert after negation rules that re-include preset trees
 .DS_Store

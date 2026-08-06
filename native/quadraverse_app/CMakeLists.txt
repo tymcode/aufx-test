@@ -65,6 +65,7 @@ target_sources(Quadraverse
         ${HOST_SRC}/PluginAudioEngine.cpp
         ${HOST_SRC}/MonitorOutputBridge.cpp
         ${HOST_SRC}/HardwareLoopOps.cpp
+        ${HOST_SRC}/RemoteTransport.cpp
         ${HOST_SRC}/MidiHostServices.cpp
         ${HOST_SRC}/HostClockMetronome.cpp
         ${HOST_SRC}/OfflineCapture.cpp
@@ -80,6 +81,7 @@ target_sources(Quadraverse
         ${HOST_SRC}/MidiEndpointInfo.cpp
         ${HOST_SRC}/sysex/SysexDeviceRegistry.cpp
         ${HOST_SRC}/sysex/QuadraverbSysex.cpp
+        ${HOST_SRC}/sysex/DpProSysex.cpp
         ${HOST_SRC}/PresetHardwareState.cpp
         ${HOST_SRC}/SourceClipLibrary.cpp
         ${HOST_SRC}/PluginScanLog.cpp
