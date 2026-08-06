@@ -4,9 +4,7 @@
 
 When you select a plugin you begin an *exploration session*. Captures land under that session’s folder (input clip, rendered / hardware WAVs, `.aupreset`, optional sysex, and compare reports).
 
-
-
-![AUFX Explorer in SW mode](./assets/explorer.png)
+AUFX Explorer in SW mode
 
 ## Features
 
@@ -16,15 +14,34 @@ When you select a plugin you begin an *exploration session*. Captures land under
 - Host **Bypass**, **Send** level (−120 dB mute … +6 dB), and **Mix** (dry/wet)
 - MIDI controller ports and MIDI Learn–friendly routing
 - Hardware-in-loop insert (send / return / monitor) with easy switching between hardware and software (`Cmd+U`)
+- **Use Remote** — network insert via a hosted [SonoBus MIDI-transport fork](https://github.com/tymcode/sonobus) AU (`Cmd+Shift+U`); see [Remote hardware](#remote-hardware-sonobus)
 - Send/Return level metering (sample peak, sticky hold, CLIP) and optional LUFS/RMS level sweeps
 - Save / Load `.aupreset` state; drag-and-drop import into the plugin’s presets folder
-- Experimental sysex dump / restore for test setup (**Alesis Quadraverb** only for now)
+- Experimental sysex dump / restore for test setup (**Alesis Quadraverb**, **Ensoniq DP/Pro**)
 - **Capture Test Case** — packages artifacts for regression and bug reports (golden / broken / suspect)
 - Optional HTML compare report after capture (software vs hardware, or dry vs wet)
 - Calibration: insert latency auto-detect, noise-floor / DC for hardware capture, level-sweep plots
 - **Lights Out** mode for screencaps; monitor path supports Multi-Output Devices / loopbacks so audio is in the recording
 
 Compares use objective metrics (level gain vs dry/reference, correlation, etc.)—not bit-for-bit equality. Typical flow: explore in the app → capture → `aufx-test session promote` / `export` → `pytest`, or batch goldens with `aufx-test compare-batch`.
+
+## Remote hardware (SonoBus)
+
+You can test against remote hardware using Sonobus. Simply install the Sonobus audio unit. Once you've set up a Sonobus session with the owner of the equipment using the Remote Setup dialog, you can toggle between software and remote hardware in a way equivalent to toggling between a plugin and local hardware.
+
+### MIDI Streaming
+
+MIDI control of the remote device is more or less necessary for testing, at least for patch changes. You can either set up Tailscale + RTP-MIDI outside of AU Effexts Explorer, or use a fork of Sonobus that includes streaming MIDI. (See below.)  AU Effects Explorer loads whichever **SonoBus AU** is installed at runtime and treats the network path like the local hardware insert (latency delay, meters, capture). First, establish the connection with the remote hardware in the **Remote Setup…** dialog. At that point **Use Remote** works just like **Use Hardware**.
+
+To use the integrated streaming MIDI support, install the MIDI-transport fork linked below (not stock sonobus.net builds):
+
+- Repo: [tymcode/sonobus](https://github.com/tymcode/sonobus) (branch `midi-transport`)
+- Releases: [v1.7.2-midi.1](https://github.com/tymcode/sonobus/releases/tag/v1.7.2-midi.1) — universal macOS zips (Apple Silicon + Intel)
+  - **AU** → `~/Library/Audio/Plug-Ins/Components/SonoBus.component` (this machine)
+  - **Standalone** → studio machine; Settings → Options → **MIDI Output**
+- Details: [MIDI_TRANSPORT.md](https://github.com/tymcode/sonobus/blob/midi-transport/docs/MIDI_TRANSPORT.md)
+
+Without either this or the stock Sonobus AU, Remote Setup reports that the transport plugin could not be loaded. Stock SonoBus still works for **audio-only** remote; MIDI would need a separate path (e.g. Tailscale + RTP-MIDI).
 
 ## Requirements
 
@@ -79,7 +96,7 @@ Without `--project-root` / `--config`, the app uses its exploration data folder 
 
 ## Configure plugins
 
-Edit `host.config.json` at the project root for the repo-rooted workflow. The toolbar **Plugin** dropdown is seeded from this list. Use **Plugins → Add Plugin…** (or **More plugins…** in the picker) to choose from the AU scan cache. **Plugins → Rescan Audio Units…** (`Cmd+R`) refreshes the cache; **Install New Source Clips…** installs WAVs into the fixtures tree; **Rescan Source Clips** (`Cmd+Shift+R`) reloads the menu.
+Edit `host.config.json` at the project root for the repo-rooted workflow. The toolbar **Plugin** dropdown is seeded from this list. Use **Plugins → Add Plugin…** (or **More plugins…** in the picker) to choose from the scanned AU plugins. **Plugins → Rescan Audio Units…** (`Cmd+R`) refreshes the cache; **Install New Source Clips…** installs WAVs into the fixtures tree; **Rescan Source Clips** (`Cmd+Shift+R`) reloads the menu.
 
 ```json
 {
@@ -173,7 +190,7 @@ Drag `.aupreset` files or folders onto the window to import into the current plu
 
 ### MIDI Setup… (Session menu)
 
-![MIDI Setup Dialog](./assets/midisetup.png)
+MIDI Setup Dialog
 
 Choose ports for the device under test and which sysex module to use:
 
@@ -234,13 +251,13 @@ When the insert loop is configured, **Session → Use Hardware** switches monito
 - Bypass is disabled; preset **Save** is replaced by **HW State** / **Send**
 - Level Meters window (if open) follows the same path
 
-![AUFX Explorer in HIL mode](./assets/explorerHIL.png)
+AUFX Explorer in HIL mode
 
 Toggle again to return to software.
 
 ## Capture Test Case… (`Cmd+T`)
 
-![Capture Test Case dialog](./assets/captestcase.png)
+Capture Test Case dialog
 
 Dialog fields:
 
